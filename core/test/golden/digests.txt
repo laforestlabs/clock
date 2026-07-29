@@ -1,0 +1,20 @@
+# Golden render digests. FNV-1a 64 over the exact
+# gamma-corrected RGB888 bytes sent to the panel.
+#
+# Regenerate deliberately after an intended rendering change:
+#   MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test
+#
+# render engine version 1
+
+dual:typical             452218d3668637d1
+dual:cold                85bd81b6ba99ea8f
+dual:overflow            fe2a4e6970491f96
+dual:evening             0c2a7f505f10129a
+single:typical           f2d221f25c18e860
+single:cold              64505049da643165
+single:overflow          b3780680b6f4be1c
+single:evening           c3d680a9c97b3cf6
+quad:typical             961aa37231093c96
+quad:cold                e698545d235f89c3
+quad:overflow            eed392e7a6085e96
+quad:evening             2be31cf8f18c0342

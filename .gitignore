@@ -1,0 +1,38 @@
+# Build output
+build/
+out/
+*.o
+*.so
+*.a
+*.elf
+*.bin
+*.map
+
+# ESP-IDF
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Test artifacts. Golden references are committed; actual output is not.
+core/test/out/
+
+# Local secrets: API tokens, WiFi credentials, calendar URLs
+secrets.json
+*.local.json
+.env
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store

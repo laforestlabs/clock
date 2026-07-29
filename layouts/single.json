@@ -1,0 +1,43 @@
+{
+  "name": "single",
+  "canvas": { "width": 64, "height": 64 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "clock", "id": "clock",
+      "rect": [0, 0, 64, 16],
+      "font": "digits16", "format": "%H:%M",
+      "color": "#00E5FF", "align": "center" },
+
+    { "type": "date", "id": "date",
+      "rect": [0, 17, 64, 7],
+      "font": "tom5x7", "format": "%a %e %b",
+      "color": "#7A8A99", "align": "center" },
+
+    { "type": "icon", "id": "wx-icon",
+      "rect": [0, 26, 16, 16],
+      "icon_set": "wx16", "bind": "weather.code",
+      "color": "#FFC24D" },
+
+    { "type": "text", "id": "temp",
+      "rect": [18, 27, 46, 7],
+      "font": "tom5x7", "bind": "weather.temp_c", "format": "%.0f\u00b0C",
+      "color": "#FFFFFF" },
+
+    { "type": "text", "id": "conditions",
+      "rect": [18, 36, 46, 7],
+      "font": "tom5x7", "bind": "weather.label",
+      "color": "#8899AA" },
+
+    { "type": "line", "id": "rule",
+      "rect": [2, 44, 60, 1],
+      "color": "#1E2A33" },
+
+    { "type": "agenda", "id": "agenda",
+      "rect": [1, 47, 62, 17],
+      "font": "tom5x7",
+      "color": "#FFFFFF", "accent": "#66D9EF",
+      "max_items": 2, "line_gap": 2, "show_time": true }
+  ]
+}

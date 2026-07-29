@@ -1,0 +1,96 @@
+# Host build for the portable render core.
+#
+# Deliberately plain make plus gcc. ESP-IDF ships its own cmake, but the
+# desktop designer must not need ESP-IDF sourced just to draw a preview, so
+# this side of the build depends on nothing but a C compiler.
+#
+#   make -f Makefile.host           library, shared library, and CLI
+#   make -f Makefile.host test      build and run the golden-image tests
+#   make -f Makefile.host fonts     regenerate glyph tables from fonts/*.font
+#   make -f Makefile.host clean
+#
+# The same sources compile unchanged as an ESP-IDF component via CMakeLists.txt.
+
+CC      ?= gcc
+PYTHON  ?= python3
+OPT     ?= -O2 -g
+
+STD     := -std=c99
+WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes \
+           -Wmissing-prototypes -Wpointer-arith -Wwrite-strings
+INC     := -Iinclude -Ihost
+CFLAGS  := $(STD) $(WARN) $(OPT) $(INC)
+LDLIBS  :=
+
+BUILD   := build/host
+
+CORE_SRC := $(sort $(wildcard src/*.c) $(wildcard src/fonts/*.c))
+HOST_SRC := host/png_write.c
+TEST_SRC := $(sort $(wildcard test/*.c))
+
+CORE_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRC))
+CORE_PIC := $(patsubst %.c,$(BUILD)/pic/%.o,$(CORE_SRC))
+HOST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(HOST_SRC))
+TEST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(TEST_SRC))
+
+LIB_A  := $(BUILD)/libmirrorcore.a
+LIB_SO := $(BUILD)/libmirrorcore.so
+CLI    := $(BUILD)/mirror-cli
+TEST   := $(BUILD)/mirror-test
+
+.PHONY: all clean test fonts fontcheck cli lib
+
+all: $(LIB_A) $(LIB_SO) $(CLI)
+
+lib: $(LIB_A) $(LIB_SO)
+cli: $(CLI)
+
+# Static archive links into the CLI and the tests.
+$(LIB_A): $(CORE_OBJ)
+	@mkdir -p $(dir $@)
+	ar rcs $@ $^
+	@echo "  AR    $@"
+
+# Position-independent build is what the PySide6 designer dlopens through cffi.
+# Same objects, same behaviour, so the preview cannot drift from the firmware.
+$(LIB_SO): $(CORE_PIC)
+	@mkdir -p $(dir $@)
+	$(CC) -shared -o $@ $^ $(LDLIBS)
+	@echo "  SO    $@"
+
+$(CLI): $(BUILD)/host/mirror_cli.o $(HOST_OBJ) $(LIB_A)
+	@mkdir -p $(dir $@)
+	$(CC) -o $@ $^ $(LDLIBS)
+	@echo "  LINK  $@"
+
+$(TEST): $(TEST_OBJ) $(HOST_OBJ) $(LIB_A)
+	@mkdir -p $(dir $@)
+	$(CC) -o $@ $^ $(LDLIBS)
+	@echo "  LINK  $@"
+
+$(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/pic/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -fPIC -c $< -o $@
+
+test: $(TEST)
+	@./$(TEST)
+
+# Glyph tables are generated, not hand written. Edit ../fonts/*.font instead.
+fonts:
+	@$(PYTHON) ../tools/fontgen.py
+
+# Fails if the committed tables no longer match their sources, so a forgotten
+# regeneration cannot silently ship stale glyphs.
+fontcheck:
+	@$(PYTHON) ../tools/fontgen.py --check
+
+clean:
+	@rm -rf $(BUILD)
+	@echo "  CLEAN $(BUILD)"
+
+-include $(CORE_OBJ:.o=.d) $(HOST_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+CFLAGS += -MMD -MP
