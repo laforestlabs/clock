@@ -160,17 +160,35 @@ void ml_canvas_pop_clip(ml_canvas *c)
     c->clip = c->clip_stack[--c->clip_depth];
 }
 
+static uint8_t scale8(uint8_t value, uint8_t by)
+{
+    if (by == 255) return value;
+    return (uint8_t)((value * by + 127) / 255);
+}
+
 void ml_canvas_export_rgb888(const ml_canvas *c, uint8_t brightness, uint8_t *dst)
 {
     if (!c || !c->px || !dst) return;
 
     size_t n = (size_t)c->w * (size_t)c->h;
     for (size_t i = 0; i < n; i++) {
-        /* Brightness scales in linear space, then gamma maps to what the LED
-         * drivers actually receive. Order matters: gamma last. */
-        ml_rgb p = ml_rgb_scale(c->px[i], brightness);
-        dst[i * 3 + 0] = ml_gamma8(p.r);
-        dst[i * 3 + 1] = ml_gamma8(p.g);
-        dst[i * 3 + 2] = ml_gamma8(p.b);
+        ml_rgb p = c->px[i];
+        /*
+         * Gamma first, then a linear scale. Order matters and this order is
+         * the one that matches the hardware.
+         *
+         * The panel dims by shortening LED on-time (the driver modulates OE),
+         * which scales emitted luminance linearly, and it does so after its
+         * own gamma LUT. Scaling before gamma would model a different kind of
+         * dimming, and since gamma is nonlinear the two disagree visibly.
+         *
+         * It also means the device can leave these bytes at full brightness
+         * and let the driver dim in hardware, which keeps the full colour
+         * depth. Scaling values instead would crush a dim night mode down to
+         * a handful of distinct levels.
+         */
+        dst[i * 3 + 0] = scale8(ml_gamma8(p.r), brightness);
+        dst[i * 3 + 1] = scale8(ml_gamma8(p.g), brightness);
+        dst[i * 3 + 2] = scale8(ml_gamma8(p.b), brightness);
     }
 }

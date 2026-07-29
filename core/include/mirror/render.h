@@ -26,10 +26,16 @@ void ml_render(const ml_layout *layout, const ml_model *model, ml_canvas *out);
 /* Render a single widget. Exposed so the designer can highlight one in isolation. */
 void ml_render_widget(const ml_widget *w, const ml_model *model, ml_canvas *out);
 
-/* Version of the render engine, bumped when output changes in a way that
+/*
+ * Version of the render engine, bumped when output changes in a way that
  * invalidates golden images. Reported by the device so the designer can warn
- * about a mismatch with its own core. */
-#define ML_RENDER_VERSION 1
+ * about a mismatch with its own core.
+ *
+ *   1  initial
+ *   2  brightness moved to a linear scale after gamma, matching how the panel
+ *      driver actually dims (OE modulation applied after its gamma LUT)
+ */
+#define ML_RENDER_VERSION 2
 
 #ifdef __cplusplus
 }

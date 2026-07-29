@@ -219,16 +219,18 @@ const uint8_t *ml_sim_render_rgba(ml_sim *s)
                        : s->layout.brightness;
 
     /*
-     * Scale then gamma, matching ml_canvas_export_rgb888 exactly. This is the
-     * true panel output: no selection chrome and no mirror dimming, both of
-     * which belong to the view layer.
+     * Gamma then scale, matching ml_canvas_export_rgb888 exactly, which in
+     * turn matches how the panel dims (OE modulation after its gamma LUT).
+     *
+     * This is the true panel output: no selection chrome and no mirror
+     * dimming, both of which belong to the view layer.
      */
     size_t n = (size_t)w * (size_t)h;
     for (size_t i = 0; i < n; i++) {
-        ml_rgb p = ml_rgb_scale(s->canvas.px[i], brightness);
-        s->rgba[i * 4 + 0] = ml_gamma8(p.r);
-        s->rgba[i * 4 + 1] = ml_gamma8(p.g);
-        s->rgba[i * 4 + 2] = ml_gamma8(p.b);
+        ml_rgb p = s->canvas.px[i];
+        s->rgba[i * 4 + 0] = (uint8_t)((ml_gamma8(p.r) * brightness + 127) / 255);
+        s->rgba[i * 4 + 1] = (uint8_t)((ml_gamma8(p.g) * brightness + 127) / 255);
+        s->rgba[i * 4 + 2] = (uint8_t)((ml_gamma8(p.b) * brightness + 127) / 255);
         s->rgba[i * 4 + 3] = 255;
     }
 
