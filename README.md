@@ -38,8 +38,8 @@ is needed to run any of it today.
 | Milestone | State |
 |---|---|
 | M0 Core, host build, CLI, golden tests | Done |
-| M1 Flutter layout designer (desktop and mobile) | Written, needs Flutter installed to build |
-| M2 Panel bring-up on ESP32-S3 | Not started |
+| M1 Flutter layout designer (desktop and mobile) | Done, builds and runs on Linux |
+| M2 Panel bring-up on ESP32-S3 | Firmware written, awaiting hardware |
 | M3 Data providers and calendar companion | Not started |
 | M4 Hot-reload layout push | Not started |
 | M5 Provisioning, brightness, OTA | Not started |
@@ -138,6 +138,23 @@ python3 tools/fontproof.py tom5x7 "Wed 29 Jul"   # see it in the terminal
 Total font data is about 1.4 KB. `tom5x7` is proportional, which recovers several
 characters per line versus a fixed cell: "Standup 10:00" is 63px, so it fits a 64px
 column with a pixel to spare.
+
+## Firmware
+
+```sh
+. $HOME/esp/esp-idf-v5.5/export.sh
+idf.py -C firmware set-target esp32s3
+idf.py -C firmware menuconfig        # Smart Mirror menu: WiFi, timezone, panel
+idf.py -C firmware flash monitor
+```
+
+See [firmware/README.md](firmware/README.md) for the bring-up checklist, which is
+worth following in order.
+
+**ESP-IDF 5.4 or newer is required.** `esp-hub75` sets two GDMA fields behind a
+`#if ESP_IDF_VERSION >= 5.0.0` guard, but both were only added in 5.4, so it cannot
+compile on 5.0 through 5.3. Upstream CI covers 4.4.8, 5.5.2 and 6.0 and skips that
+range entirely, which is why it has gone unnoticed.
 
 ## Hardware
 

@@ -1,0 +1,47 @@
+# Defaults for the ESP32-S3-DevKitC-1 N16R8.
+#
+# sdkconfig itself is gitignored, so WiFi credentials set through menuconfig
+# stay out of the repository.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16MB flash with the OTA-ready table in partitions.csv.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Octal PSRAM (the R8 in N16R8). Note this consumes GPIO33 to GPIO37, which is
+# why the panel pin map in docs/hardware.md avoids them and why the pinout in
+# the esp-hub75 README does not work on this module.
+#
+# The HUB75 DMA buffer still lives in internal SRAM: PSRAM-backed buffers cap
+# the shift clock near 13MHz and flicker visibly. PSRAM is here for TLS buffers
+# and JSON parsing in M3.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# The render core already applies a CIE 1931 curve, and the golden-image tests
+# assert the exact bytes that produces. The driver defaults to applying its own
+# CIE 1931 curve on top, which would double-correct and come out far too dark.
+# Linear here means "do not touch what we send you".
+CONFIG_HUB75_GAMMA_LINEAR=y
+
+# The S3 has native USB, so no serial adapter is needed to flash or monitor.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# The render task briefly holds the CPU while blitting a full frame.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# Brownout detection matters here: an undersized 5V supply drooping under an
+# all-white frame reads as a random firmware crash if this is off.
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

@@ -1,0 +1,175 @@
+menu "Smart Mirror"
+
+    menu "Network"
+
+        config MIRROR_WIFI_SSID
+            string "WiFi SSID"
+            default "changeme"
+            help
+                Credentials live in sdkconfig, which is gitignored, so they do
+                not end up in the repository. Captive-portal provisioning
+                replaces this in M5.
+
+        config MIRROR_WIFI_PASSWORD
+            string "WiFi password"
+            default ""
+
+        config MIRROR_WIFI_MAX_RETRY
+            int "Reconnect attempts before backing off"
+            default 8
+            help
+                After this many consecutive failures the firmware waits before
+                trying again, rather than hammering the access point. The panel
+                keeps rendering throughout; it just shows stale data.
+
+        config MIRROR_SNTP_SERVER
+            string "SNTP server"
+            default "pool.ntp.org"
+
+        config MIRROR_TIMEZONE
+            string "POSIX timezone string"
+            default "GMT0BST,M3.5.0/1,M10.5.0"
+            help
+                POSIX TZ format, which encodes daylight saving transitions so
+                the clock does not need re-flashing twice a year.
+
+                UK:          GMT0BST,M3.5.0/1,M10.5.0
+                Central EU:  CET-1CEST,M3.5.0,M10.5.0/3
+                US Eastern:  EST5EDT,M3.2.0,M11.1.0
+                UTC:         UTC0
+
+    endmenu
+
+    menu "Panel"
+
+        config MIRROR_PANEL_WIDTH
+            int "Single panel width in pixels"
+            default 64
+
+        config MIRROR_PANEL_HEIGHT
+            int "Single panel height in pixels"
+            default 64
+
+        config MIRROR_PANEL_COLS
+            int "Panels across"
+            default 2
+            help
+                Two 64x64 panels side by side gives the 128x64 canvas the stock
+                layouts are tuned for.
+
+        config MIRROR_PANEL_ROWS
+            int "Panels down"
+            default 1
+
+        choice MIRROR_SHIFT_DRIVER
+            prompt "Shift register driver IC"
+            default MIRROR_SHIFT_GENERIC
+            help
+                Waveshare ships these panels with either an ICN2038S, which
+                needs no setup, or an FM6126A, which needs an initialisation
+                sequence and stays completely dark without it. Which one is in
+                the box is not documented per unit.
+
+                If the panel is dark or shows garbage on first power-up, try
+                the other option here before suspecting your wiring.
+
+            config MIRROR_SHIFT_GENERIC
+                bool "Generic (works for ICN2038S and most panels)"
+            config MIRROR_SHIFT_FM6126A
+                bool "FM6126A"
+            config MIRROR_SHIFT_ICN2038S
+                bool "ICN2038S"
+            config MIRROR_SHIFT_FM6124
+                bool "FM6124"
+            config MIRROR_SHIFT_MBI5124
+                bool "MBI5124"
+            config MIRROR_SHIFT_DP3246
+                bool "DP3246"
+        endchoice
+
+        config MIRROR_BRIGHTNESS
+            int "Panel brightness (0-255)"
+            range 0 255
+            default 120
+            help
+                Applied by the driver in hardware, by shortening LED on-time.
+                Doing it there rather than by scaling colour values preserves
+                the full colour depth, which matters at the low settings a
+                mirror behind glass actually runs at.
+
+                Start low. These panels are rated 4A each at full white.
+
+        config MIRROR_MIN_REFRESH_HZ
+            int "Minimum refresh rate (Hz)"
+            default 60
+            help
+                The driver trades colour depth against refresh rate to meet
+                this. Below about 60Hz the panel visibly flickers, especially
+                in peripheral vision, which is exactly how a mirror is seen.
+
+        config MIRROR_TEST_PATTERN
+            bool "Show a colour test pattern at boot"
+            default y
+            help
+                Draws red, green, blue and white bars for two seconds before
+                normal rendering. Worth keeping during bring-up: it makes a
+                swapped colour channel or a dead data line obvious
+                immediately, rather than looking like a layout problem.
+
+    endmenu
+
+    menu "Panel pins (ESP32-S3 N16R8)"
+
+        comment "Avoid GPIO 0/3/45/46 (strapping), 26-32 (flash), 33-37 (octal PSRAM)"
+
+        config MIRROR_PIN_R1
+            int "R1"
+            default 4
+        config MIRROR_PIN_G1
+            int "G1"
+            default 5
+        config MIRROR_PIN_B1
+            int "B1"
+            default 6
+        config MIRROR_PIN_R2
+            int "R2"
+            default 7
+        config MIRROR_PIN_G2
+            int "G2"
+            default 15
+        config MIRROR_PIN_B2
+            int "B2"
+            default 16
+        config MIRROR_PIN_A
+            int "A"
+            default 17
+        config MIRROR_PIN_B
+            int "B"
+            default 18
+        config MIRROR_PIN_C
+            int "C"
+            default 8
+        config MIRROR_PIN_D
+            int "D"
+            default 9
+        config MIRROR_PIN_E
+            int "E"
+            default 10
+            help
+                Required for 64-row panels, which are 1/32 scan and need five
+                address lines. Some older HUB75 diagrams show ground in this
+                position; that is correct for 1/16 scan 64x32 panels and wrong
+                here. Set to -1 only for panels of 32 rows or fewer.
+        config MIRROR_PIN_LAT
+            int "LAT"
+            default 11
+        config MIRROR_PIN_OE
+            int "OE"
+            default 12
+        config MIRROR_PIN_CLK
+            int "CLK"
+            default 13
+
+    endmenu
+
+endmenu

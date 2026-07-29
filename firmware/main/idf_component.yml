@@ -1,0 +1,17 @@
+## Managed dependencies for the smart mirror firmware.
+##
+## Declaring the driver here also makes it a requirement of this component, so
+## it does not need repeating in REQUIRES.
+
+dependencies:
+  idf:
+    version: ">=5.0"
+
+  ## Native ESP-IDF HUB75 driver: static circular DMA, no CPU involvement after
+  ## init. Chosen over the Arduino-flavoured ESP32-HUB75-MatrixPanel-DMA so the
+  ## firmware does not need an Arduino compatibility layer.
+  ##
+  ## Note the version: the project README still shows ^0.1.0, but the registry
+  ## has 0.3.x and the API documented there is the newer one.
+  esphome/esp-hub75:
+    version: "^0.3.0"

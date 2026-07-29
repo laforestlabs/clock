@@ -1,0 +1,14 @@
+# Partition table for a 16MB ESP32-S3-DevKitC-1 N16R8.
+#
+# Laid out for OTA from the start even though OTA itself lands in M5. There is
+# plenty of flash, and repartitioning a mirror that is already mounted in a
+# wall means pulling it back out to reflash over USB.
+#
+# Name,     Type, SubType,  Offset,   Size,   Flags
+nvs,        data, nvs,      0x9000,   0x6000,
+otadata,    data, ota,      0xf000,   0x2000,
+phy_init,   data, phy,      0x11000,  0x1000,
+ota_0,      app,  ota_0,    0x20000,  4M,
+ota_1,      app,  ota_1,    ,         4M,
+# Layouts pushed from the designer, plus cached provider payloads.
+storage,    data, spiffs,   ,         1M,
