@@ -38,11 +38,17 @@ is needed to run any of it today.
 | Milestone | State |
 |---|---|
 | M0 Core, host build, CLI, golden tests | Done |
-| M1 PySide6 layout designer | Not started |
+| M1 Flutter layout designer (desktop and mobile) | Written, needs Flutter installed to build |
 | M2 Panel bring-up on ESP32-S3 | Not started |
 | M3 Data providers and calendar companion | Not started |
 | M4 Hot-reload layout push | Not started |
 | M5 Provisioning, brightness, OTA | Not started |
+
+The designer is Flutter rather than a desktop-only toolkit so the same app runs
+on a phone and on a PC. It calls the C core through `dart:ffi`, which covers
+Android, iOS, Linux, macOS and Windows. Flutter web is the one target it cannot
+reach, since web has no FFI; that would need a second build of the core through
+Emscripten.
 
 ## Quick start
 
@@ -151,6 +157,7 @@ core/       portable C99 render engine. No platform dependencies. The contract.
   include/mirror/   public headers
   src/              canvas, fonts, json, layout, model, render, mock
   src/fonts/        GENERATED glyph tables
+  ffi/              narrow JSON-in-pixels-out facade for the designer
   host/             host-only: PNG writer and the CLI harness
   test/             unit tests and golden-image regression tests
 fonts/      editable ASCII-art font sources
@@ -158,9 +165,23 @@ layouts/    stock layouts for 64x64, 128x64 and 128x128
 tools/      fontgen, fontproof, gamma table generator
 docs/       hardware notes
 firmware/   ESP-IDF application (M2)
-designer/   PySide6 layout designer (M1)
+designer/   Flutter layout designer, desktop and mobile (M1)
 companion/  optional calendar helper service (M3)
 ```
+
+## Designer
+
+```sh
+cd designer
+./setup.sh              # generates platform build files, needs Flutter
+flutter run -d linux
+```
+
+See [designer/README.md](designer/README.md). The short version of how it stays
+honest: the app renders through the same `core/` C compiled for the host, so
+the preview is the panel. Selection outlines and two-way-mirror dimming are
+drawn by the view layer and never enter the engine's framebuffer, because the
+moment editor chrome lands in those pixels the preview stops being trustworthy.
 
 ## Testing
 

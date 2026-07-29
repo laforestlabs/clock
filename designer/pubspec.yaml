@@ -1,0 +1,35 @@
+name: mirror_designer
+description: Layout designer and pixel-exact simulator for the ESP32 smart mirror.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Compiles core/ for each target platform and bundles the result. Generated
+  # by setup.sh; see designer/README.md.
+  mirror_core_ffi:
+    path: packages/mirror_core_ffi
+  # Utf8 helpers for the C string boundary.
+  ffi: ^2.1.3
+  # Local file open and save on desktop and mobile.
+  file_selector: ^1.0.3
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # The stock layouts are shared with the firmware and the CLI rather than
+    # duplicated here. setup.sh links this directory to the repository's
+    # top-level layouts folder so there is one copy of the truth.
+    - assets/layouts/

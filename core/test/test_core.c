@@ -18,6 +18,7 @@
 #include "mirror/json.h"
 #include "mirror/mirror.h"
 #include "mirror/mock.h"
+#include "mirror_ffi.h"
 #include "png_write.h"
 
 static int g_checks;
@@ -356,6 +357,180 @@ static void test_render_purity(void)
     ml_canvas_free(&b);
 }
 
+/* ------------------------------------------------------- the FFI facade */
+
+static const char k_ffi_doc[] =
+    "{\"name\":\"ffitest\",\"canvas\":{\"width\":64,\"height\":32},"
+    "\"brightness\":200,\"widgets\":["
+    "{\"type\":\"rect\",\"id\":\"bg\",\"rect\":[0,0,64,10],\"color\":\"#202020\"},"
+    "{\"type\":\"clock\",\"id\":\"c\",\"rect\":[0,12,64,16]}"
+    "]}";
+
+static void test_ffi(void)
+{
+    group("ffi facade");
+
+    ml_sim *s = ml_sim_create();
+    CHECK(s != NULL, "sim created");
+    if (!s) return;
+
+    CHECK(ml_sim_load(s, k_ffi_doc) == 1, "loads a valid layout");
+    CHECK(ml_sim_width(s) == 64 && ml_sim_height(s) == 32, "reports canvas size");
+    CHECK(strcmp(ml_sim_name(s), "ffitest") == 0, "reports layout name");
+    CHECK(ml_sim_widget_count(s) == 2, "reports widget count");
+    CHECK(strcmp(ml_sim_widget_type(s, 0), "rect") == 0, "reports widget type");
+    CHECK(strcmp(ml_sim_widget_id(s, 1), "c") == 0, "reports widget id");
+
+    int x, y, w, h;
+    CHECK(ml_sim_widget_rect(s, 1, &x, &y, &w, &h) && x == 0 && y == 12 && w == 64 && h == 16,
+          "reports widget rect");
+    CHECK(!ml_sim_widget_rect(s, 99, &x, &y, &w, &h), "rejects a bad widget index");
+
+    /* Hit testing must pick the topmost widget covering a pixel. */
+    CHECK(ml_sim_hit_test(s, 5, 5) == 0, "hit test finds the first widget");
+    CHECK(ml_sim_hit_test(s, 5, 20) == 1, "hit test finds the second widget");
+    CHECK(ml_sim_hit_test(s, 5, 11) == -1, "hit test returns -1 in a gap");
+
+    /*
+     * A failed load must leave the previous layout intact. The designer keeps
+     * rendering the last good version while the user is midway through
+     * breaking their JSON, rather than flashing an empty panel on every
+     * keystroke.
+     */
+    CHECK(ml_sim_load(s, "{ broken") == 0, "rejects malformed JSON");
+    CHECK(ml_sim_width(s) == 64 && ml_sim_widget_count(s) == 2,
+          "failed load preserves the previous layout");
+    CHECK(strlen(ml_sim_error(s)) > 0, "failed load sets an error message");
+
+    /* Accessors must never hand Dart a NULL char*. */
+    CHECK(ml_sim_widget_type(s, 999) != NULL, "out of range type is not NULL");
+    CHECK(ml_sim_widget_id(s, -1) != NULL, "negative index id is not NULL");
+    CHECK(ml_sim_diag_at(s, 999) != NULL, "out of range diag is not NULL");
+    CHECK(ml_sim_variant_name(999) != NULL, "out of range variant is not NULL");
+
+    /* Reload the good layout for the rendering checks. */
+    CHECK(ml_sim_load(s, k_ffi_doc) == 1, "reloads cleanly");
+
+    const uint8_t *rgba = ml_sim_render_rgba(s);
+    CHECK(rgba != NULL, "renders");
+    CHECK(ml_sim_rgba_size(s) == 64 * 32 * 4, "reports the buffer size");
+
+    bool opaque = true;
+    for (int i = 0; i < 64 * 32; i++) {
+        if (rgba[i * 4 + 3] != 255) opaque = false;
+    }
+    CHECK(opaque, "every pixel is fully opaque");
+
+    /*
+     * The guarantee the whole architecture rests on: what the designer draws
+     * must be exactly what the panel receives. Render the same layout and
+     * model through the plain core path and compare channel by channel.
+     */
+    ml_layout direct;
+    ml_diag   ddiag;
+    ml_model  dmodel;
+    ml_canvas dcanvas;
+
+    ml_layout_parse(k_ffi_doc, strlen(k_ffi_doc), &direct, &ddiag);
+    ml_model_mock(&dmodel, ML_MOCK_TYPICAL);
+    ml_canvas_init(&dcanvas, direct.w, direct.h, NULL);
+    ml_render(&direct, &dmodel, &dcanvas);
+
+    uint8_t *reference = (uint8_t *)malloc((size_t)direct.w * (size_t)direct.h * 3);
+    ml_canvas_export_rgb888(&dcanvas, direct.brightness, reference);
+
+    bool identical = true;
+    for (int i = 0; i < direct.w * direct.h; i++) {
+        if (rgba[i * 4 + 0] != reference[i * 3 + 0] ||
+            rgba[i * 4 + 1] != reference[i * 3 + 1] ||
+            rgba[i * 4 + 2] != reference[i * 3 + 2]) {
+            identical = false;
+            break;
+        }
+    }
+    CHECK(identical, "FFI pixels are identical to the panel's pixels");
+
+    free(reference);
+    ml_canvas_free(&dcanvas);
+
+    /* Brightness override has to actually change the output, and -1 has to
+     * restore whatever the layout asked for. */
+    uint64_t at_layout_brightness = fnv1a(rgba, (size_t)ml_sim_rgba_size(s));
+
+    ml_sim_set_brightness(s, 40);
+    uint64_t dimmed = fnv1a(ml_sim_render_rgba(s), (size_t)ml_sim_rgba_size(s));
+    CHECK(dimmed != at_layout_brightness, "brightness override changes the render");
+
+    ml_sim_set_brightness(s, -1);
+    uint64_t restored = fnv1a(ml_sim_render_rgba(s), (size_t)ml_sim_rgba_size(s));
+    CHECK(restored == at_layout_brightness, "brightness -1 restores the layout value");
+
+    /* Switching fixtures must change what is drawn, or the variant picker is
+     * doing nothing. */
+    ml_sim_set_variant(s, ML_MOCK_COLD);
+    uint64_t cold = fnv1a(ml_sim_render_rgba(s), (size_t)ml_sim_rgba_size(s));
+    CHECK(cold != restored, "changing the mock variant changes the render");
+    ml_sim_set_variant(s, ML_MOCK_TYPICAL);
+
+    /* Round trip through the same writer the device uses. */
+    const char *json = ml_sim_to_json(s);
+    CHECK(json && strlen(json) > 0, "serializes to JSON");
+
+    ml_sim *reloaded = ml_sim_create();
+    CHECK(ml_sim_load(reloaded, json) == 1, "its own output reloads");
+    CHECK(ml_sim_widget_count(reloaded) == 2, "round trip preserves widgets");
+    CHECK(ml_sim_width(reloaded) == 64, "round trip preserves canvas");
+    ml_sim_destroy(reloaded);
+
+    /* Catalogue drives the designer's pickers, so it must be non-empty. */
+    CHECK(ml_sim_font_count() >= 3, "fonts enumerated");
+    CHECK(strlen(ml_sim_font_name(0)) > 0, "font names available");
+    CHECK(ml_sim_font_height(0) > 0, "font heights available");
+    CHECK(ml_sim_type_count() == 9, "all widget types enumerated");
+    CHECK(ml_sim_bind_count() > 10, "bind paths enumerated");
+
+    /* Every advertised bind path must actually resolve, or the inspector would
+     * offer users paths that silently render as a placeholder. */
+    ml_model probe;
+    ml_model_mock(&probe, ML_MOCK_TYPICAL);
+    bool all_resolve = true;
+    for (int i = 0; i < ml_sim_bind_count(); i++) {
+        bool is_num; double num; const char *sval;
+        if (!ml_model_lookup(&probe, ml_sim_bind_at(i), &is_num, &num, &sval)) {
+            all_resolve = false;
+            printf("        unresolvable bind path: %s\n", ml_sim_bind_at(i));
+        }
+    }
+    CHECK(all_resolve, "every advertised bind path resolves");
+
+    /* Every advertised widget type must be recognised by the parser. */
+    bool all_types = true;
+    for (int i = 0; i < ml_sim_type_count(); i++) {
+        if (ml_widget_type_from_name(ml_sim_type_name(i)) == ML_W_UNKNOWN) {
+            all_types = false;
+            printf("        unrecognised widget type: %s\n", ml_sim_type_name(i));
+        }
+    }
+    CHECK(all_types, "every advertised widget type is recognised");
+
+    CHECK(ml_sim_render_version() == ML_RENDER_VERSION, "reports the engine version");
+
+    /* A fresh sim with no layout must not render or crash. */
+    ml_sim *empty = ml_sim_create();
+    CHECK(ml_sim_render_rgba(empty) == NULL, "unloaded sim renders nothing");
+    CHECK(ml_sim_rgba_size(empty) == 0, "unloaded sim reports zero size");
+    ml_sim_destroy(empty);
+
+    /* NULL handles must be survivable, since Dart can pass one after a failed
+     * create. */
+    ml_sim_destroy(NULL);
+    CHECK(ml_sim_render_rgba(NULL) == NULL, "NULL sim renders nothing");
+    CHECK(ml_sim_width(NULL) == 0, "NULL sim reports zero width");
+    CHECK(ml_sim_error(NULL) != NULL, "NULL sim error is not NULL");
+
+    ml_sim_destroy(s);
+}
+
 /* --------------------------------------------------------- golden images */
 
 #define GOLDEN_PATH "test/golden/digests.txt"
@@ -515,6 +690,7 @@ int main(void)
     test_layout();
     test_fonts();
     test_render_purity();
+    test_ffi();
     test_golden();
 
     printf("\n%d checks, %d failure(s)\n", g_checks, g_fails);

@@ -18,13 +18,16 @@ OPT     ?= -O2 -g
 STD     := -std=c99
 WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes \
            -Wmissing-prototypes -Wpointer-arith -Wwrite-strings
-INC     := -Iinclude -Ihost
+INC     := -Iinclude -Ihost -Iffi
 CFLAGS  := $(STD) $(WARN) $(OPT) $(INC)
 LDLIBS  :=
 
 BUILD   := build/host
 
-CORE_SRC := $(sort $(wildcard src/*.c) $(wildcard src/fonts/*.c))
+# ffi/ is part of the shared library because that is what the Flutter designer
+# binds to. The ESP-IDF component build excludes it; the firmware has no use
+# for a simulation handle.
+CORE_SRC := $(sort $(wildcard src/*.c) $(wildcard src/fonts/*.c) $(wildcard ffi/*.c))
 HOST_SRC := host/png_write.c
 TEST_SRC := $(sort $(wildcard test/*.c))
 
@@ -38,9 +41,12 @@ LIB_SO := $(BUILD)/libmirrorcore.so
 CLI    := $(BUILD)/mirror-cli
 TEST   := $(BUILD)/mirror-test
 
-.PHONY: all clean test fonts fontcheck cli lib
+.PHONY: all clean test fonts fontcheck bindcheck check cli lib
 
 all: $(LIB_A) $(LIB_SO) $(CLI)
+
+# Everything a change to the core should pass before it is committed.
+check: fontcheck test bindcheck
 
 lib: $(LIB_A) $(LIB_SO)
 cli: $(CLI)
@@ -87,6 +93,12 @@ fonts:
 # regeneration cannot silently ship stale glyphs.
 fontcheck:
 	@$(PYTHON) ../tools/fontgen.py --check
+
+# Fails if the Flutter designer binds a symbol the library does not export.
+# That mismatch compiles cleanly on both sides and only shows up as a crash on
+# device, so it is worth catching here.
+bindcheck: $(LIB_SO)
+	@$(PYTHON) ../tools/check_bindings.py
 
 clean:
 	@rm -rf $(BUILD)
