@@ -10,7 +10,7 @@
 // the whole shared-renderer design is pointless.
 
 import 'dart:async';
-import 'dart:typed_data';
+
 import 'dart:ui' as ui;
 
 import 'dart:ffi';
@@ -174,9 +174,10 @@ class MirrorEngine {
 
   /// Overrides the layout's brightness. Pass null to use the layout's value.
   ///
-  /// This belongs in native code rather than as a view filter because the
-  /// device really does scale by brightness before applying gamma, so doing it
-  /// here is part of matching the panel.
+  /// This belongs in native code rather than in a view filter because the
+  /// panel really does dim, by shortening LED on-time after its gamma LUT.
+  /// The engine models that as a linear scale applied after gamma, so the
+  /// preview dims the way the hardware does.
   void setBrightness(int? brightness) {
     _assertLive();
     _b.simSetBrightness(_sim, brightness ?? -1);

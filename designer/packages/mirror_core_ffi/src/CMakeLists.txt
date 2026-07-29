@@ -15,16 +15,35 @@ cmake_minimum_required(VERSION 3.10)
 # template uses, and the generated linux and windows CMakeLists assume it.
 project(mirror_core_ffi_library VERSION 0.1.0 LANGUAGES C)
 
-# designer/packages/mirror_core_ffi/src -> repository root -> core
-get_filename_component(MIRROR_CORE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../core" ABSOLUTE)
+# Locate the repository's core directory.
+#
+# Two things make a fixed relative path unreliable here. Flutter symlinks this
+# package into <platform>/flutter/ephemeral/.plugin_symlinks/ before building,
+# so CMAKE_CURRENT_LIST_DIR is the symlinked path and "../../.." counts levels
+# in the wrong tree. And the nesting depth differs between platforms.
+#
+# So: resolve the real location first, then walk up looking for the marker.
+get_filename_component(_mirror_probe "${CMAKE_CURRENT_LIST_DIR}" REALPATH)
 
-if(NOT EXISTS "${MIRROR_CORE}/ffi/mirror_ffi.c")
+set(MIRROR_CORE "")
+foreach(_level RANGE 8)
+    if(EXISTS "${_mirror_probe}/core/ffi/mirror_ffi.c")
+        set(MIRROR_CORE "${_mirror_probe}/core")
+        break()
+    endif()
+    get_filename_component(_mirror_probe "${_mirror_probe}" DIRECTORY)
+endforeach()
+
+if(MIRROR_CORE STREQUAL "")
     message(FATAL_ERROR
-        "Cannot find the render core at ${MIRROR_CORE}.\n"
+        "Cannot find the render core.\n"
+        "Searched upward from ${CMAKE_CURRENT_LIST_DIR} (resolved) for "
+        "core/ffi/mirror_ffi.c.\n"
         "This package must stay inside the smart-mirror repository; it "
         "compiles core/ in place rather than vendoring a copy.")
 endif()
+
+message(STATUS "mirror: compiling the render core from ${MIRROR_CORE}")
 
 # Generated glyph tables are committed, but a stale checkout would fail here
 # with a confusing linker error rather than an obvious one.

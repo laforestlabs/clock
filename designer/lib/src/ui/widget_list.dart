@@ -64,7 +64,7 @@ class WidgetListPanel extends StatelessWidget {
               key: ValueKey<int>(index),
               dense: true,
               selected: selected,
-              selectedTileColor: theme.colorScheme.primary.withOpacity(0.14),
+              selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.14),
               leading: Icon(
                 _icons[w.type] ?? Icons.help_outline,
                 size: 20,

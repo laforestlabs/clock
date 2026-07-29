@@ -62,62 +62,60 @@ class MirrorLibraryException implements Exception {
 }
 
 class MirrorBindings {
-  MirrorBindings._(this._lib)
-      : simCreate = _lib.lookupFunction<_CreateC, _CreateC>('ml_sim_create'),
-        simDestroy = _lib.lookupFunction<_DestroyC, _DestroyD>('ml_sim_destroy'),
-        simLoad = _lib.lookupFunction<_LoadC, _LoadD>('ml_sim_load'),
+  MirrorBindings._(DynamicLibrary lib)
+      : simCreate = lib.lookupFunction<_CreateC, _CreateC>('ml_sim_create'),
+        simDestroy = lib.lookupFunction<_DestroyC, _DestroyD>('ml_sim_destroy'),
+        simLoad = lib.lookupFunction<_LoadC, _LoadD>('ml_sim_load'),
         simToJson =
-            _lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_to_json'),
-        simError = _lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_error'),
+            lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_to_json'),
+        simError = lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_error'),
         simDiagCount =
-            _lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_diag_count'),
+            lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_diag_count'),
         simDiagAt =
-            _lib.lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_diag_at'),
-        simWidth = _lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_width'),
+            lib.lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_diag_at'),
+        simWidth = lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_width'),
         simHeight =
-            _lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_height'),
-        simName = _lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_name'),
-        simWidgetCount = _lib
+            lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_height'),
+        simName = lib.lookupFunction<_SimToStrC, _SimToStrC>('ml_sim_name'),
+        simWidgetCount = lib
             .lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_widget_count'),
-        simWidgetRect = _lib
+        simWidgetRect = lib
             .lookupFunction<_WidgetRectC, _WidgetRectD>('ml_sim_widget_rect'),
-        simWidgetType = _lib
+        simWidgetType = lib
             .lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_widget_type'),
-        simWidgetId = _lib
+        simWidgetId = lib
             .lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_widget_id'),
         simHitTest =
-            _lib.lookupFunction<_HitTestC, _HitTestD>('ml_sim_hit_test'),
-        simSetVariant = _lib
+            lib.lookupFunction<_HitTestC, _HitTestD>('ml_sim_hit_test'),
+        simSetVariant = lib
             .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_variant'),
-        simSetBrightness = _lib
+        simSetBrightness = lib
             .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_brightness'),
         simRenderRgba =
-            _lib.lookupFunction<_RenderC, _RenderC>('ml_sim_render_rgba'),
+            lib.lookupFunction<_RenderC, _RenderC>('ml_sim_render_rgba'),
         simRgbaSize =
-            _lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_rgba_size'),
-        variantCount = _lib
+            lib.lookupFunction<_SimToIntC, _SimToIntD>('ml_sim_rgba_size'),
+        variantCount = lib
             .lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_variant_count'),
-        variantName = _lib
+        variantName = lib
             .lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_variant_name'),
         fontCount =
-            _lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_font_count'),
+            lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_font_count'),
         fontName =
-            _lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_font_name'),
+            lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_font_name'),
         fontHeight =
-            _lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_height'),
+            lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_height'),
         typeCount =
-            _lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_type_count'),
+            lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_type_count'),
         typeName =
-            _lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_type_name'),
+            lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_type_name'),
         bindCount =
-            _lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_bind_count'),
-        bindAt = _lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_bind_at'),
-        renderVersion = _lib
+            lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_bind_count'),
+        bindAt = lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_bind_at'),
+        renderVersion = lib
             .lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_render_version'),
-        versionString = _lib
+        versionString = lib
             .lookupFunction<_VoidToStrC, _VoidToStrC>('ml_sim_version_string');
-
-  final DynamicLibrary _lib;
 
   final Pointer<Void> Function() simCreate;
   final void Function(Pointer<Void>) simDestroy;

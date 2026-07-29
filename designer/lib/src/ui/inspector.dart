@@ -399,7 +399,7 @@ class _Dropdown extends StatelessWidget {
     ];
 
     return DropdownButtonFormField<String>(
-      value: value?.isNotEmpty == true ? value : null,
+      initialValue: value?.isNotEmpty == true ? value : null,
       isExpanded: true,
       decoration: InputDecoration(
         labelText: label,
