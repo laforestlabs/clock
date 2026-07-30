@@ -40,6 +40,45 @@ menu "Smart Mirror"
 
     endmenu
 
+    menu "Weather"
+
+        config MIRROR_LATITUDE
+            string "Latitude"
+            default "51.5074"
+            help
+                Decimal degrees. Kconfig has no float type, so this is a
+                string and gets substituted into the query as written.
+
+                Open-Meteo needs no API key and no signup, which means the
+                mirror has no weather credential to expire or leak.
+
+        config MIRROR_LONGITUDE
+            string "Longitude"
+            default "-0.1278"
+            help
+                Decimal degrees, negative for west.
+
+        config MIRROR_PLACE_NAME
+            string "Place label"
+            default "Home"
+            help
+                Shown by anything bound to weather.place. Purely cosmetic;
+                the forecast comes from the coordinates above.
+
+        config MIRROR_WEATHER_INTERVAL_S
+            int "Refresh interval (seconds)"
+            default 900
+            range 300 21600
+            help
+                Every 15 minutes is 96 calls a day, comfortably inside
+                Open-Meteo's free allowance, and the data itself only updates
+                about every 15 minutes anyway. Polling faster gains nothing.
+
+                Data is marked stale after three missed intervals, at which
+                point widgets show a placeholder rather than a stale reading.
+
+    endmenu
+
     menu "Panel"
 
         config MIRROR_PANEL_WIDTH

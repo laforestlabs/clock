@@ -143,8 +143,51 @@ shift clock near 13MHz and flicker visibly. The canvas and frame buffers do go
 in PSRAM, since only the CPU reads them, which keeps internal SRAM free for
 DMA. The log reports which pool each allocation landed in at boot.
 
+## Data providers
+
+Weather comes from **Open-Meteo**, fetched directly by the device over HTTPS.
+No API key and no signup, which matters more than convenience: the mirror has
+no weather credential to expire, leak, or re-provision.
+
+Set your coordinates in `Smart Mirror > Weather`. The default is central
+London, so it will show you plausible-looking weather for the wrong place if
+you forget.
+
+Certificate verification uses ESP-IDF's bundled root store rather than a pinned
+certificate. Pinning would turn a provider's routine cert rotation into a
+mirror that silently stops updating.
+
+### Staleness is deliberate
+
+Each provider declares a refresh interval and a grace period. After three
+missed intervals its data is marked invalid and the widget falls back to a
+placeholder.
+
+That is on purpose. A mirror showing last Tuesday's temperature as though it
+were current is worse than one showing `--`, because you cannot tell by looking
+that it is wrong, and you dress for the wrong weather. Stale data has to
+announce itself.
+
+Failures back off exponentially, capped at an hour. When the link returns the
+backoff is cleared immediately, since an outage's failures are the network's
+fault and the penalty should not outlive it.
+
+### Threading
+
+The render task never blocks on the network. Providers fetch into their own
+buffers and take the model mutex only for the copy, so a stalled TLS handshake
+cannot delay a frame. Time and link state are not providers at all; they are
+read locally every frame, so the clock keeps ticking regardless.
+
 ## Not yet implemented
 
-M2 ends here. Weather, calendar and todo data arrive in M3, layout push over
-the LAN in M4, and WiFi provisioning plus OTA in M5. Until then those widgets
-render their placeholders.
+**Calendar is deferred.** Expanding ICS recurrence rules is impractical on the
+device, and the usual fix, a small helper service, needs a machine that is
+always on. If it comes back, the route is Google Calendar's
+`events.list?singleEvents=true`, which expands recurrences server-side, with
+the Flutter app performing the one-time OAuth and handing the device a refresh
+token.
+
+**Todos** are not wired up yet; the widget shows its empty state.
+
+Layout push over the LAN arrives in M4, WiFi provisioning and OTA in M5.

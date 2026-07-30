@@ -40,9 +40,15 @@ is needed to run any of it today.
 | M0 Core, host build, CLI, golden tests | Done |
 | M1 Flutter layout designer (desktop and mobile) | Done, builds and runs on Linux |
 | M2 Panel bring-up on ESP32-S3 | Firmware written, awaiting hardware |
-| M3 Data providers and calendar companion | Not started |
+| M3 Data providers | Weather done; todos pending, calendar deferred |
 | M4 Hot-reload layout push | Not started |
 | M5 Provisioning, brightness, OTA | Not started |
+
+There is no companion service. Weather comes straight from Open-Meteo, which
+needs no API key. Calendar was deferred rather than solved with a helper box,
+because expanding ICS recurrence rules is impractical on an MCU and the helper
+would need a machine that is always on. The route back is Google Calendar's
+`singleEvents=true`, which expands recurrences server-side.
 
 The designer is Flutter rather than a desktop-only toolkit so the same app runs
 on a phone and on a PC. It calls the C core through `dart:ffi`, which covers
@@ -181,9 +187,8 @@ fonts/      editable ASCII-art font sources
 layouts/    stock layouts for 64x64, 128x64 and 128x128
 tools/      fontgen, fontproof, gamma table generator
 docs/       hardware notes
-firmware/   ESP-IDF application (M2)
-designer/   Flutter layout designer, desktop and mobile (M1)
-companion/  optional calendar helper service (M3)
+firmware/   ESP-IDF application: panel, wifi, clock, data providers
+designer/   Flutter layout designer, desktop and mobile
 ```
 
 ## Designer

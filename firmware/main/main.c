@@ -24,9 +24,12 @@
 #include "sdkconfig.h"
 
 #include "mirror/mirror.h"
+#include "model_store.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "panel.h"
+#include "providers/openmeteo.h"
+#include "providers/provider.h"
 
 static const char *TAG = "mirror";
 
@@ -91,6 +94,13 @@ static void render_task(void *arg)
     bool was_synced = false;
 
     for (;;) {
+        /*
+         * Provider-sourced fields come from the shared store. Time and link
+         * state are local and free to read, so they are filled per frame
+         * instead of going through a provider: the clock keeps ticking at
+         * frame rate no matter what the network is doing.
+         */
+        model_store_snapshot(&model);
         sntp_time_fill(&model.now);
         model.online = wifi_is_connected();
         model.wifi_rssi = wifi_rssi();
@@ -116,11 +126,13 @@ static void render_task(void *arg)
 
         /* Roughly every 30 seconds. */
         if ((frames % (30000 / RENDER_PERIOD_MS)) == 0) {
-            ESP_LOGI(TAG, "up %lus, wifi %s (%s, %d dBm), clock %s, free heap %u",
+            ESP_LOGI(TAG,
+                     "up %lus, wifi %s (%s, %d dBm), clock %s, weather %s, free heap %u",
                      (unsigned long)model.uptime_s,
                      model.online ? "up" : "down",
                      wifi_ip(), model.wifi_rssi,
                      model.now.valid ? "set" : "unset",
+                     model.weather.valid ? "ok" : "stale",
                      (unsigned)esp_get_free_heap_size());
         }
         frames++;
@@ -179,6 +191,9 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    /* Before the render task, which reads through it every frame. */
+    ESP_ERROR_CHECK(model_store_init());
+
     /*
      * Panel first, deliberately. It needs the largest contiguous block of
      * DMA-capable internal SRAM in the system, and asking for it before WiFi
@@ -207,6 +222,24 @@ void app_main(void)
 
     ESP_ERROR_CHECK(wifi_start());
     sntp_time_start();
+
+    /*
+     * Data providers last. They tolerate being offline, backing off and
+     * marking their data stale rather than blocking, so there is no need to
+     * wait for an association before starting them.
+     */
+    static ml_provider providers[1];
+    int provider_count = 0;
+
+    if (openmeteo_init() == ESP_OK) {
+        providers[provider_count++] = *openmeteo_provider();
+    } else {
+        ESP_LOGE(TAG, "weather disabled: buffers could not be allocated");
+    }
+
+    if (provider_count > 0) {
+        ESP_ERROR_CHECK(providers_start(providers, provider_count));
+    }
 
     ESP_LOGI(TAG, "running");
 }
