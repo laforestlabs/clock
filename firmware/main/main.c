@@ -35,8 +35,8 @@ static const char *TAG = "mirror";
 
 /* The default layout, baked in by EMBED_TXTFILES. Same file the designer and
  * the golden-image tests use. */
-extern const char layout_json_start[] asm("_binary_dual_json_start");
-extern const char layout_json_end[] asm("_binary_dual_json_end");
+extern const char layout_json_start[] asm("_binary_mini_json_start");
+extern const char layout_json_end[] asm("_binary_mini_json_end");
 
 static ml_layout s_layout;
 

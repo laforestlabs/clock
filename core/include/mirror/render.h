@@ -34,8 +34,12 @@ void ml_render_widget(const ml_widget *w, const ml_model *model, ml_canvas *out)
  *   1  initial
  *   2  brightness moved to a linear scale after gamma, matching how the panel
  *      driver actually dims (OE modulation applied after its gamma LUT)
+ *   3  per-widget "scale" and "fit". Output for layouts that use neither is
+ *      unchanged, but a version 2 device sent a scaled layout draws it at 1x
+ *      and silently disagrees with the designer's preview, which is exactly
+ *      the mismatch this constant exists to catch.
  */
-#define ML_RENDER_VERSION 2
+#define ML_RENDER_VERSION 3
 
 #ifdef __cplusplus
 }

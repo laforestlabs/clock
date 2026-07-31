@@ -27,5 +27,5 @@ idf_component_register(
     # useful before anything has been pushed to it. It is the same file the
     # designer and the golden tests use, not a copy.
     EMBED_TXTFILES
-        "${CMAKE_CURRENT_LIST_DIR}/../../layouts/dual.json"
+        "${CMAKE_CURRENT_LIST_DIR}/../../layouts/mini.json"
 )

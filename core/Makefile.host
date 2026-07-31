@@ -29,11 +29,15 @@ BUILD   := build/host
 # for a simulation handle.
 CORE_SRC := $(sort $(wildcard src/*.c) $(wildcard src/fonts/*.c) $(wildcard ffi/*.c))
 HOST_SRC := host/png_write.c
+# Kept out of HOST_SRC because it defines main(), and HOST_OBJ also links into
+# the test binary. It still needs its own dependency file included below.
+CLI_SRC  := host/mirror_cli.c
 TEST_SRC := $(sort $(wildcard test/*.c))
 
 CORE_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRC))
 CORE_PIC := $(patsubst %.c,$(BUILD)/pic/%.o,$(CORE_SRC))
 HOST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(HOST_SRC))
+CLI_OBJ  := $(patsubst %.c,$(BUILD)/%.o,$(CLI_SRC))
 TEST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(TEST_SRC))
 
 LIB_A  := $(BUILD)/libmirrorcore.a
@@ -64,7 +68,7 @@ $(LIB_SO): $(CORE_PIC)
 	$(CC) -shared -o $@ $^ $(LDLIBS)
 	@echo "  SO    $@"
 
-$(CLI): $(BUILD)/host/mirror_cli.o $(HOST_OBJ) $(LIB_A)
+$(CLI): $(CLI_OBJ) $(HOST_OBJ) $(LIB_A)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $^ $(LDLIBS)
 	@echo "  LINK  $@"
@@ -104,5 +108,8 @@ clean:
 	@rm -rf $(BUILD)
 	@echo "  CLEAN $(BUILD)"
 
--include $(CORE_OBJ:.o=.d) $(HOST_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+# Every object must be listed. An object whose .d is missing here is rebuilt
+# only when its own .c changes, so a header change leaves it stale: it still
+# links, and then crashes at runtime the first time a struct layout moves.
+-include $(CORE_OBJ:.o=.d) $(HOST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
 CFLAGS += -MMD -MP

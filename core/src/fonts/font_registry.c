@@ -9,14 +9,22 @@
  */
 #include "mirror/font.h"
 
+extern const ml_font ml_font_tiny4x6;
+extern const ml_font ml_font_bold5x7;
 extern const ml_font ml_font_tom5x7;
+extern const ml_font ml_font_digits10;
 extern const ml_font ml_font_digits16;
 extern const ml_font ml_font_wx16;
+extern const ml_font ml_font_digits32;
 
-const ml_font *const ml_font_registry[3] = {
+const ml_font *const ml_font_registry[7] = {
+    &ml_font_tiny4x6,
+    &ml_font_bold5x7,
     &ml_font_tom5x7,
+    &ml_font_digits10,
     &ml_font_digits16,
     &ml_font_wx16,
+    &ml_font_digits32,
 };
 
-const int ml_font_registry_count = 3;
+const int ml_font_registry_count = 7;

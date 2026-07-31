@@ -213,6 +213,11 @@ class DesignerController extends ChangeNotifier {
     await _applyEdit(() => mutate(widget));
   }
 
+  /// Smallest widget the editor will produce. The engine hit tests against the
+  /// rect, so a zero-width widget would be invisible *and* impossible to select
+  /// again: it would be lost the moment it was resized away.
+  static const int _minSize = 1;
+
   /// Moves the selected widget, clamped so it stays reachable on the canvas.
   ///
   /// [coalesce] suppresses a new undo entry, so a drag gesture collapses into
@@ -220,29 +225,72 @@ class DesignerController extends ChangeNotifier {
   Future<void> nudgeSelected(int dx, int dy, {bool coalesce = false}) async {
     final widget = _doc.widgetAt(_selected);
     if (widget == null) return;
-
     final r = widget.rect;
-    // clamp() on a double returns num, so every bound is forced to double
-    // before it reaches Rect.fromLTWH.
-    final maxX = (_doc.width - r.width).clamp(0.0, _doc.width.toDouble());
-    final maxY = (_doc.height - r.height).clamp(0.0, _doc.height.toDouble());
-
-    final moved = ui.Rect.fromLTWH(
-      (r.left + dx).clamp(0.0, maxX).toDouble(),
-      (r.top + dy).clamp(0.0, maxY).toDouble(),
-      r.width,
-      r.height,
+    await resizeSelected(
+      r.translate(dx.toDouble(), dy.toDouble()),
+      coalesce: coalesce,
     );
-    if (moved == r) return;
+  }
+
+  /// Sets the selected widget's geometry, clamped to something usable.
+  ///
+  /// Every rect edit funnels through here: drag handles, the arrow keys and the
+  /// inspector's typed X/Y/W/H fields, so there is one definition of legal
+  /// geometry rather than one per entry point.
+  ///
+  /// [coalesce] suppresses a new undo entry, so a drag gesture collapses into
+  /// one undoable step rather than one per pointer event.
+  Future<void> resizeSelected(ui.Rect rect, {bool coalesce = false}) async {
+    final widget = _doc.widgetAt(_selected);
+    if (widget == null) return;
+
+    final clamped = _clampToCanvas(rect);
+    if (clamped == widget.rect) return;
 
     if (!coalesce) _pushUndo();
-    widget.rect = moved;
+    widget.rect = clamped;
     _dirty = true;
     await _refresh();
   }
 
-  Future<void> setSelectedRect(ui.Rect rect) async {
-    await updateSelected((w) => w.rect = rect);
+  /// Grows or shrinks the selected widget, holding its top-left corner still.
+  ///
+  /// The keyboard counterpart to dragging a bottom-right handle.
+  Future<void> growSelected(int dw, int dh, {bool coalesce = false}) async {
+    final widget = _doc.widgetAt(_selected);
+    if (widget == null) return;
+    final r = widget.rect;
+    await resizeSelected(
+      ui.Rect.fromLTWH(r.left, r.top, r.width + dw, r.height + dh),
+      coalesce: coalesce,
+    );
+  }
+
+  Future<void> setSelectedRect(ui.Rect rect) => resizeSelected(rect);
+
+  /// Enforces a minimum size and keeps the origin on the canvas.
+  ///
+  /// Size is deliberately *not* clamped to the canvas. A hand-authored layout
+  /// may hold a widget larger than the panel, and merely nudging it should not
+  /// silently shrink it. Resize gestures stop themselves at the edge instead.
+  ui.Rect _clampToCanvas(ui.Rect rect) {
+    // Whole pixels only. The panel has no sub-pixel positions, and rounding
+    // here is what makes the unchanged-check in the caller meaningful, rather
+    // than comparing a fractional drag position against a stored integer rect.
+    final rawW = rect.width.round();
+    final rawH = rect.height.round();
+    final w = rawW < _minSize ? _minSize : rawW;
+    final h = rawH < _minSize ? _minSize : rawH;
+
+    final maxX = _doc.width - w;
+    final maxY = _doc.height - h;
+
+    return ui.Rect.fromLTWH(
+      rect.left.round().clamp(0, maxX < 0 ? 0 : maxX).toDouble(),
+      rect.top.round().clamp(0, maxY < 0 ? 0 : maxY).toDouble(),
+      w.toDouble(),
+      h.toDouble(),
+    );
   }
 
   /// Call once at the start of a drag so the whole gesture is one undo step.

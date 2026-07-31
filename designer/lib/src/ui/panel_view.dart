@@ -10,6 +10,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../controller.dart';
+import 'handles.dart';
 
 class PanelView extends StatefulWidget {
   const PanelView({super.key, required this.controller});
@@ -23,6 +24,23 @@ class PanelView extends StatefulWidget {
 class _PanelViewState extends State<PanelView> {
   Offset? _dragAnchor;
 
+  /// Set for the duration of a resize gesture, along with the rect and pointer
+  /// position it started from.
+  ResizeHandle? _resizing;
+  Rect? _resizeStartRect;
+  Offset? _resizeStartCanvas;
+
+  /// Handle currently under the mouse. Drives the cursor only.
+  ResizeHandle? _hover;
+
+  /// Where the pointer actually went down.
+  ///
+  /// Not the same as the pan's start position: a drag is only recognised once
+  /// the pointer has travelled the touch slop, which is further than a handle
+  /// is wide. Hit testing the later position misses the handle nearly every
+  /// time, because a resize drag moves away from the handle by definition.
+  Offset? _pressLocal;
+
   DesignerController get _c => widget.controller;
 
   /// Maps a pointer position to a canvas pixel coordinate.
@@ -31,13 +49,53 @@ class _PanelViewState extends State<PanelView> {
         local.dy / _c.zoom,
       );
 
+  /// Handles for the current selection, or null when nothing is selected.
+  SelectionHandles? get _selectionHandles {
+    final index = _c.selected;
+    if (index < 0 || index >= _c.widgetInfo.length) return null;
+    final r = _c.widgetInfo[index].rect;
+    return SelectionHandles(
+      Rect.fromLTWH(
+        r.left * _c.zoom,
+        r.top * _c.zoom,
+        r.width * _c.zoom,
+        r.height * _c.zoom,
+      ),
+    );
+  }
+
   void _onTapDown(TapDownDetails details) {
+    // A press on a handle is aimed at the current selection, not at whatever
+    // sits under it. Grab zones overhang the widget edge, so without this a tap
+    // on the outer half of a handle would select the widget behind.
+    if (_selectionHandles?.hitTest(details.localPosition) != null) return;
+
     final p = _toCanvas(details.localPosition);
     _c.selectAt(p.dx.floor(), p.dy.floor());
   }
 
   void _onPanStart(DragStartDetails details) {
-    final p = _toCanvas(details.localPosition);
+    // What the gesture is aimed at is decided by where the finger landed, not
+    // by where the pan happened to be recognised: see [_pressLocal]. The delta
+    // is still measured from the pan start, so nothing jumps by the slop the
+    // instant the drag is recognised.
+    final press = _pressLocal ?? details.localPosition;
+    final anchor = _toCanvas(details.localPosition);
+
+    // Handles win over the widget underneath, otherwise the outer half of every
+    // handle would start a move instead of a resize.
+    final handle = _selectionHandles?.hitTest(press);
+    if (handle != null) {
+      _resizing = handle;
+      _resizeStartRect = _c.widgetInfo[_c.selected].rect;
+      _resizeStartCanvas = anchor;
+      _dragAnchor = null;
+      // One undo entry for the whole gesture rather than one per pointer event.
+      _c.beginGesture();
+      return;
+    }
+
+    final p = _toCanvas(press);
     final x = p.dx.floor();
     final y = p.dy.floor();
 
@@ -50,12 +108,17 @@ class _PanelViewState extends State<PanelView> {
     }
 
     _c.select(hit);
-    // One undo entry for the whole gesture rather than one per pointer event.
     _c.beginGesture();
-    _dragAnchor = p;
+    _dragAnchor = anchor;
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
+    final handle = _resizing;
+    if (handle != null) {
+      _applyResize(handle, _toCanvas(details.localPosition));
+      return;
+    }
+
     final anchor = _dragAnchor;
     if (anchor == null) return;
 
@@ -71,7 +134,60 @@ class _PanelViewState extends State<PanelView> {
     _dragAnchor = p;
   }
 
-  void _onPanEnd(DragEndDetails details) => _dragAnchor = null;
+  /// Applies a resize for the current pointer position.
+  ///
+  /// The geometry lives in [SelectionHandles.resize] so it can be tested
+  /// without a render engine; this only supplies the gesture's starting state.
+  void _applyResize(ResizeHandle handle, Offset canvasPos) {
+    final start = _resizeStartRect;
+    final from = _resizeStartCanvas;
+    if (start == null || from == null) return;
+
+    _c.resizeSelected(
+      SelectionHandles.resize(
+        start: start,
+        handle: handle,
+        delta: canvasPos - from,
+        canvas: Size(_c.doc.width.toDouble(), _c.doc.height.toDouble()),
+      ),
+      coalesce: true,
+    );
+  }
+
+  void _endGesture() {
+    _dragAnchor = null;
+    _resizing = null;
+    _resizeStartRect = null;
+    _resizeStartCanvas = null;
+  }
+
+  void _onPanEnd(DragEndDetails details) => _endGesture();
+
+  void _setHover(ResizeHandle? handle) {
+    if (handle == _hover) return;
+    setState(() => _hover = handle);
+  }
+
+  /// Directional cursor over a handle. This is what makes the handles
+  /// discoverable with a mouse, since nothing else advertises them.
+  MouseCursor get _cursor {
+    switch (_hover) {
+      case null:
+        return MouseCursor.defer;
+      case ResizeHandle.topLeft:
+      case ResizeHandle.bottomRight:
+        return SystemMouseCursors.resizeUpLeftDownRight;
+      case ResizeHandle.topRight:
+      case ResizeHandle.bottomLeft:
+        return SystemMouseCursors.resizeUpRightDownLeft;
+      case ResizeHandle.top:
+      case ResizeHandle.bottom:
+        return SystemMouseCursors.resizeUpDown;
+      case ResizeHandle.left:
+      case ResizeHandle.right:
+        return SystemMouseCursors.resizeLeftRight;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,23 +209,37 @@ class _PanelViewState extends State<PanelView> {
           constrained: false,
           minScale: 1,
           maxScale: 1,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown: _onTapDown,
-            onPanStart: _onPanStart,
-            onPanUpdate: _onPanUpdate,
-            onPanEnd: _onPanEnd,
-            child: CustomPaint(
-              size: Size(w, h),
-              isComplex: true,
-              painter: _PanelPainter(
-                image: _c.image,
-                zoom: _c.zoom,
-                ledGrid: _c.ledGrid,
-                transmission: _c.transmission,
-                selection: selection,
-                canvasWidth: _c.doc.width,
-                canvasHeight: _c.doc.height,
+          child: MouseRegion(
+            cursor: _cursor,
+            onHover: (event) =>
+                _setHover(_selectionHandles?.hitTest(event.localPosition)),
+            onExit: (_) => _setHover(null),
+            // GestureDetector does not expose the pointer-down position, and by
+            // the time a pan is recognised the pointer has already left the
+            // handle. This records where the press actually landed.
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (event) => _pressLocal = event.localPosition,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: _onTapDown,
+                onPanStart: _onPanStart,
+                onPanUpdate: _onPanUpdate,
+                onPanEnd: _onPanEnd,
+                onPanCancel: _endGesture,
+                child: CustomPaint(
+                  size: Size(w, h),
+                  isComplex: true,
+                  painter: _PanelPainter(
+                    image: _c.image,
+                    zoom: _c.zoom,
+                    ledGrid: _c.ledGrid,
+                    transmission: _c.transmission,
+                    selection: selection,
+                    canvasWidth: _c.doc.width,
+                    canvasHeight: _c.doc.height,
+                  ),
+                ),
               ),
             ),
           ),
@@ -226,15 +356,20 @@ class _PanelPainter extends CustomPainter {
         ..color = const Color(0xFF00E5FF),
     );
 
-    final handle = Paint()..color = const Color(0xFF00E5FF);
-    const radius = 3.0;
-    for (final corner in <Offset>[
-      scaled.topLeft,
-      scaled.topRight,
-      scaled.bottomLeft,
-      scaled.bottomRight,
-    ]) {
-      canvas.drawCircle(corner, radius, handle);
+    // Built from the same geometry the hit test uses, so every handle drawn
+    // here is one that can actually be grabbed.
+    final handles = SelectionHandles(scaled);
+    final fill = Paint()..color = const Color(0xFF00E5FF);
+    final edge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0xCC000000);
+
+    const radius = 3.5;
+    for (final handle in handles.visible) {
+      final centre = handles.centerOf(handle);
+      canvas.drawCircle(centre, radius, fill);
+      canvas.drawCircle(centre, radius, edge);
     }
   }
 

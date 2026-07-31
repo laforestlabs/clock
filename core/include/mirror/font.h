@@ -44,15 +44,23 @@ const ml_font *ml_font_default(void);
 int            ml_font_count(void);
 const ml_font *ml_font_at(int index);
 
+/*
+ * Every call below takes a whole-pixel scale, where each glyph pixel becomes a
+ * scale by scale block. That is the only way a bitmap font grows: there is
+ * nothing between one pixel and the next to interpolate, which is precisely why
+ * the panel and the preview can agree on the result. Pass 1 for unscaled text;
+ * anything below 1 is treated as 1.
+ */
+
 /* Advance width of a string in pixels, including inter-glyph gaps. */
-int ml_text_width(const ml_font *f, const char *s);
+int ml_text_width(const ml_font *f, const char *s, int scale);
 
 /*
  * Draw text with its top-left corner at (x, y). Returns the advance width.
  * Respects the canvas clip, so callers do not need to pre-truncate.
  */
 int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
-                 const char *s, ml_rgb color);
+                 const char *s, ml_rgb color, int scale);
 
 /*
  * Draw text truncated to max_w pixels, appending a one-pixel ellipsis marker if
@@ -60,7 +68,7 @@ int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
  * overflow a 64px column.
  */
 int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
-                         int max_w, const char *s, ml_rgb color);
+                         int max_w, const char *s, ml_rgb color, int scale);
 
 #ifdef __cplusplus
 }

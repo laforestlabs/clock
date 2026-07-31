@@ -87,14 +87,18 @@ menu "Smart Mirror"
 
         config MIRROR_PANEL_HEIGHT
             int "Single panel height in pixels"
-            default 64
+            default 32
+            help
+                32 for the stock P2.5-64x32 panel. A 64-row panel is 1/32 scan
+                and also needs the E address line wired, see MIRROR_PIN_E.
 
         config MIRROR_PANEL_COLS
             int "Panels across"
-            default 2
+            default 1
             help
-                Two 64x64 panels side by side gives the 128x64 canvas the stock
-                layouts are tuned for.
+                One P2.5-64x32 gives the 64x32 canvas the default layout is
+                tuned for. Two 64x64 panels side by side instead gives 128x64,
+                which is what layouts/dual.json expects.
 
         config MIRROR_PANEL_ROWS
             int "Panels down"
@@ -193,12 +197,17 @@ menu "Smart Mirror"
             default 9
         config MIRROR_PIN_E
             int "E"
-            default 10
+            default -1
             help
-                Required for 64-row panels, which are 1/32 scan and need five
-                address lines. Some older HUB75 diagrams show ground in this
-                position; that is correct for 1/16 scan 64x32 panels and wrong
-                here. Set to -1 only for panels of 32 rows or fewer.
+                The fifth address line. Only 64-row panels need it, because
+                only they are 1/32 scan. The stock P2.5-64x32 is 1/16 scan and
+                leaves this unwired, which is why it defaults to -1 and GPIO10
+                stays free.
+
+                Set it to 10 when moving to 64-row panels, matching the rest of
+                the stock pin map. Some older HUB75 diagrams show ground in this
+                position; that is correct for 1/16 scan panels and wrong for a
+                64-row one, which stays dark or shows doubled rows without it.
         config MIRROR_PIN_LAT
             int "LAT"
             default 11

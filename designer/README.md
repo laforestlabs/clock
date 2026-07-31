@@ -25,6 +25,53 @@ flutter run -d linux
 flutter devices && flutter run -d <device-id>
 ```
 
+## Launching it without a terminal
+
+`flutter run` is the development path, for hot reload and console output. To
+just open the app, install a desktop launcher once:
+
+```sh
+./install-shortcut.sh --desktop
+```
+
+That adds **Mirror Designer** to the application grid, where it can be pinned,
+and a double-clickable shortcut on the Desktop. Both run `run.sh`, which starts
+the prebuilt release bundle. That bundle is self contained, so it opens in well
+under a second and does not need Flutter on PATH.
+
+`run.sh` rebuilds first, but only when a source file is newer than the binary:
+`.dart`, `.c` or `.h` under `lib/`, `packages/mirror_core_ffi/` or the
+repository's `core/`, and the stock `layouts/*.json`, which are bundled as
+assets. An edit is never silently missed, and an unchanged tree never pays for
+a build.
+
+| Want | Do |
+|---|---|
+| Launch, rebuilding only if sources changed | `./run.sh` |
+| Never rebuild, fastest start | `MIRROR_NO_BUILD=1 ./run.sh` |
+| Rebuild unconditionally | `MIRROR_FORCE_BUILD=1 ./run.sh` |
+| Remove the launcher again | `./install-shortcut.sh --uninstall` |
+
+The middle two are also on the launcher's right-click menu.
+
+The icon is drawn by the render core, once per icon size rather than scaled
+down from one image, since a 5x7 glyph does not survive resampling.
+
+## Tests
+
+```sh
+flutter test          # handle geometry
+```
+
+The resize gesture tests additionally drive the real engine, which is built as
+part of the app rather than by `flutter test`. They skip unless it is on the
+library path:
+
+```sh
+flutter build linux --debug
+LD_LIBRARY_PATH=build/linux/x64/debug/bundle/lib flutter test
+```
+
 `setup.sh` is safe to re-run and only fills in what is missing.
 
 ## How the native side is wired
@@ -85,6 +132,8 @@ smoothing turns a 5x7 glyph into grey mush.
 | Select a widget | Tap it on the canvas, or pick it from the list |
 | Move it | Drag on the canvas, arrow keys, or type exact values |
 | Nudge by 5 | Shift plus arrow key |
+| Resize it | Drag any of the eight handles on the selection |
+| Resize by key | Ctrl plus arrow key, or Ctrl and Shift for 5 |
 | Undo / redo | Ctrl+Z, Ctrl+Shift+Z |
 | Duplicate | Ctrl+D |
 | Save | Ctrl+S |
@@ -97,6 +146,34 @@ it is where placeholder text either fits or wrecks your spacing.
 The **Mirror** slider dims the preview to the fraction of light a two-way mirror
 passes, typically 10 to 30 percent. Use it before buying glass. Dim greys and
 thin strokes that look fine at full brightness disappear entirely.
+
+Resizing a box does not by itself make the text in it bigger, because a bitmap
+font has no intermediate sizes. Turn on **Fit to box** and it will: the engine
+then picks the largest whole-pixel multiple of the font that fits the height, so
+the widget's text tracks the handle as you drag. **Scale** sets that multiple by
+hand instead. Both are engine fields, so the preview and the panel agree on the
+result rather than the designer approximating it.
+
+### Choosing a font
+
+The inspector's **Font** dropdown lists what this build actually ships, read
+from the engine through `ml_sim_font_name` rather than from a list in Dart. So
+adding a `.font` to the repository's `fonts/`, running `tools/fontgen.py` and
+rebuilding is all it takes for it to appear here. There is a test for that in
+`test/font_catalogue_test.dart`, because a break in that indirection looks like
+a picker quietly missing an entry rather than like an error.
+
+The list includes the clock and icon fonts, which cover only digits or only
+icons. Picking one for a body of text is not prevented, and does not need to
+be: the preview is the real renderer, so the text visibly empties out the
+moment you choose it. The **Icon set** dropdown is filtered separately, to
+fonts at least 8px tall, which keeps the body fonts out of it.
+
+Widths differ enough between fonts to change a layout. `bold5x7` is about 30
+percent wider than `tom5x7`, so swapping a widget over can push a line into
+truncation that fitted a moment earlier. The **Mirror** slider is the other
+half of that judgement: `bold5x7` exists because thin strokes disappear behind
+two-way glass, and 20 percent transmission is where that becomes obvious.
 
 ## Platform support
 

@@ -52,6 +52,18 @@ if(NOT EXISTS "${MIRROR_CORE}/src/fonts/font_registry.c")
         "Font tables are missing. Run: python3 tools/fontgen.py")
 endif()
 
+# Discovered rather than listed. font_registry.c refers to every generated
+# table, so a hand-written list turns adding a font into a link error here
+# (undefined ml_font_<name>) long after the host build has happily accepted it.
+# CONFIGURE_DEPENDS re-runs the glob when the directory changes, so a new font
+# does not need the build directory wiped first.
+if(CMAKE_VERSION VERSION_LESS 3.12)
+    file(GLOB MIRROR_FONT_SRC "${MIRROR_CORE}/src/fonts/*.c")
+else()
+    file(GLOB MIRROR_FONT_SRC CONFIGURE_DEPENDS "${MIRROR_CORE}/src/fonts/*.c")
+endif()
+list(SORT MIRROR_FONT_SRC)
+
 add_library(mirror_core_ffi SHARED
     "${MIRROR_CORE}/src/canvas.c"
     "${MIRROR_CORE}/src/color.c"
@@ -62,10 +74,7 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_CORE}/src/mock.c"
     "${MIRROR_CORE}/src/model.c"
     "${MIRROR_CORE}/src/render.c"
-    "${MIRROR_CORE}/src/fonts/font_registry.c"
-    "${MIRROR_CORE}/src/fonts/font_tom5x7.c"
-    "${MIRROR_CORE}/src/fonts/font_digits16.c"
-    "${MIRROR_CORE}/src/fonts/font_wx16.c"
+    ${MIRROR_FONT_SRC}
     "${MIRROR_CORE}/ffi/mirror_ffi.c"
 )
 

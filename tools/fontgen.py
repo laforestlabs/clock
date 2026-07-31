@@ -24,6 +24,20 @@ a glyph must be the same width; that width becomes the glyph's advance. Widths
 may differ between glyphs, which is what makes the font proportional. Blank
 lines and lines starting with '#' in column one are comments.
 
+Tall glyphs may instead be written as a block, which is the same data laid out
+so it can actually be read and edited as the picture it is:
+
+    48
+      |......########......|
+      |....############....|
+      ...
+
+A bare codepoint opens the block and the rows follow, each bracketed by '|'.
+The bars are what make this unambiguous: '#' is the ink character, so without
+them a row of solid ink would be indistinguishable from a comment. A blank
+line, a comment or the next codepoint closes the block. Use the single-line
+form for small glyphs, where it stays readable and stays compact.
+
 Output
 ------
 core/src/fonts/font_<name>.c   one per source font
@@ -83,12 +97,37 @@ class Font:
         self._validate()
 
     def _parse(self) -> None:
+        pending: int | None = None
+        rows: list[str] = []
+        opened_at = 0
+
+        def flush() -> None:
+            nonlocal pending, rows
+            if pending is not None:
+                self._add_glyph(pending, rows, opened_at)
+            pending, rows = None, []
+
         for lineno, raw in enumerate(self.path.read_text().splitlines(), 1):
             line = raw.strip()
+
+            # A row of a block glyph. Tested before the comment rule on
+            # purpose: '#' is the ink character, so a row of solid ink would
+            # otherwise read as a comment.
+            if line.startswith("|"):
+                if pending is None:
+                    raise FontError(
+                        f"{self.path}:{lineno}: glyph row outside a block, "
+                        f"expected a bare codepoint first"
+                    )
+                rows.append(line.strip("|"))
+                continue
+
             if not line or line.startswith("#"):
+                flush()
                 continue
 
             if line.startswith("@"):
+                flush()
                 parts = line[1:].split(None, 1)
                 if len(parts) != 2:
                     raise FontError(f"{self.path}:{lineno}: malformed directive")
@@ -102,33 +141,42 @@ class Font:
                 continue
 
             parts = line.split(None, 1)
-            if len(parts) != 2:
-                raise FontError(f"{self.path}:{lineno}: expected '<codepoint> <rows>'")
             try:
                 codepoint = int(parts[0], 0)
             except ValueError as exc:
                 raise FontError(f"{self.path}:{lineno}: bad codepoint {parts[0]!r}") from exc
 
-            rows = parts[1].split("/")
-            widths = {len(r) for r in rows}
-            if len(widths) != 1:
-                raise FontError(
-                    f"{self.path}:{lineno}: glyph {codepoint} has ragged rows {sorted(widths)}"
-                )
-            bad = set("".join(rows)) - {"#", "."}
-            if bad:
-                raise FontError(
-                    f"{self.path}:{lineno}: glyph {codepoint} has stray characters {sorted(bad)}"
-                )
-            if len(rows) != self.height:
-                raise FontError(
-                    f"{self.path}:{lineno}: glyph {codepoint} has {len(rows)} rows, "
-                    f"@height says {self.height}"
-                )
-            if codepoint in self.glyphs:
-                raise FontError(f"{self.path}:{lineno}: duplicate codepoint {codepoint}")
+            flush()
+            if len(parts) == 1:
+                pending, rows, opened_at = codepoint, [], lineno
+            else:
+                self._add_glyph(codepoint, parts[1].split("/"), lineno)
 
-            self.glyphs[codepoint] = Glyph(codepoint, rows)
+        flush()
+
+    def _add_glyph(self, codepoint: int, rows: list[str], lineno: int) -> None:
+        if not rows:
+            raise FontError(f"{self.path}:{lineno}: glyph {codepoint} has no rows")
+
+        widths = {len(r) for r in rows}
+        if len(widths) != 1:
+            raise FontError(
+                f"{self.path}:{lineno}: glyph {codepoint} has ragged rows {sorted(widths)}"
+            )
+        bad = set("".join(rows)) - {"#", "."}
+        if bad:
+            raise FontError(
+                f"{self.path}:{lineno}: glyph {codepoint} has stray characters {sorted(bad)}"
+            )
+        if len(rows) != self.height:
+            raise FontError(
+                f"{self.path}:{lineno}: glyph {codepoint} has {len(rows)} rows, "
+                f"@height says {self.height}"
+            )
+        if codepoint in self.glyphs:
+            raise FontError(f"{self.path}:{lineno}: duplicate codepoint {codepoint}")
+
+        self.glyphs[codepoint] = Glyph(codepoint, rows)
 
     def _validate(self) -> None:
         if not self.name:

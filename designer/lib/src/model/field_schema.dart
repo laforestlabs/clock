@@ -53,6 +53,12 @@ const List<FieldSpec> commonFields = <FieldSpec>[
 ];
 
 const FieldSpec _font = FieldSpec('font', 'Font', FieldKind.font);
+const FieldSpec _scale = FieldSpec('scale', 'Scale', FieldKind.integer,
+    min: 1,
+    max: 8,
+    help: 'Whole-pixel glyph scale. Ignored while Fit is on');
+const FieldSpec _fit = FieldSpec('fit', 'Fit to box', FieldKind.boolean,
+    help: 'Scale the text to the box height, so resizing grows it');
 const FieldSpec _align = FieldSpec('align', 'Align', FieldKind.align);
 const FieldSpec _valign = FieldSpec('valign', 'Vertical', FieldKind.valign);
 const FieldSpec _accent = FieldSpec('accent', 'Accent', FieldKind.color,
@@ -73,6 +79,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('format', 'Format', FieldKind.format,
         help: r'printf style, e.g. %.0f°C'),
     _font,
+    _scale,
+    _fit,
     _align,
     _valign,
   ],
@@ -80,6 +88,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('format', 'Format', FieldKind.format,
         help: r'strftime style, default %H:%M'),
     _font,
+    _scale,
+    _fit,
     _align,
     _valign,
   ],
@@ -87,17 +97,23 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('format', 'Format', FieldKind.format,
         help: r'strftime style, default %a %e %b'),
     _font,
+    _scale,
+    _fit,
     _align,
     _valign,
   ],
   'weather': <FieldSpec>[
     _font,
+    _scale,
+    _fit,
     _accent,
     _lineGap,
     _align,
   ],
   'icon': <FieldSpec>[
     FieldSpec('icon_set', 'Icon set', FieldKind.iconSet),
+    _scale,
+    _fit,
     FieldSpec('bind', 'Binding', FieldKind.bind,
         help: 'Usually weather.code'),
     _align,
@@ -105,6 +121,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
   ],
   'agenda': <FieldSpec>[
     _font,
+    _scale,
+    _fit,
     _accent,
     _maxItems,
     _lineGap,
@@ -112,6 +130,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
   ],
   'todo': <FieldSpec>[
     _font,
+    _scale,
+    _fit,
     _accent,
     _maxItems,
     _lineGap,

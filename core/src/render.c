@@ -50,6 +50,35 @@ static const ml_font *fit_font(const ml_font *want, int box_h)
     return best ? best : want;
 }
 
+/*
+ * Largest whole-pixel scale of f that still fits the box height.
+ *
+ * Never below 1: a box too short for even one unscaled row still draws its text
+ * clipped, which is visible and fixable, rather than silently drawing nothing.
+ */
+static int fit_scale(const ml_font *f, int box_h)
+{
+    if (!f || f->height <= 0) return 1;
+
+    int s = box_h / f->height;
+    if (s < 1)            s = 1;
+    if (s > ML_MAX_SCALE) s = ML_MAX_SCALE;
+    return s;
+}
+
+/*
+ * The scale a widget draws at.
+ *
+ * With fit set the box decides, which is what makes dragging a widget taller in
+ * the designer grow the text in it. Otherwise the layout's own scale stands,
+ * and the box is just a box.
+ */
+static int widget_scale(const ml_widget *w, const ml_font *f)
+{
+    if (w->fit) return fit_scale(f, w->rect.h);
+    return w->scale > 0 ? w->scale : 1;
+}
+
 /* Dimmed variant used for secondary rows and for missing-data placeholders. */
 static ml_rgb dim(ml_rgb c)
 {
@@ -315,10 +344,11 @@ static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         snprintf(buf, sizeof(buf), "%s", w->text);
     }
 
-    int tw = ml_text_width(f, buf);
+    const int sc = widget_scale(w, f);
+    int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
-    int y  = valign_y(w->valign, w->rect, f->height);
-    ml_text_draw_clipped(c, f, x, y, w->rect.w - (x - w->rect.x), buf, color);
+    int y  = valign_y(w->valign, w->rect, f->height * sc);
+    ml_text_draw_clipped(c, f, x, y, w->rect.w - (x - w->rect.x), buf, color, sc);
 }
 
 static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
@@ -338,10 +368,11 @@ static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         color = dim(w->color);
     }
 
-    int tw = ml_text_width(f, buf);
+    const int sc = widget_scale(w, f);
+    int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
-    int y  = valign_y(w->valign, w->rect, f->height);
-    ml_text_draw(c, f, x, y, buf, color);
+    int y  = valign_y(w->valign, w->rect, f->height * sc);
+    ml_text_draw(c, f, x, y, buf, color, sc);
 }
 
 static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
@@ -359,10 +390,11 @@ static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         color = dim(w->color);
     }
 
-    int tw = ml_text_width(f, buf);
+    const int sc = widget_scale(w, f);
+    int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
-    int y  = valign_y(w->valign, w->rect, f->height);
-    ml_text_draw_clipped(c, f, x, y, w->rect.w - (x - w->rect.x), buf, color);
+    int y  = valign_y(w->valign, w->rect, f->height * sc);
+    ml_text_draw_clipped(c, f, x, y, w->rect.w - (x - w->rect.x), buf, color, sc);
 }
 
 static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
@@ -387,10 +419,11 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 
     char glyph[2] = {(char)('0' + category), '\0'};
-    int  gw = ml_text_width(f, glyph);
+    const int sc = widget_scale(w, f);
+    int  gw = ml_text_width(f, glyph, sc);
     int  x  = align_x(w->align, w->rect, gw);
-    int  y  = valign_y(w->valign, w->rect, f->height);
-    ml_text_draw(c, f, x, y, glyph, w->color);
+    int  y  = valign_y(w->valign, w->rect, f->height * sc);
+    ml_text_draw(c, f, x, y, glyph, w->color, sc);
 }
 
 /*
@@ -401,47 +434,51 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    int line_h = f->height + (w->line_gap > 0 ? w->line_gap : 0);
+    const int sc     = widget_scale(w, f);
+    const int fh     = f->height * sc;
+    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
     char buf[TEXT_BUF];
     int  y = w->rect.y;
 
     if (!m->weather.valid) {
-        ml_text_draw(c, f, w->rect.x, y, "--", dim(w->color));
+        ml_text_draw(c, f, w->rect.x, y, "--", dim(w->color), sc);
         return;
     }
 
     snprintf(buf, sizeof(buf), "%d" ML_DEGREE "C", (int)(m->weather.temp_c + 0.5));
-    int tw = ml_text_width(f, buf);
-    ml_text_draw(c, f, align_x(w->align, w->rect, tw), y, buf, w->color);
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw(c, f, align_x(w->align, w->rect, tw), y, buf, w->color, sc);
     y += line_h;
 
-    if (y + f->height <= w->rect.y + w->rect.h) {
+    if (y + fh <= w->rect.y + w->rect.h) {
         const char *label = ml_wx_label(m->weather.code);
-        tw = ml_text_width(f, label);
+        tw = ml_text_width(f, label, sc);
         ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y,
-                             w->rect.w, label, secondary(w));
+                             w->rect.w, label, secondary(w), sc);
         y += line_h;
     }
 
-    if (y + f->height <= w->rect.y + w->rect.h) {
+    if (y + fh <= w->rect.y + w->rect.h) {
         snprintf(buf, sizeof(buf), "H%d L%d",
                  (int)(m->weather.temp_max_c + 0.5),
                  (int)(m->weather.temp_min_c + 0.5));
-        tw = ml_text_width(f, buf);
+        tw = ml_text_width(f, buf, sc);
         ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y,
-                             w->rect.w, buf, secondary(w));
+                             w->rect.w, buf, secondary(w), sc);
     }
 }
 
 static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    int line_h = f->height + (w->line_gap > 0 ? w->line_gap : 0);
+    const int sc     = widget_scale(w, f);
+    const int fh     = f->height * sc;
+    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
     if (m->event_count == 0) {
         ml_text_draw_clipped(c, f, w->rect.x, w->rect.y, w->rect.w,
-                             "No events", dim(w->color));
+                             "No events", dim(w->color), sc);
         return;
     }
 
@@ -452,7 +489,7 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         const ml_event *e = &m->events[i];
         if (!e->valid) continue;
         if (w->max_items > 0 && shown >= w->max_items) break;
-        if (y + f->height > w->rect.y + w->rect.h) break;
+        if (y + fh > w->rect.y + w->rect.h) break;
 
         int x = w->rect.x;
 
@@ -466,13 +503,13 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
                 int mins = e->start_min % (24 * 60);
                 snprintf(when, sizeof(when), "%02d:%02d", mins / 60, mins % 60);
             }
-            x += ml_text_draw(c, f, x, y, when, secondary(w));
-            x += f->gap * 2;
+            x += ml_text_draw(c, f, x, y, when, secondary(w), sc);
+            x += f->gap * 2 * sc;
         }
 
         int avail = w->rect.x + w->rect.w - x;
         if (avail > 0) {
-            ml_text_draw_clipped(c, f, x, y, avail, e->title, w->color);
+            ml_text_draw_clipped(c, f, x, y, avail, e->title, w->color, sc);
         }
 
         y += line_h;
@@ -483,7 +520,9 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    int line_h = f->height + (w->line_gap > 0 ? w->line_gap : 0);
+    const int sc     = widget_scale(w, f);
+    const int fh     = f->height * sc;
+    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
     int shown = 0;
     int y     = w->rect.y;
@@ -493,24 +532,33 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         if (!t->valid) continue;
         if (t->done && w->hide_done) continue;
         if (w->max_items > 0 && shown >= w->max_items) break;
-        if (y + f->height > w->rect.y + w->rect.h) break;
+        if (y + fh > w->rect.y + w->rect.h) break;
 
         ml_rgb color = t->done ? dim(w->color) : w->color;
 
-        /* A two-pixel bullet on the baseline. A glyph would eat scarce width. */
-        int bullet_y = y + f->baseline - 3;
-        ml_canvas_set(c, w->rect.x,     bullet_y, secondary(w));
-        ml_canvas_set(c, w->rect.x + 1, bullet_y, secondary(w));
+        /* A two-pixel bullet on the baseline. A glyph would eat scarce width.
+         * It grows with the text, or it vanishes beside scaled-up entries. */
+        int bullet_y = y + (f->baseline - 3) * sc;
+        for (int by = 0; by < sc; by++) {
+            for (int bx = 0; bx < 2 * sc; bx++) {
+                ml_canvas_set(c, w->rect.x + bx, bullet_y + by, secondary(w));
+            }
+        }
 
-        int x     = w->rect.x + 3;
+        int x     = w->rect.x + 3 * sc;
         int avail = w->rect.x + w->rect.w - x;
         if (avail > 0) {
-            ml_text_draw_clipped(c, f, x, y, avail, t->text, color);
+            ml_text_draw_clipped(c, f, x, y, avail, t->text, color, sc);
             /* Strike through completed entries when they are still shown. */
             if (t->done) {
-                int tw = ml_text_width(f, t->text);
+                int tw = ml_text_width(f, t->text, sc);
                 if (tw > avail) tw = avail;
-                ml_canvas_hline(c, x, y + f->baseline / 2, tw, dim(w->color));
+                /* Half way up the scaled glyph, and as many rows thick as the
+                 * text is scaled, so the rule stays visible against it. */
+                int strike_y = y + (f->baseline * sc) / 2;
+                for (int sy = 0; sy < sc; sy++) {
+                    ml_canvas_hline(c, x, strike_y + sy, tw, dim(w->color));
+                }
             }
         }
 
@@ -520,7 +568,7 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
     if (shown == 0) {
         ml_text_draw_clipped(c, f, w->rect.x, w->rect.y, w->rect.w,
-                             "All done", dim(w->color));
+                             "All done", dim(w->color), sc);
     }
 }
 

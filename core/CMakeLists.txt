@@ -12,6 +12,36 @@
 # The host CLI and tests use Makefile.host instead, which needs nothing but
 # gcc, so neither cmake nor ESP-IDF is required just to preview a layout.
 
+# The glyph tables are generated, one .c per fonts/*.font, and every one of them
+# is referenced by font_registry.c. Listing them by hand meant that adding a
+# font linked cleanly on the host, whose Makefile globs, and then failed here
+# with an undefined ml_font_<name>. So discover them, exactly as Makefile.host
+# does, and adding a font stays the one-step operation the designer's font
+# picker advertises.
+#
+# CONFIGURE_DEPENDS re-runs the glob when the directory changes, so a new font
+# does not need the build directory wiped first.
+#
+# It cannot always be used. ESP-IDF includes this file a second time in script
+# mode (cmake -P) to expand component requirements, and CONFIGURE_DEPENDS is
+# rejected outright there: "invalid for script and find package modes". It also
+# needs CMake 3.12. In both cases the plain glob is correct and the only cost is
+# needing a reconfigure after adding a font, which idf.py does anyway when a
+# CMakeLists changes.
+if(CMAKE_SCRIPT_MODE_FILE OR CMAKE_VERSION VERSION_LESS 3.12)
+    file(GLOB MIRROR_FONT_SRC RELATIVE "${CMAKE_CURRENT_LIST_DIR}"
+         "${CMAKE_CURRENT_LIST_DIR}/src/fonts/*.c")
+else()
+    file(GLOB MIRROR_FONT_SRC RELATIVE "${CMAKE_CURRENT_LIST_DIR}" CONFIGURE_DEPENDS
+         "${CMAKE_CURRENT_LIST_DIR}/src/fonts/*.c")
+endif()
+list(SORT MIRROR_FONT_SRC)
+
+if(NOT MIRROR_FONT_SRC)
+    message(FATAL_ERROR
+        "No glyph tables in core/src/fonts. Run: python3 tools/fontgen.py")
+endif()
+
 set(MIRROR_CORE_SRC
     src/canvas.c
     src/color.c
@@ -22,10 +52,7 @@ set(MIRROR_CORE_SRC
     src/mock.c
     src/model.c
     src/render.c
-    src/fonts/font_registry.c
-    src/fonts/font_tom5x7.c
-    src/fonts/font_digits16.c
-    src/fonts/font_wx16.c
+    ${MIRROR_FONT_SRC}
 )
 
 if(ESP_PLATFORM)

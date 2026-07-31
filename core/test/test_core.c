@@ -285,32 +285,236 @@ static void test_fonts(void)
     CHECK(ml_font_find("nosuchfont") == NULL, "unknown font not found");
     CHECK(ml_font_default() != NULL, "a default font always exists");
 
+    /*
+     * The default is pinned by name, not by registry position. fontgen sorts
+     * the registry by (height, name), so adding a shorter font, or one of the
+     * same height sorting earlier, would otherwise change what every widget
+     * naming no font renders as. Adding a .font file must not do that.
+     */
+    CHECK(ml_font_default() == body, "default font is tom5x7, not whatever sorts first");
+    CHECK(ml_font_at(0) != NULL, "registry entry zero exists");
+
+    /* The rest of the catalogue. These are what the designer's picker lists. */
+    CHECK(ml_font_find("bold5x7") != NULL, "bold5x7 registered");
+    CHECK(ml_font_find("tiny4x6") != NULL, "tiny4x6 registered");
+    CHECK(ml_font_find("digits10") != NULL, "digits10 registered");
+    CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
+    CHECK(ml_font_count() == 7, "seven fonts in the registry");
+
+    /*
+     * Every body font carries the degree sign in the DEL slot, so a layout can
+     * swap between them without a temperature losing its unit.
+     */
+    const ml_font *bold = ml_font_find("bold5x7");
+    const ml_font *tiny = ml_font_find("tiny4x6");
+    if (bold && tiny) {
+        CHECK(ml_text_width(bold, "\177", 1) > 0, "bold5x7 has the degree sign");
+        CHECK(ml_text_width(tiny, "\177", 1) > 0, "tiny4x6 has the degree sign");
+        CHECK(tiny->height < body->height, "tiny4x6 is shorter than tom5x7");
+        CHECK(bold->height == body->height, "bold5x7 shares the tom5x7 cell height");
+        /* Same text costs more width in bold and less in tiny. */
+        CHECK(ml_text_width(bold, "Standup", 1) > ml_text_width(body, "Standup", 1),
+              "bold5x7 is wider than tom5x7");
+        CHECK(ml_text_width(tiny, "Standup", 1) < ml_text_width(body, "Standup", 1),
+              "tiny4x6 is narrower than tom5x7");
+    }
+
+    /* The new clock faces must keep the placeholder-width property too. */
+    const ml_font *clock10 = ml_font_find("digits10");
+    const ml_font *clock32 = ml_font_find("digits32");
+    if (clock10 && clock32) {
+        CHECK(ml_text_width(clock10, "--:--", 1) == ml_text_width(clock10, "09:41", 1),
+              "digits10 placeholder matches real time width");
+        CHECK(ml_text_width(clock32, "--:--", 1) == ml_text_width(clock32, "09:41", 1),
+              "digits32 placeholder matches real time width");
+        CHECK(ml_text_width(clock10, "09:41", 1) < ml_text_width(clock, "09:41", 1),
+              "digits10 is narrower than digits16");
+        CHECK(ml_text_width(clock32, "09:41", 1) > ml_text_width(clock, "09:41", 1),
+              "digits32 is wider than digits16");
+    }
+
     if (!body || !clock) return;
 
-    CHECK(ml_text_width(body, "") == 0, "empty string has zero width");
+    CHECK(ml_text_width(body, "", 1) == 0, "empty string has zero width");
     /* Proportional metrics: 'i' is 1px of ink, 'M' is 5. */
-    CHECK(ml_text_width(body, "i") < ml_text_width(body, "M"), "font is proportional");
+    CHECK(ml_text_width(body, "i", 1) < ml_text_width(body, "M", 1), "font is proportional");
 
     /*
      * The clock placeholder must be exactly as wide as a real time, or the
      * layout visibly reflows the moment the first SNTP sync lands.
      */
-    CHECK(ml_text_width(clock, "--:--") == ml_text_width(clock, "09:41"),
+    CHECK(ml_text_width(clock, "--:--", 1) == ml_text_width(clock, "09:41", 1),
           "clock placeholder matches real time width");
 
     /* Characters with no glyph in a font must be skipped, not indexed out of
      * range. digits16 has no letters at all. */
-    CHECK(ml_text_width(clock, "abc") == 0, "missing glyphs contribute no width");
+    CHECK(ml_text_width(clock, "abc", 1) == 0, "missing glyphs contribute no width");
 
     ml_canvas c;
     ml_canvas_init(&c, 32, 8, NULL);
     ml_canvas_clear(&c, ml_black);
-    ml_text_draw(&c, body, 0, 0, "\x01\x02\xff", ml_white);
+    ml_text_draw(&c, body, 0, 0, "\x01\x02\xff", ml_white, 1);
     bool blank = true;
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 32; x++)
             if (ml_canvas_get(&c, x, y).r != 0) blank = false;
     CHECK(blank, "out of range bytes draw nothing");
+    ml_canvas_free(&c);
+}
+
+/*
+ * Scaling a bitmap font is pixel replication, so everything about it should be
+ * exactly predictable: widths multiply, and every lit pixel becomes a solid
+ * block with nothing bleeding into its neighbours.
+ */
+static void test_scale(void)
+{
+    group("glyph scale");
+
+    const ml_font *body = ml_font_find("tom5x7");
+    if (!body) return;
+
+    CHECK(ml_text_width(body, "Hello", 2) == 2 * ml_text_width(body, "Hello", 1),
+          "width scales exactly, gaps included");
+    CHECK(ml_text_width(body, "Hello", 3) == 3 * ml_text_width(body, "Hello", 1),
+          "and keeps scaling linearly");
+    CHECK(ml_text_width(body, "Hello", 0) == ml_text_width(body, "Hello", 1),
+          "a scale below one is treated as one");
+
+    /*
+     * 'i' in tom5x7 is a single column of ink, which makes it the clearest
+     * possible probe: at 3x its stem must be exactly three pixels wide and
+     * three tall per source row, with nothing beside it.
+     */
+    ml_canvas c;
+    ml_canvas_init(&c, 32, 32, NULL);
+    ml_canvas_clear(&c, ml_black);
+    const int advance = ml_text_draw(&c, body, 0, 0, "i", ml_white, 3);
+    CHECK(advance == 3 * ml_text_width(body, "i", 1),
+          "draw reports the scaled advance");
+
+    int lit = 0, max_x = -1, max_y = -1;
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+            if (ml_canvas_get(&c, x, y).r == 0) continue;
+            lit++;
+            if (x > max_x) max_x = x;
+            if (y > max_y) max_y = y;
+        }
+    }
+    CHECK(lit > 0, "scaled text draws something");
+    /* Every source pixel becomes a 3x3 block, so the total must divide by 9. */
+    CHECK(lit % 9 == 0, "scaled ink is whole 3x3 blocks");
+    CHECK(max_x < 3 * ml_text_width(body, "i", 1),
+          "scaled glyph stays inside its advance");
+    CHECK(max_y < 3 * body->height, "scaled glyph stays inside its scaled height");
+    ml_canvas_free(&c);
+
+    /* Unscaled output must be untouched by all of the above. */
+    ml_canvas a, b;
+    ml_canvas_init(&a, 32, 16, NULL);
+    ml_canvas_init(&b, 32, 16, NULL);
+    ml_canvas_clear(&a, ml_black);
+    ml_canvas_clear(&b, ml_black);
+    ml_text_draw(&a, body, 1, 1, "Wg.", ml_white, 1);
+    ml_text_draw_clipped(&b, body, 1, 1, 999, "Wg.", ml_white, 1);
+    bool same = true;
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 32; x++)
+            if (ml_canvas_get(&a, x, y).r != ml_canvas_get(&b, x, y).r) same = false;
+    CHECK(same, "clipped and plain draw agree when nothing is clipped");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+}
+
+/*
+ * scale and fit come off the wire, so the parser has to be as forgiving with
+ * them as with everything else: clamp nonsense, never reject the layout.
+ */
+static void test_scale_parse(void)
+{
+    group("scale parsing");
+
+    ml_diag diag;
+    ml_layout l;
+
+    static const char doc[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"a\"},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"b\",\"scale\":3},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"c\",\"scale\":999},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"d\",\"scale\":0},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"e\",\"fit\":true}"
+        "]}";
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "layout with scale parses");
+    if (l.count < 5) return;
+
+    CHECK(l.widgets[0].scale == 1, "scale defaults to 1 when absent");
+    CHECK(l.widgets[0].fit == false, "fit defaults to off");
+    CHECK(l.widgets[1].scale == 3, "an explicit scale is kept");
+    CHECK(l.widgets[2].scale == ML_MAX_SCALE, "an absurd scale clamps, not rejects");
+    CHECK(l.widgets[3].scale == 1, "a zero scale clamps up to 1");
+    CHECK(l.widgets[4].fit == true, "fit is read");
+
+    /* Round trip: both must survive a write and reparse, or pushing a layout to
+     * the device and reading it back would quietly drop them. */
+    char buf[2048];
+    size_t want = ml_layout_write(&l, buf, sizeof(buf));
+    CHECK(want < sizeof(buf), "layout fits the buffer");
+
+    ml_layout back;
+    CHECK(ml_layout_parse(buf, strlen(buf), &back, &diag), "reparses its own output");
+    if (back.count < 5) return;
+    CHECK(back.widgets[1].scale == 3, "round trip preserves scale");
+    CHECK(back.widgets[4].fit == true, "round trip preserves fit");
+    CHECK(back.widgets[0].scale == 1, "round trip leaves the default alone");
+}
+
+/*
+ * fit is the whole point of the resize handles: a taller box must draw taller
+ * text, and a box that shrinks must give it back.
+ */
+static void test_fit(void)
+{
+    group("fit to box");
+
+    ml_diag diag;
+    ml_layout l;
+    ml_model m;
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+
+    /* Same text, same font, three box heights. Only fit is on. */
+    static const char doc[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[0,0,64,7],\"text\":\"8\",\"font\":\"tom5x7\","
+        "\"color\":\"#FFFFFF\",\"fit\":true},"
+        "{\"type\":\"text\",\"rect\":[0,8,64,21],\"text\":\"8\",\"font\":\"tom5x7\","
+        "\"color\":\"#FFFFFF\",\"fit\":true}"
+        "]}";
+
+    if (!ml_layout_parse(doc, strlen(doc), &l, &diag)) {
+        CHECK(false, "fit layout parses");
+        return;
+    }
+
+    ml_canvas c;
+    ml_canvas_init(&c, 64, 64, NULL);
+    ml_render(&l, &m, &c);
+
+    /* Count ink in each widget's band. The 21px box fits three rows of a 7px
+     * font, so its glyph must be built from 3x3 blocks: nine times the ink. */
+    int small_ink = 0, large_ink = 0;
+    for (int y = 0; y < 7; y++)
+        for (int x = 0; x < 64; x++)
+            if (ml_canvas_get(&c, x, y).r != 0) small_ink++;
+    for (int y = 8; y < 29; y++)
+        for (int x = 0; x < 64; x++)
+            if (ml_canvas_get(&c, x, y).r != 0) large_ink++;
+
+    CHECK(small_ink > 0, "a box exactly one row tall draws at 1x");
+    CHECK(large_ink == 9 * small_ink, "a box three rows tall draws at 3x");
     ml_canvas_free(&c);
 }
 
@@ -577,7 +781,7 @@ static void test_golden(void)
 {
     group("golden images");
 
-    const char *layouts[] = {"dual", "single", "quad"};
+    const char *layouts[] = {"mini", "dual", "single", "quad"};
     bool update = getenv("MIRROR_UPDATE_GOLDEN") != NULL;
 
     golden_load();
@@ -689,6 +893,9 @@ int main(void)
     test_json();
     test_layout();
     test_fonts();
+    test_scale();
+    test_scale_parse();
+    test_fit();
     test_render_purity();
     test_ffi();
     test_golden();

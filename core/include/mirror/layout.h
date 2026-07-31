@@ -27,6 +27,13 @@ extern "C" {
 #define ML_FORMAT_LEN     24
 #define ML_BIND_LEN       32
 
+/*
+ * Upper bound on widget scale. Eight times the tallest font already overflows
+ * any panel this drives, and a cap means a typo in a pushed layout cannot turn
+ * into an enormous blit.
+ */
+#define ML_MAX_SCALE      8
+
 typedef enum {
     ML_W_UNKNOWN = 0,
     ML_W_RECT,
@@ -74,6 +81,18 @@ typedef struct {
 
     ml_align       align;
     ml_valign      valign;
+
+    /*
+     * Whole-pixel glyph scale, 1 or more. Bitmap fonts have no intermediate
+     * sizes, so growing text means repeating each pixel rather than resampling.
+     */
+    int            scale;
+    /*
+     * Derive scale from the box height instead of taking it from the layout, so
+     * resizing a widget in the designer grows the text inside it. Overrides
+     * scale when set.
+     */
+    bool           fit;
 
     int            max_items;   /* agenda / todo row cap */
     int            line_gap;    /* extra pixels between rows */

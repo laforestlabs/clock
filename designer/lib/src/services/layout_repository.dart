@@ -3,11 +3,10 @@
 // Stock layouts ship as assets and are the same files the firmware and the CLI
 // use, linked rather than copied by setup.sh so there is one copy of the truth.
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 
 class StockLayout {
   const StockLayout(this.name, this.assetPath);
@@ -20,11 +19,14 @@ class LayoutRepository {
   /// JSON into layouts/ makes it appear here without a code change.
   Future<List<StockLayout>> stockLayouts() async {
     try {
-      final manifest = json.decode(
-        await rootBundle.loadString('AssetManifest.json'),
-      ) as Map<String, dynamic>;
+      // Read through AssetManifest rather than parsing AssetManifest.json by
+      // hand. Flutter stopped shipping that file in favour of a binary
+      // manifest, and because the failure lands in the catch below it did not
+      // look like a bug: the layout list just went quietly empty.
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
 
-      final paths = manifest.keys
+      final paths = manifest
+          .listAssets()
           .where((k) => k.startsWith('assets/layouts/') && k.endsWith('.json'))
           .toList()
         ..sort();

@@ -4,8 +4,12 @@
 # Regenerate deliberately after an intended rendering change:
 #   MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test
 #
-# render engine version 2
+# render engine version 3
 
+mini:typical             8c3b0466986db7d7
+mini:cold                9a2edb1b8a5b6bbb
+mini:overflow            443c34d41067eb13
+mini:evening             36e4cd71c6b78dfe
 dual:typical             5d6dcc05fa9d17ec
 dual:cold                9f34bf4c81e2a9af
 dual:overflow            9d52c205d3973b2f

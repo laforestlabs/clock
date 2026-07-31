@@ -1,0 +1,35 @@
+# digits10 - the compact clock face.
+#
+# 6x10 with 2px stems. digits16 is the right clock for a 64px-tall panel, but on
+# the 64x32 default it eats half the height and leaves no room for weather. This
+# is the same design language at a size that costs 10 rows instead of 16:
+# "09:41" is 30px wide against 52px for digits16.
+#
+# Codepoints 45-58 only, matching digits16: - . / then 0-9 then the colon. The
+# range has to stay contiguous for glyph indexing, and anything outside it is
+# skipped when drawn in this font, so use a body font for labels.
+#
+# The hyphen is here for the same reason as in digits16: the clock shows "--:--"
+# before the first SNTP sync, and without a '-' that placeholder is a bare colon.
+
+@name     digits10
+@height   10
+@baseline 10
+@gap      1
+
+45  ....../....../....../....../######/######/....../....../....../......
+46  ../../../../../../../../##/##
+47  .....#/....##/....##/...##./...##./..##../..##../.##.../.##.../##....
+
+48  .####./##..##/##..##/##..##/##..##/##..##/##..##/##..##/##..##/.####.
+49  ..##../.###../####../..##../..##../..##../..##../..##../######/######
+50  .####./##..##/##..##/....##/...##./..##../.##.../##..../######/######
+51  .####./##..##/....##/....##/..###./..###./....##/....##/##..##/.####.
+52  ...##./..###./.####./##.##./##.##./######/######/...##./...##./...##.
+53  ######/######/##..../##..../#####./....##/....##/....##/##..##/.####.
+54  ..###./.##.../##..../##..../#####./##..##/##..##/##..##/##..##/.####.
+55  ######/######/....##/....##/...##./...##./..##../..##../.##.../.##...
+56  .####./##..##/##..##/##..##/.####./.####./##..##/##..##/##..##/.####.
+57  .####./##..##/##..##/##..##/.#####/....##/....##/....##/##..##/.####.
+
+58  ../../##/##/../../##/##/../..

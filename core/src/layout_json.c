@@ -94,6 +94,10 @@ static void widget_defaults(ml_widget *w)
     w->line_gap  = 1;
     w->show_time = true;
     w->hide_done = true;
+    /* Unscaled unless the layout asks otherwise, so every layout written before
+     * scale existed renders exactly as it did. */
+    w->scale     = 1;
+    w->fit       = false;
 }
 
 static ml_align parse_align(const char *s, ml_align fallback)
@@ -229,6 +233,15 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
     if (w->max_items < 0) w->max_items = 0;
 
     ml_json_get_int(j, obj, "line_gap", &w->line_gap);
+
+    /* Clamped rather than rejected. A layout arriving over the network with a
+     * silly scale should draw something sensible, not refuse to load. */
+    if (ml_json_get_int(j, obj, "scale", &w->scale)) {
+        if (w->scale < 1)             w->scale = 1;
+        if (w->scale > ML_MAX_SCALE)  w->scale = ML_MAX_SCALE;
+    }
+
+    ml_json_get_bool(j, obj, "fit",       &w->fit);
     ml_json_get_bool(j, obj, "show_time", &w->show_time);
     ml_json_get_bool(j, obj, "hide_done", &w->hide_done);
     ml_json_get_bool(j, obj, "visible",   &w->visible);
@@ -415,6 +428,11 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
             else
                 appendf(buf, cap, &len, ", \"hide_done\": %s", w->hide_done ? "true" : "false");
         }
+
+        /* Written only when they differ from the default, to keep the output
+         * as small as the layouts people hand-write. */
+        if (w->scale > 1) appendf(buf, cap, &len, ", \"scale\": %d", w->scale);
+        if (w->fit)       appendf(buf, cap, &len, ", \"fit\": true");
 
         if (!w->visible) appendf(buf, cap, &len, ", \"visible\": false");
 

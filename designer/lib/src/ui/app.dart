@@ -44,12 +44,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     if (!mounted) return;
     setState(() => _stock = stock);
 
-    // Open the two-panel layout by default, since that is the reference build.
-    // Written as a loop rather than firstOrNull, which lives in
-    // package:collection and is not part of the core library.
+    // Open the 64x32 clock and weather layout by default, since a single
+    // P2.5-64x32 panel is the reference build. Written as a loop rather than
+    // firstOrNull, which lives in package:collection and is not part of the
+    // core library.
     StockLayout? preferred;
     for (final s in stock) {
-      if (s.name == 'dual') {
+      if (s.name == 'mini') {
         preferred = s;
         break;
       }
@@ -119,20 +120,31 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     }
 
     final shift = HardwareKeyboard.instance.isShiftPressed;
+    final control = HardwareKeyboard.instance.isControlPressed;
     final step = shift ? 5 : 1;
+
+    // Holding control turns the arrows into a resize, growing right and down.
+    // Without it they move, as before.
+    void arrow(int dx, int dy) {
+      if (control) {
+        _c.growSelected(dx, dy);
+      } else {
+        _c.nudgeSelected(dx, dy);
+      }
+    }
 
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowLeft:
-        _c.nudgeSelected(-step, 0);
+        arrow(-step, 0);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowRight:
-        _c.nudgeSelected(step, 0);
+        arrow(step, 0);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        _c.nudgeSelected(0, -step);
+        arrow(0, -step);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowDown:
-        _c.nudgeSelected(0, step);
+        arrow(0, step);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.delete:
       case LogicalKeyboardKey.backspace:
@@ -316,19 +328,15 @@ class _CanvasArea extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Deliberately no scroll view here. PanelView is an InteractiveViewer with
+    // constrained: false, which sizes to the largest its parent allows and pans
+    // an oversized child itself. A scroll view hands it an unbounded constraint
+    // instead, which is a layout error, and the preview never paints at all.
     return ColoredBox(
       color: const Color(0xFF14181B),
-      child: Center(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.vertical,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: PanelView(controller: controller),
-            ),
-          ),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: PanelView(controller: controller),
       ),
     );
   }

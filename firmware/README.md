@@ -48,10 +48,11 @@ turns a five-minute problem into an afternoon.
 
 ### 1. Power before anything else
 
-The panels are rated **4A each at 5V**. Two panels is 8A worst case, so use a
-5V 10A supply and inject power into each panel's own VH4 socket. Do not
-daisy-chain power through the HUB75 ribbon, and do not power panels from the
-dev board.
+The default single **P2.5-64x32** draws roughly **2A at 5V** worst case, so a 5V
+4A supply is comfortable. A 64x64 panel is rated 4A each, and two of them is 8A
+worst case, needing a 5V 10A supply. Inject power into each panel's own VH4
+socket. Do not daisy-chain power through the HUB75 ribbon, and do not power
+panels from the dev board.
 
 ### 2. Test pattern
 
@@ -101,10 +102,14 @@ Defaults are in menuconfig and match `docs/hardware.md`.
 | G1 | 5 | B | 18 |
 | B1 | 6 | C | 8 |
 | R2 | 7 | D | 9 |
-| G2 | 15 | E | 10 |
+| G2 | 15 | E | 10 (64-row panels only) |
 | B2 | 16 | LAT | 11 |
 | | | OE | 12 |
 | | | CLK | 13 |
+
+The default 64x32 panel is 1/16 scan and does not use E, so `MIRROR_PIN_E` is
+`-1` and GPIO10 stays free. Set it to 10 when moving to a 64-row panel, which is
+1/32 scan and shows only half its rows, doubled, without it.
 
 **Do not use GPIO 33 to 37.** On an N16R8 they belong to the octal PSRAM. The
 pinout in the `esp-hub75` README uses 35, 36 and 37 and will give you a dead
