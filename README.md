@@ -62,7 +62,7 @@ Nothing but `gcc` and `python3` is required. ESP-IDF is not needed for the host 
 
 ```sh
 make -C core -f Makefile.host          # build libmirrorcore.{a,so} and mirror-cli
-make -C core -f Makefile.host test     # 148 checks including golden images
+make -C core -f Makefile.host test     # 208 checks including golden images
 
 mkdir -p out
 ./core/build/host/mirror-cli layouts/mini.json --all -s 8 --led
@@ -183,6 +183,12 @@ Two rules worth knowing:
 - **`format` strings never reach a variadic formatter.** They are parsed by hand in
   `core/src/render.c`, because layouts arrive over the network and a stray `%s` against
   a double would otherwise be a remote crash.
+- **Text is folded to what the fonts can actually draw.** A degree sign may be written
+  either as `°` or as a literal `°`, since a JSON encoder is free to escape
+  non-ASCII or not and Dart's does not. Both land on codepoint 127, where the fonts
+  keep the glyph. Anything else outside ASCII becomes a visible `?` rather than being
+  dropped, because a character that silently shortens a line is far harder to diagnose
+  than one that shows up wrong.
 
 ## Fonts
 

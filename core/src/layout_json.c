@@ -380,6 +380,59 @@ static void appendf(char *buf, size_t cap, size_t *len, const char *fmt, ...)
     va_end(ap);
 }
 
+/*
+ * Worst case is six bytes of \uXXXX per input character, over the longest
+ * string any field can hold.
+ */
+#define ESCAPE_BUF (6 * ML_BIND_LEN + 1)
+
+/*
+ * Escape a string for embedding in JSON.
+ *
+ * Every string written here is user-entered: a widget captioned 5" nail, or a
+ * format holding a backslash, would otherwise close the string early. The
+ * result of that is worse than a loud failure, because the document reparses
+ * cleanly with the field silently truncated at the stray quote.
+ *
+ * Non-ASCII goes out as \uXXXX. Codepoint 127 is written back as ° rather
+ * than  because that byte *is* the degree sign to the fonts, and a saved
+ * layout should say so; the reader folds either spelling back to the same byte.
+ */
+static void json_escape(const char *in, char *out, size_t cap)
+{
+    if (!out || cap == 0) return;
+    size_t w = 0;
+
+    for (const unsigned char *p = (const unsigned char *)(in ? in : ""); *p; p++) {
+        const char *esc = NULL;
+        switch (*p) {
+        case '"':  esc = "\\\""; break;
+        case '\\': esc = "\\\\"; break;
+        case '\n': esc = "\\n";  break;
+        case '\r': esc = "\\r";  break;
+        case '\t': esc = "\\t";  break;
+        case '\b': esc = "\\b";  break;
+        case '\f': esc = "\\f";  break;
+        default: break;
+        }
+
+        if (esc != NULL) {
+            if (w + 2 >= cap) break;
+            out[w++] = esc[0];
+            out[w++] = esc[1];
+        } else if (*p < 0x20 || *p >= 0x7F) {
+            if (w + 6 >= cap) break;
+            snprintf(out + w, cap - w, "\\u%04X", *p == 127 ? 0xB0u : (unsigned)*p);
+            w += 6;
+        } else {
+            if (w + 1 >= cap) break;
+            out[w++] = (char)*p;
+        }
+    }
+
+    out[w] = '\0';
+}
+
 static const char *align_name(ml_align a)
 {
     return a == ML_ALIGN_CENTER ? "center" : a == ML_ALIGN_RIGHT ? "right" : "left";
@@ -396,8 +449,10 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
     if (!buf) cap = 0;
 
     size_t len = 0;
+    char   esc[ESCAPE_BUF];
 
-    appendf(buf, cap, &len, "{\n  \"name\": \"%s\",\n", l->name);
+    json_escape(l->name, esc, sizeof(esc));
+    appendf(buf, cap, &len, "{\n  \"name\": \"%s\",\n", esc);
     appendf(buf, cap, &len, "  \"canvas\": { \"width\": %d, \"height\": %d },\n", l->w, l->h);
     appendf(buf, cap, &len, "  \"background\": \"#%02X%02X%02X\",\n",
             l->bg.r, l->bg.g, l->bg.b);
@@ -408,7 +463,10 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
         const ml_widget *w = &l->widgets[i];
 
         appendf(buf, cap, &len, "    { \"type\": \"%s\"", ml_widget_type_name(w->type));
-        if (w->id[0]) appendf(buf, cap, &len, ", \"id\": \"%s\"", w->id);
+        if (w->id[0]) {
+            json_escape(w->id, esc, sizeof(esc));
+            appendf(buf, cap, &len, ", \"id\": \"%s\"", esc);
+        }
 
         appendf(buf, cap, &len, ", \"rect\": [%d, %d, %d, %d]",
                 w->rect.x, w->rect.y, w->rect.w, w->rect.h);
@@ -421,11 +479,23 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
             appendf(buf, cap, &len, ", \"accent\": \"#%02X%02X%02X\"",
                     w->accent.r, w->accent.g, w->accent.b);
 
-        if (w->font[0])     appendf(buf, cap, &len, ", \"font\": \"%s\"", w->font);
-        if (w->format[0])   appendf(buf, cap, &len, ", \"format\": \"%s\"", w->format);
-        if (w->bind[0])     appendf(buf, cap, &len, ", \"bind\": \"%s\"", w->bind);
-        if (w->text[0])     appendf(buf, cap, &len, ", \"text\": \"%s\"", w->text);
-        if (w->icon_set[0]) appendf(buf, cap, &len, ", \"icon_set\": \"%s\"", w->icon_set);
+        static const struct {
+            size_t      offset;
+            const char *key;
+        } k_strings[] = {
+            {offsetof(ml_widget, font),     "font"},
+            {offsetof(ml_widget, format),   "format"},
+            {offsetof(ml_widget, bind),     "bind"},
+            {offsetof(ml_widget, text),     "text"},
+            {offsetof(ml_widget, icon_set), "icon_set"},
+        };
+
+        for (size_t k = 0; k < sizeof(k_strings) / sizeof(k_strings[0]); k++) {
+            const char *value = (const char *)w + k_strings[k].offset;
+            if (!value[0]) continue;
+            json_escape(value, esc, sizeof(esc));
+            appendf(buf, cap, &len, ", \"%s\": \"%s\"", k_strings[k].key, esc);
+        }
 
         if (w->align  != ML_ALIGN_LEFT)
             appendf(buf, cap, &len, ", \"align\": \"%s\"", align_name(w->align));

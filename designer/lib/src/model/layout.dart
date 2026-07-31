@@ -15,7 +15,17 @@ import 'dart:ui' show Rect;
 
 class LayoutDoc {
   LayoutDoc(this._raw) {
-    _raw.putIfAbsent('widgets', () => <dynamic>[]);
+    // 'widgets' has to be a list before anything reads it. A hand-edited file
+    // can carry null or an object there, and putIfAbsent would leave both in
+    // place: the key exists, it is simply the wrong type. Every accessor below
+    // then throws a TypeError out of a UI build rather than out of the decode,
+    // so `on FormatException` at the call site never sees it.
+    //
+    // The C engine treats the same input as an empty widget list and renders a
+    // blank canvas, and the designer matching that is what keeps a layout the
+    // mirror will happily display from crashing the tool that edits it.
+    final existing = _raw['widgets'];
+    if (existing is! List) _raw['widgets'] = <dynamic>[];
   }
 
   factory LayoutDoc.decode(String source) {

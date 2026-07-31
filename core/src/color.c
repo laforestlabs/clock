@@ -8,16 +8,24 @@ const ml_rgb ml_white = {255, 255, 255};
 /* Defined in the generated gamma_table.c. */
 extern const uint8_t ml_gamma_table[256];
 
-/* strcasecmp is POSIX, not C99, and this library stays strictly portable. */
-static int ci_equal(const char *a, const char *b)
+/*
+ * strcasecmp is POSIX, not C99, and this library stays strictly portable.
+ *
+ * Length-bounded on the left so the caller can pass a string whose trailing
+ * whitespace has been measured off rather than removed. Comparing to the NUL
+ * instead would make "red " fail where " red" succeeded, which is a confusing
+ * thing for a hand-written layout to trip over.
+ */
+static int ci_equal_n(const char *a, size_t n, const char *b)
 {
-    for (;; a++, b++) {
-        char ca = *a, cb = *b;
+    for (size_t i = 0; i < n; i++) {
+        char ca = a[i], cb = b[i];
+        if (!cb) return 0;
         if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
         if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
         if (ca != cb) return 0;
-        if (!ca) return 1;
     }
+    return b[n] == '\0';
 }
 
 static int hex_val(char c)
@@ -86,7 +94,7 @@ bool ml_color_parse(const char *s, ml_rgb *out)
 
 try_named:
     for (size_t i = 0; i < sizeof(k_named) / sizeof(k_named[0]); i++) {
-        if (ci_equal(s, k_named[i].name)) {
+        if (ci_equal_n(s, len, k_named[i].name)) {
             *out = k_named[i].rgb;
             return true;
         }

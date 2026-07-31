@@ -94,8 +94,14 @@ class MirrorEngine {
     }
   }
 
-  /// Serializes the loaded layout through the same writer the firmware uses,
-  /// so what gets saved is exactly what the device will read back.
+  /// Serializes the engine's view of the layout, through the same writer the
+  /// device serves `GET /api/layout` from.
+  ///
+  /// This is deliberately *not* the designer's save path. [LayoutController]
+  /// writes the Dart document instead, so that keys this build does not
+  /// understand survive an open-edit-save cycle rather than being dropped to
+  /// whatever the C struct happens to model. Use this to see what the device
+  /// would report, not to persist a layout.
   String toJson() {
     _assertLive();
     return _b.simToJson(_sim).toDartString();

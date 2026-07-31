@@ -255,6 +255,59 @@ static int hex4(const char *p)
     return v;
 }
 
+/*
+ * Fold a codepoint into the single byte the glyph tables can draw.
+ *
+ * The fonts are ASCII plus a degree sign in the unused DEL slot. Anything else
+ * becomes a visible '?' rather than being dropped, because a character that
+ * silently shortens a line is far harder to diagnose than one that shows up
+ * wrong.
+ */
+static char fold_codepoint(int cp)
+{
+    if (cp < 0)     return '?';
+    if (cp < 0x80)  return (char)cp;
+    if (cp == 0xB0) return (char)127;   /* degree sign */
+    return '?';
+}
+
+/*
+ * Decode one UTF-8 sequence from s, with len bytes available, and report how
+ * many bytes it consumed through *used.
+ *
+ * Raw UTF-8 reaches here because JSON does not require non-ASCII to be
+ * escaped and encoders generally do not bother: Dart's, which the designer
+ * uses, emits a degree sign as the two bytes C2 B0. Folding those the same way
+ * as ° is what keeps a temperature typed in the designer from arriving at
+ * the panel with its degree sign missing.
+ *
+ * Malformed input consumes exactly one byte and yields -1, so a bad byte can
+ * neither stall the caller's loop nor read past the end of the token.
+ */
+static int utf8_decode(const char *s, int len, int *used)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    *used = 1;
+
+    if (p[0] < 0x80) return p[0];
+
+    int need, cp;
+    if      ((p[0] & 0xE0) == 0xC0) { need = 1; cp = p[0] & 0x1F; }
+    else if ((p[0] & 0xF0) == 0xE0) { need = 2; cp = p[0] & 0x0F; }
+    else if ((p[0] & 0xF8) == 0xF0) { need = 3; cp = p[0] & 0x07; }
+    else return -1;                      /* stray continuation or invalid lead */
+
+    if (need >= len) return -1;          /* truncated inside the token */
+
+    for (int k = 1; k <= need; k++) {
+        if ((p[k] & 0xC0) != 0x80) return -1;
+        cp = (cp << 6) | (p[k] & 0x3F);
+    }
+
+    *used = need + 1;
+    return cp;
+}
+
 bool ml_json_str(const ml_json *j, int tok, char *out, size_t cap)
 {
     if (!j || tok < 0 || tok >= j->count || !out || cap == 0) return false;
@@ -270,7 +323,13 @@ bool ml_json_str(const ml_json *j, int tok, char *out, size_t cap)
         char c = j->src[i];
 
         if (c != '\\' || i + 1 >= t->end) {
-            out[w++] = c;
+            if ((unsigned char)c < 0x80) {
+                out[w++] = c;
+            } else {
+                int used = 1;
+                out[w++] = fold_codepoint(utf8_decode(j->src + i, t->end - i, &used));
+                i += used - 1;
+            }
             continue;
         }
 
@@ -288,10 +347,7 @@ bool ml_json_str(const ml_json *j, int tok, char *out, size_t cap)
             if (i + 4 >= t->end) { out[w++] = '?'; break; }
             int cp = hex4(j->src + i + 1);
             i += 4;
-            if (cp < 0)          out[w++] = '?';
-            else if (cp < 0x80)  out[w++] = (char)cp;
-            else if (cp == 0xB0) out[w++] = (char)127;  /* degree sign */
-            else                 out[w++] = '?';        /* fonts are ASCII only */
+            out[w++] = fold_codepoint(cp);
             break;
         }
         default:
@@ -346,8 +402,13 @@ bool ml_json_double(const ml_json *j, int tok, double *out)
         p++;
         bool eneg = false;
         if (p < end && (*p == '-' || *p == '+')) { eneg = (*p == '-'); p++; }
+        /* Clamped inside the loop, not after it. A long run of digits would
+         * otherwise overflow the accumulator before it could be capped, which
+         * is undefined behaviour reachable straight from a network response. */
         int exp = 0;
-        for (; p < end && *p >= '0' && *p <= '9'; p++) exp = exp * 10 + (*p - '0');
+        for (; p < end && *p >= '0' && *p <= '9'; p++) {
+            if (exp < 1000) exp = exp * 10 + (*p - '0');
+        }
         if (exp > 308) exp = 308;
         for (int k = 0; k < exp; k++) value = eneg ? value / 10.0 : value * 10.0;
     }

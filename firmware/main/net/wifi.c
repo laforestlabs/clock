@@ -5,9 +5,8 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "wifi";
@@ -16,19 +15,26 @@ static volatile bool s_connected = false;
 static int  s_retries = 0;
 static char s_ip[16] = "0.0.0.0";
 
+static esp_timer_handle_t s_reconnect;
+
 /*
  * Backoff after repeated failures.
  *
- * Retrying flat out forever is antisocial to the access point and, more to the
- * point here, it starves the render task on a single-core-ish workload during
- * an outage. The panel should keep drawing a clock even when the network is
- * gone for an hour.
+ * Retrying flat out forever is antisocial to the access point, and on a device
+ * that is expected to ride out a router reboot without the clock stuttering it
+ * buys nothing.
  */
 static int backoff_ms(int retries)
 {
     if (retries < CONFIG_MIRROR_WIFI_MAX_RETRY) return 1000;
     if (retries < CONFIG_MIRROR_WIFI_MAX_RETRY * 2) return 5000;
     return 30000;
+}
+
+static void reconnect_cb(void *arg)
+{
+    (void)arg;
+    esp_wifi_connect();
 }
 
 static void on_wifi_event(void *arg, esp_event_base_t base,
@@ -58,8 +64,18 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
         ESP_LOGW(TAG, "disconnected, reason %d, attempt %d, retrying in %dms",
                  ev != NULL ? ev->reason : -1, s_retries, wait);
 
-        vTaskDelay(pdMS_TO_TICKS(wait));
-        esp_wifi_connect();
+        /*
+         * Armed on a timer rather than slept through here. Handlers run on the
+         * shared default event loop task, so blocking for the 30 seconds this
+         * backs off to would hold up dispatch of every other event in the
+         * system, GOT_IP among them, and can back the event queue up behind us.
+         */
+        if (s_reconnect != NULL) {
+            esp_timer_stop(s_reconnect);   /* no-op when it is not running */
+            esp_timer_start_once(s_reconnect, (int64_t)wait * 1000);
+        } else {
+            esp_wifi_connect();
+        }
         break;
     }
 
@@ -97,6 +113,12 @@ esp_err_t wifi_start(void)
         WIFI_EVENT, ESP_EVENT_ANY_ID, &on_wifi_event, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         IP_EVENT, IP_EVENT_STA_GOT_IP, &on_ip_event, NULL, NULL));
+
+    const esp_timer_create_args_t reconnect_args = {
+        .callback = reconnect_cb,
+        .name     = "wifi_reconnect",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&reconnect_args, &s_reconnect));
 
     wifi_config_t cfg = {0};
     strncpy((char *)cfg.sta.ssid, CONFIG_MIRROR_WIFI_SSID, sizeof(cfg.sta.ssid) - 1);

@@ -335,14 +335,27 @@ static void fmt_value(const char *fmt, bool is_num, double num, const char *sval
             p++;
         }
 
+        /*
+         * Clamped inside the loops rather than after them. A format is only
+         * ML_FORMAT_LEN bytes, but that is still room for enough digits to
+         * overflow the accumulator, and layouts arrive over the network, so
+         * the arithmetic itself has to stay defined. The ceiling is far above
+         * the width and precision caps applied below.
+         */
         int width = 0;
-        while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+        while (*p >= '0' && *p <= '9') {
+            if (width < 1000) width = width * 10 + (*p - '0');
+            p++;
+        }
 
         int prec = -1;
         if (*p == '.') {
             p++;
             prec = 0;
-            while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+            while (*p >= '0' && *p <= '9') {
+                if (prec < 1000) prec = prec * 10 + (*p - '0');
+                p++;
+            }
         }
 
         char conv = *p ? *p++ : 'd';

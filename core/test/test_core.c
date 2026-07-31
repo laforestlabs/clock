@@ -93,6 +93,14 @@ static void test_color(void)
     CHECK(!ml_color_parse("#GGGGGG", &c), "invalid hex rejected");
     CHECK(!ml_color_parse("chartreuse", &c), "unknown name rejected");
 
+    /* Whitespace is measured off both ends, and used to be honoured on the
+     * leading side only, so "red " failed where " red" worked. */
+    CHECK(ml_color_parse(" red", &c) && c.r == 255 && c.g == 0, "leading space ignored");
+    CHECK(ml_color_parse("red ", &c) && c.r == 255 && c.g == 0, "trailing space ignored");
+    CHECK(ml_color_parse("  RED  ", &c) && c.r == 255, "space around a named colour");
+    CHECK(ml_color_parse("#00FF00 ", &c) && c.g == 255, "trailing space after hex");
+    CHECK(!ml_color_parse("red x", &c), "a trailing word is still rejected");
+
     CHECK(ml_gamma8(0) == 0, "gamma maps 0 to 0");
     CHECK(ml_gamma8(255) == 255, "gamma maps 255 to 255");
 
@@ -210,6 +218,39 @@ static void test_json(void)
     ml_json_tok tiny[2];
     CHECK(ml_json_parse(&j, doc, strlen(doc), tiny, 2) == ML_JSON_ERR_NOMEM,
           "token exhaustion reported");
+
+    /*
+     * Raw UTF-8, which is what a JSON encoder that does not escape non-ASCII
+     * emits, and Dart's does not. A degree sign typed into the designer arrives
+     * as the two bytes C2 B0 and has to fold to the same codepoint 127 that
+     * ° does, or the temperature reaches the panel with no degree sign and
+     * nothing anywhere reports why.
+     */
+    static const char utf8[] =
+        "{\"deg\": \"25\xC2\xB0""C\", \"other\": \"caf\xC3\xA9\","
+        " \"bad\": \"a\xFF""b\", \"cut\": \"x\xC2\"}";
+    n = ml_json_parse(&j, utf8, strlen(utf8), toks, 64);
+    CHECK(n > 0, "parses raw UTF-8 in strings");
+
+    CHECK(ml_json_get_str(&j, 0, "deg", s, sizeof(s)) &&
+          s[0] == '2' && s[1] == '5' && (unsigned char)s[2] == 127 &&
+          s[3] == 'C' && s[4] == '\0',
+          "raw UTF-8 degree folds to the degree glyph");
+
+    /* Anything the fonts cannot draw becomes a visible '?', never a dropped
+     * character: a line that silently shortens is far harder to diagnose. */
+    CHECK(ml_json_get_str(&j, 0, "other", s, sizeof(s)) && !strcmp(s, "caf?"),
+          "other non-ASCII folds to a question mark");
+    CHECK(ml_json_get_str(&j, 0, "bad", s, sizeof(s)) && !strcmp(s, "a?b"),
+          "an invalid lead byte consumes exactly one byte");
+    CHECK(ml_json_get_str(&j, 0, "cut", s, sizeof(s)) && !strcmp(s, "x?"),
+          "a sequence truncated by the token end does not read past it");
+
+    /* A long run of exponent digits must not overflow the accumulator. */
+    static const char bigexp[] = "{\"a\": 1e99999999999999999999}";
+    CHECK(ml_json_parse(&j, bigexp, strlen(bigexp), toks, 64) > 0 &&
+          ml_json_get_double(&j, 0, "a", &d),
+          "an absurd exponent parses without overflowing");
 }
 
 static void test_layout(void)
@@ -269,6 +310,99 @@ static void test_layout(void)
     char small[16];
     size_t want = ml_layout_write(&l, small, sizeof(small));
     CHECK(want >= sizeof(small), "truncated write reports the full length");
+
+    /*
+     * Strings the user typed have to survive being written back out. An
+     * unescaped quote closes the string early, and the damage is quiet: the
+     * document still reparses, with the field cut off at the quote, so the
+     * text simply gets shorter every time the layout is saved.
+     */
+    static const char nasty[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"name\":\"a \\\"b\\\" c\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,7],"
+        "\"text\":\"5\\\" nail\",\"bind\":\"back\\\\slash\"}]}";
+
+    ml_layout quoted;
+    CHECK(ml_layout_parse(nasty, strlen(nasty), &quoted, &diag),
+          "parses text containing quotes");
+    CHECK(!strcmp(quoted.widgets[0].text, "5\" nail"), "quote survives the parse");
+
+    size_t qn = ml_layout_write(&quoted, buf, sizeof(buf));
+    CHECK(qn > 0 && qn < sizeof(buf), "serializes quoted text");
+
+    ml_layout requoted;
+    CHECK(ml_layout_parse(buf, strlen(buf), &requoted, &diag),
+          "reparses output containing quotes");
+    CHECK(requoted.count == 1, "quoted round trip keeps the widget");
+    CHECK(!strcmp(requoted.widgets[0].text, "5\" nail"),
+          "quote survives the round trip intact");
+    CHECK(!strcmp(requoted.widgets[0].bind, "back\\slash"),
+          "backslash survives the round trip intact");
+    CHECK(!strcmp(requoted.name, quoted.name), "name survives the round trip intact");
+
+    /*
+     * The degree byte is written as ° rather than as a raw 0x7F, because
+     * that byte is the degree sign as far as the fonts are concerned and a
+     * saved layout should be readable. Either spelling has to fold back to it.
+     */
+    static const char degree[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[0,0,64,7],\"bind\":\"weather.temp_c\","
+        "\"format\":\"%.0f\\u00b0C\"}]}";
+
+    ml_layout deg;
+    CHECK(ml_layout_parse(degree, strlen(degree), &deg, &diag), "parses a degree format");
+    CHECK((unsigned char)deg.widgets[0].format[4] == 127, "degree stored as codepoint 127");
+
+    ml_layout deg_back;
+    ml_layout_write(&deg, buf, sizeof(buf));
+    CHECK(strstr(buf, "\\u00B0") != NULL, "degree written back as an escape");
+    CHECK(ml_layout_parse(buf, strlen(buf), &deg_back, &diag), "reparses the degree format");
+    CHECK(!strcmp(deg_back.widgets[0].format, deg.widgets[0].format),
+          "degree survives the round trip");
+
+    /*
+     * A field width long enough to overflow the accumulator that parses it.
+     * ML_FORMAT_LEN is only 24 bytes, but that is still room for enough digits
+     * to wrap a signed int, and layouts arrive over the network, so computing
+     * the value has to stay defined.
+     *
+     * Checked by rendering it against the documented cap rather than by
+     * asserting it merely survived: both must clamp to the same width, which
+     * only holds if the digits were accumulated without wrapping.
+     */
+    static const char wide_absurd[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[0,0,64,7],\"bind\":\"weather.temp_c\","
+        "\"format\":\"%999999999999999999999d\"}]}";
+    static const char wide_capped[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[0,0,64,7],\"bind\":\"weather.temp_c\","
+        "\"format\":\"%24d\"}]}";
+
+    ml_model wm;
+    ml_model_mock(&wm, ML_MOCK_TYPICAL);
+
+    uint64_t hashes[2] = {0, 0};
+    const char *sources[2] = {wide_absurd, wide_capped};
+    bool parsed_both = true;
+
+    for (int k = 0; k < 2; k++) {
+        ml_layout wl;
+        if (!ml_layout_parse(sources[k], strlen(sources[k]), &wl, &diag)) {
+            parsed_both = false;
+            break;
+        }
+        ml_canvas wc;
+        ml_canvas_init(&wc, wl.w, wl.h, NULL);
+        ml_render(&wl, &wm, &wc);
+        hashes[k] = fnv1a((const uint8_t *)wc.px,
+                          (size_t)wl.w * (size_t)wl.h * sizeof(ml_rgb));
+        ml_canvas_free(&wc);
+    }
+
+    CHECK(parsed_both, "parses an absurd field width");
+    CHECK(hashes[0] == hashes[1], "an absurd field width clamps to the capped one");
 }
 
 static void test_fonts(void)

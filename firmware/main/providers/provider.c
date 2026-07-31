@@ -34,9 +34,18 @@ static volatile bool  s_force_refresh;
  */
 static int64_t backoff_us(const ml_provider *def, int failures)
 {
+    /*
+     * Never retry sooner than the provider polls when it is healthy. Clamping
+     * flat to an hour did exactly that: the configurable range runs to six
+     * hours, so a provider set to poll every six would come back after a
+     * failure in one, hitting a service that is already unhappy six times as
+     * often as when it was working.
+     */
+    const uint32_t ceiling = def->interval_s > 3600 ? def->interval_s : 3600;
+
     uint32_t seconds = def->interval_s;
-    for (int i = 1; i < failures && seconds < 3600; i++) seconds *= 2;
-    if (seconds > 3600) seconds = 3600;
+    for (int i = 1; i < failures && seconds < ceiling; i++) seconds *= 2;
+    if (seconds > ceiling) seconds = ceiling;
     return (int64_t)seconds * 1000000;
 }
 

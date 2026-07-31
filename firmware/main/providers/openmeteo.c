@@ -36,7 +36,14 @@ esp_err_t openmeteo_init(void)
     }
 
     if (s_body == NULL || s_tokens == NULL) {
+        /* Release whichever one did land. The caller disables the provider and
+         * carries on, so this would otherwise strand a 6KB block for the life
+         * of the device. */
         ESP_LOGE(TAG, "could not allocate the fetch buffers");
+        heap_caps_free(s_body);
+        heap_caps_free(s_tokens);
+        s_body   = NULL;
+        s_tokens = NULL;
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
