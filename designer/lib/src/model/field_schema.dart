@@ -58,7 +58,23 @@ const FieldSpec _scale = FieldSpec('scale', 'Scale', FieldKind.integer,
     max: 8,
     help: 'Whole-pixel glyph scale. Ignored while Fit is on');
 const FieldSpec _fit = FieldSpec('fit', 'Fit to box', FieldKind.boolean,
-    help: 'Scale the text to the box height, so resizing grows it');
+    help: 'Scale the text to the box, width and height, so resizing grows it');
+const FieldSpec _minScale = FieldSpec('min_scale', 'Min scale', FieldKind.integer,
+    min: 0,
+    max: 8,
+    help: 'Floor on what Fit may choose. 0 for none');
+const FieldSpec _maxScale = FieldSpec('max_scale', 'Max scale', FieldKind.integer,
+    min: 0,
+    max: 8,
+    help: 'Ceiling on what Fit may choose. 0 for none');
+// Offered on text, clock, date and weather only, because those are the widgets
+// the engine honours it for. An icon is indexed by digit and every body font
+// has digits, so substituting there would put a numeral where the weather icon
+// belongs; agenda and todo clip each row by design and are sized on height
+// alone. Showing the switch where it does nothing would be worse than omitting
+// it, since the preview would not move.
+const FieldSpec _autoFont = FieldSpec('auto_font', 'Auto font', FieldKind.boolean,
+    help: 'Let the engine pick whichever font fills the box best');
 const FieldSpec _align = FieldSpec('align', 'Align', FieldKind.align);
 const FieldSpec _valign = FieldSpec('valign', 'Vertical', FieldKind.valign);
 const FieldSpec _accent = FieldSpec('accent', 'Accent', FieldKind.color,
@@ -81,6 +97,9 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
+    _autoFont,
     _align,
     _valign,
   ],
@@ -90,6 +109,9 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
+    _autoFont,
     _align,
     _valign,
   ],
@@ -99,6 +121,9 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
+    _autoFont,
     _align,
     _valign,
   ],
@@ -106,6 +131,9 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
+    _autoFont,
     _accent,
     _lineGap,
     _align,
@@ -114,6 +142,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('icon_set', 'Icon set', FieldKind.iconSet),
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
     FieldSpec('bind', 'Binding', FieldKind.bind,
         help: 'Usually weather.code'),
     _align,
@@ -123,6 +153,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
     _accent,
     _maxItems,
     _lineGap,
@@ -132,6 +164,8 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _minScale,
+    _maxScale,
     _accent,
     _maxItems,
     _lineGap,

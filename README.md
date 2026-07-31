@@ -127,9 +127,48 @@ capped at 8 and defaults to 1, so any layout written before it existed renders
 byte for byte as it always did.
 
 `"fit": true` derives the scale from the box instead, picking the largest whole
-multiple of the font that still fits the widget's height. That is what makes
-dragging a widget taller in the designer grow the text inside it. It overrides
-`scale` when both are set.
+multiple of the font that fits **both** the widget's width and its height. That
+is what makes dragging a widget taller in the designer grow the text inside it.
+It overrides `scale` when both are set.
+
+Width counts as much as height. Fitting on height alone was fine while every
+`fit` widget held one short string, and wrong the moment one did not: a 64x32
+clock box put `digits16` at 2x on height and then drew 104px of `09:41` into
+64px of box. Widgets that draw a list, `agenda` and `todo`, are still sized on
+height, because they clip each row with an ellipsis by design and fitting the
+whole widget to its longest entry would shrink every row to suit one long title.
+
+`"min_scale"` and `"max_scale"` bound whatever `fit` works out, and default to
+the global range of 1 to 8. A headline that shrinks to 1x to swallow one long
+word has stopped being a headline. An inverted pair collapses to the lower
+bound rather than being rejected, because a layout arriving over the network
+must not be able to make a widget undrawable.
+
+### Letting the engine choose the font
+
+`"auto_font": true` picks the font as well as the size, out of those that can
+render the string in question:
+
+```json
+{ "type": "clock", "rect": [0, 0, 64, 32], "font": "digits16",
+  "fit": true, "auto_font": true }
+```
+
+In a 64x32 box `digits16` fits once on height but its 52px will not survive 2x,
+so it occupies 16 of the 32 rows. `digits10` goes to 2x and fills 20. With
+`auto_font` the engine works that out; without it, the named font stands.
+
+Membership of a family is decided by glyph coverage rather than declared
+anywhere: a font is a candidate when it has a glyph for every character of the
+string. That keeps the clock faces out of a label and `wx16` out of everything
+textual, and it means a new `.font` joins the right group purely by what it
+covers. Ties go to the font the layout named, since choosing the size is a
+service and quietly overruling a deliberate choice for no gain is not.
+
+It is off by default and ignored on `icon`, `agenda` and `todo`. An icon is
+indexed by digit and every body font has digits, so a naive "which font can
+draw this?" would answer `tom5x7` and put the numeral 3 where the rain icon
+belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
 `tom5x7` clock stays chunky at 4x where `digits16` would be smoother; and a box

@@ -175,6 +175,17 @@ truncation that fitted a moment earlier. The **Mirror** slider is the other
 half of that judgement: `bold5x7` exists because thin strokes disappear behind
 two-way glass, and 20 percent transmission is where that becomes obvious.
 
+**Auto font** hands that choice to the engine, which picks whichever font fills
+the box best out of those that can render the string. Drag a clock box wider
+with it on and the face changes, not just the size. It is offered on text,
+clock, date and weather, and withheld from icons, agendas and todos, where the
+engine ignores it. A switch that leaves the preview unchanged is worse than no
+switch.
+
+**Min scale** and **Max scale** bound what Fit may choose, with 0 meaning
+unset. Max scale is the one to reach for when a box is temporarily large while
+you lay a design out and you do not want the text following it all the way.
+
 ## Platform support
 
 `dart:ffi` covers Android, iOS, Linux, macOS and Windows. It does **not** work

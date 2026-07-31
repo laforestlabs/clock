@@ -241,7 +241,19 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
         if (w->scale > ML_MAX_SCALE)  w->scale = ML_MAX_SCALE;
     }
 
+    /* Same treatment for the bounds. Zero means unset, so a layout that omits
+     * them keeps the global range. */
+    if (ml_json_get_int(j, obj, "min_scale", &w->min_scale)) {
+        if (w->min_scale < 0)            w->min_scale = 0;
+        if (w->min_scale > ML_MAX_SCALE) w->min_scale = ML_MAX_SCALE;
+    }
+    if (ml_json_get_int(j, obj, "max_scale", &w->max_scale)) {
+        if (w->max_scale < 0)            w->max_scale = 0;
+        if (w->max_scale > ML_MAX_SCALE) w->max_scale = ML_MAX_SCALE;
+    }
+
     ml_json_get_bool(j, obj, "fit",       &w->fit);
+    ml_json_get_bool(j, obj, "auto_font", &w->auto_font);
     ml_json_get_bool(j, obj, "show_time", &w->show_time);
     ml_json_get_bool(j, obj, "hide_done", &w->hide_done);
     ml_json_get_bool(j, obj, "visible",   &w->visible);

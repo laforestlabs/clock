@@ -53,6 +53,24 @@ static int glyph_index(const ml_font *f, unsigned char ch)
     return idx;
 }
 
+bool ml_font_has_glyph(const ml_font *f, unsigned char ch)
+{
+    return f && glyph_index(f, ch) >= 0;
+}
+
+bool ml_font_covers(const ml_font *f, const char *s)
+{
+    if (!f || !s || !*s) return false;
+
+    /* Every byte, including the spaces. A font missing the space glyph does not
+     * advance for it, so words would run together rather than merely look
+     * different, and that is not a font that can render this string. */
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (glyph_index(f, *p) < 0) return false;
+    }
+    return true;
+}
+
 int ml_text_width(const ml_font *f, const char *s, int scale)
 {
     if (!f || !s) return 0;

@@ -51,18 +51,56 @@ static const ml_font *fit_font(const ml_font *want, int box_h)
 }
 
 /*
- * Largest whole-pixel scale of f that still fits the box height.
+ * Largest whole-pixel scale of f that keeps sample inside the box, on both axes.
+ *
+ * Height alone used to decide this, which was fine while every fit widget held
+ * one short string and wrong as soon as one did not: a 64 by 32 clock box put
+ * digits16 at 2x on height and then drew 104px of "09:41" into 64px of box.
+ *
+ * ml_text_width is exactly linear in scale, so the widest scale that still fits
+ * is a division rather than a search. A NULL or empty sample means the caller
+ * has no single string to fit, and only the height is used.
  *
  * Never below 1: a box too short for even one unscaled row still draws its text
  * clipped, which is visible and fixable, rather than silently drawing nothing.
  */
-static int fit_scale(const ml_font *f, int box_h)
+static int fit_scale(const ml_font *f, const char *sample, int box_w, int box_h)
 {
     if (!f || f->height <= 0) return 1;
 
     int s = box_h / f->height;
+
+    if (sample && *sample && box_w > 0) {
+        const int unit = ml_text_width(f, sample, 1);
+        if (unit > 0) {
+            const int by_width = box_w / unit;
+            if (by_width < s) s = by_width;
+        }
+    }
+
     if (s < 1)            s = 1;
     if (s > ML_MAX_SCALE) s = ML_MAX_SCALE;
+    return s;
+}
+
+/*
+ * Hold a scale inside the widget's own bounds.
+ *
+ * Unset bounds fall back to the global range. An inverted pair collapses to the
+ * lower bound instead of being rejected, because a layout arriving over the
+ * network must not be able to make a widget undrawable.
+ */
+static int clamp_scale(const ml_widget *w, int s)
+{
+    int lo = w->min_scale > 0 ? w->min_scale : 1;
+    int hi = w->max_scale > 0 ? w->max_scale : ML_MAX_SCALE;
+
+    if (lo > ML_MAX_SCALE) lo = ML_MAX_SCALE;
+    if (hi > ML_MAX_SCALE) hi = ML_MAX_SCALE;
+    if (hi < lo)           hi = lo;
+
+    if (s < lo) s = lo;
+    if (s > hi) s = hi;
     return s;
 }
 
@@ -71,12 +109,84 @@ static int fit_scale(const ml_font *f, int box_h)
  *
  * With fit set the box decides, which is what makes dragging a widget taller in
  * the designer grow the text in it. Otherwise the layout's own scale stands,
- * and the box is just a box.
+ * and the box is just a box. Either way the widget's own bounds have the last
+ * word, so min_scale keeps a headline readable even where it does not fit.
  */
-static int widget_scale(const ml_widget *w, const ml_font *f)
+static int widget_scale(const ml_widget *w, const ml_font *f, const char *sample)
 {
-    if (w->fit) return fit_scale(f, w->rect.h);
-    return w->scale > 0 ? w->scale : 1;
+    const int s = w->fit ? fit_scale(f, sample, w->rect.w, w->rect.h)
+                         : (w->scale > 0 ? w->scale : 1);
+    return clamp_scale(w, s);
+}
+
+/* Whether f at this scale draws sample entirely inside the box. */
+static bool scale_fits(const ml_font *f, const char *sample, int s,
+                       const ml_rect *box)
+{
+    if (!f) return false;
+    if (f->height * s > box->h) return false;
+    return ml_text_width(f, sample, s) <= box->w;
+}
+
+/*
+ * Choose the font that fills the box best, out of those that can draw this
+ * string at all.
+ *
+ * Membership is decided by glyph coverage rather than by declared families. A
+ * font is a candidate when it has a glyph for every character of the sample,
+ * which excludes the clock faces from a label and wx16 from anything textual
+ * without any font having to say what it is, and means a new .font joins the
+ * right group purely by what it covers.
+ *
+ * Ties go to the font the layout actually named. Choosing the size is a service;
+ * quietly overruling a deliberate choice for no gain is not.
+ */
+static const ml_font *best_font(const ml_widget *w, const ml_font *want,
+                                const char *sample, int *scale_out)
+{
+    const ml_font *best   = want;
+    int            best_s = widget_scale(w, want, sample);
+    int            best_h = scale_fits(want, sample, best_s, &w->rect)
+                                ? want->height * best_s
+                                : -1;
+
+    for (int i = 0; i < ml_font_count(); i++) {
+        const ml_font *f = ml_font_at(i);
+        if (!f || f == want) continue;
+        if (!ml_font_covers(f, sample)) continue;
+
+        const int s = widget_scale(w, f, sample);
+        if (!scale_fits(f, sample, s, &w->rect)) continue;
+
+        const int h = f->height * s;
+        if (h > best_h) {
+            best   = f;
+            best_s = s;
+            best_h = h;
+        }
+    }
+
+    *scale_out = best_s;
+    return best ? best : want;
+}
+
+/*
+ * The font and scale a widget draws with.
+ *
+ * One entry point, so every widget answers the question the same way. sample is
+ * the string whose width has to be respected, or NULL for the list widgets,
+ * which clip each row with an ellipsis by design: fitting those to their longest
+ * entry would punish every row for one long title.
+ */
+static const ml_font *choose_font(const ml_widget *w, const char *fallback,
+                                  const char *sample, int *scale_out)
+{
+    const ml_font *f = fit_font(pick_font(w->font, fallback), w->rect.h);
+
+    if (w->auto_font && sample && *sample) return best_font(w, f, sample, scale_out);
+
+    *scale_out = widget_scale(w, f, sample);
+    return f;
 }
 
 /* Dimmed variant used for secondary rows and for missing-data placeholders. */
@@ -323,7 +433,6 @@ static void draw_line_w(const ml_widget *w, ml_canvas *c)
 
 static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
     char buf[TEXT_BUF];
     ml_rgb color = w->color;
 
@@ -344,7 +453,9 @@ static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         snprintf(buf, sizeof(buf), "%s", w->text);
     }
 
-    const int sc = widget_scale(w, f);
+    /* Font after the text, because the text is what has to fit. */
+    int sc = 1;
+    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, f->height * sc);
@@ -353,8 +464,7 @@ static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
 static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "digits16"), w->rect.h);
-    const char *fmt  = w->format[0] ? w->format : "%H:%M";
+    const char *fmt = w->format[0] ? w->format : "%H:%M";
 
     char buf[TEXT_BUF];
     ml_rgb color = w->color;
@@ -368,7 +478,8 @@ static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         color = dim(w->color);
     }
 
-    const int sc = widget_scale(w, f);
+    int sc = 1;
+    const ml_font *f = choose_font(w, "digits16", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, f->height * sc);
@@ -377,8 +488,7 @@ static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
 static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    const char *fmt  = w->format[0] ? w->format : "%a %e %b";
+    const char *fmt = w->format[0] ? w->format : "%a %e %b";
 
     char buf[TEXT_BUF];
     ml_rgb color = w->color;
@@ -390,7 +500,8 @@ static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         color = dim(w->color);
     }
 
-    const int sc = widget_scale(w, f);
+    int sc = 1;
+    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, f->height * sc);
@@ -419,7 +530,14 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 
     char glyph[2] = {(char)('0' + category), '\0'};
-    const int sc = widget_scale(w, f);
+
+    /*
+     * Scaled to the box like everything else, but never font-substituted. Icons
+     * are indexed by digit, and every body font has digits, so letting
+     * auto_font loose here would answer "which font can draw '3'?" with tom5x7
+     * and quietly put the numeral 3 where the rain icon belongs.
+     */
+    const int sc = widget_scale(w, f, glyph);
     int  gw = ml_text_width(f, glyph, sc);
     int  x  = align_x(w->align, w->rect, gw);
     int  y  = valign_y(w->valign, w->rect, f->height * sc);
@@ -433,12 +551,24 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
  */
 static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    const int sc     = widget_scale(w, f);
+    char buf[TEXT_BUF];
+
+    /*
+     * Sized to the temperature, which is the one line drawn without clipping and
+     * the one anybody reads from across a room. The rows under it are secondary
+     * and clip with an ellipsis if the label is long.
+     */
+    if (m->weather.valid) {
+        snprintf(buf, sizeof(buf), "%d" ML_DEGREE "C", (int)(m->weather.temp_c + 0.5));
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+
+    int sc = 1;
+    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
     const int fh     = f->height * sc;
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
-    char buf[TEXT_BUF];
     int  y = w->rect.y;
 
     if (!m->weather.valid) {
@@ -446,7 +576,6 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         return;
     }
 
-    snprintf(buf, sizeof(buf), "%d" ML_DEGREE "C", (int)(m->weather.temp_c + 0.5));
     int tw = ml_text_width(f, buf, sc);
     ml_text_draw(c, f, align_x(w->align, w->rect, tw), y, buf, w->color, sc);
     y += line_h;
@@ -471,8 +600,13 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
 static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    const int sc     = widget_scale(w, f);
+    /*
+     * No sample, so the height decides the scale. A list clips each row with an
+     * ellipsis by design, and fitting the whole widget to its longest entry
+     * would shrink every row because one meeting has a long title.
+     */
+    int sc = 1;
+    const ml_font *f = choose_font(w, "tom5x7", NULL, &sc);
     const int fh     = f->height * sc;
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -519,8 +653,9 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
 static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
-    const ml_font *f = fit_font(pick_font(w->font, "tom5x7"), w->rect.h);
-    const int sc     = widget_scale(w, f);
+    /* Height decides, for the same reason as the agenda. */
+    int sc = 1;
+    const ml_font *f = choose_font(w, "tom5x7", NULL, &sc);
     const int fh     = f->height * sc;
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 

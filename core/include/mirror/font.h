@@ -45,6 +45,20 @@ int            ml_font_count(void);
 const ml_font *ml_font_at(int index);
 
 /*
+ * Whether this font has a glyph for a byte.
+ *
+ * Fonts cover different ranges: the clock faces carry 45 to 58 and nothing
+ * else, wx16 carries ten icons. Drawing skips what it cannot find, so a font
+ * asked for the wrong string quietly renders a shorter one. This lets a caller
+ * ask first, which is how automatic font choice tells a body font from a clock
+ * face without either of them having to declare what it is.
+ */
+bool           ml_font_has_glyph(const ml_font *f, unsigned char ch);
+
+/* Whether every byte of s has a glyph, so drawing s loses nothing. */
+bool           ml_font_covers(const ml_font *f, const char *s);
+
+/*
  * Every call below takes a whole-pixel scale, where each glyph pixel becomes a
  * scale by scale block. That is the only way a bitmap font grows: there is
  * nothing between one pixel and the next to interpolate, which is precisely why

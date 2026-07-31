@@ -518,6 +518,214 @@ static void test_fit(void)
     ml_canvas_free(&c);
 }
 
+/* Rows carrying any ink. Proportional to the glyph scale however the text is
+ * aligned, which makes it a stable way to ask "how big did that draw?". */
+static int ink_rows(ml_canvas *c, int w, int h)
+{
+    int rows = 0;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            ml_rgb p = ml_canvas_get(c, x, y);
+            if (p.r || p.g || p.b) { rows++; break; }
+        }
+    }
+    return rows;
+}
+
+static int ink_total(ml_canvas *c, int w, int h)
+{
+    int n = 0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            ml_rgb p = ml_canvas_get(c, x, y);
+            if (p.r || p.g || p.b) n++;
+        }
+    return n;
+}
+
+/* Rightmost column with ink, or -1. Catches text escaping its box. */
+static int ink_right(ml_canvas *c, int w, int h)
+{
+    for (int x = w - 1; x >= 0; x--)
+        for (int y = 0; y < h; y++) {
+            ml_rgb p = ml_canvas_get(c, x, y);
+            if (p.r || p.g || p.b) return x;
+        }
+    return -1;
+}
+
+/* Parse and render one document into a fresh canvas. Caller frees. */
+static bool render_doc(const char *doc, int w, int h, ml_canvas *out)
+{
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    if (!ml_layout_parse(doc, strlen(doc), &l, &diag)) return false;
+
+    ml_canvas_init(out, w, h, NULL);
+    ml_render(&l, &m, out);
+    return true;
+}
+
+static void test_fit_axes(void)
+{
+    group("fit on both axes");
+
+    /*
+     * Width used to be ignored entirely. This box is two rows tall, so height
+     * alone says 2x, and at 2x the string is 94px wide in a 64px box. The old
+     * behaviour drew it at 2x and let the ellipsis eat the overflow.
+     */
+    static const char narrow[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,14],"
+        "\"text\":\"88888888\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+
+    /* '8' inks 6 of the 7 rows in tom5x7; row 6 is the descender row, empty for
+     * a digit. So the row count is 6 per unit of scale, not 7. */
+    ml_canvas c;
+    if (!render_doc(narrow, 64, 64, &c)) { CHECK(false, "narrow doc parses"); return; }
+    CHECK(ink_rows(&c, 64, 64) == 6, "a box too narrow for 2x draws at 1x");
+    CHECK(ink_right(&c, 64, 64) < 64, "fitted text stays inside the canvas");
+    ml_canvas_free(&c);
+
+    /* Same box, same font, a string short enough that 2x fits both ways. */
+    static const char roomy[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,14],"
+        "\"text\":\"88\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+
+    if (!render_doc(roomy, 64, 64, &c)) { CHECK(false, "roomy doc parses"); return; }
+    CHECK(ink_rows(&c, 64, 64) == 12, "the same box still reaches 2x when the text is short");
+    ml_canvas_free(&c);
+}
+
+static void test_scale_bounds(void)
+{
+    group("scale bounds");
+
+    /* 28px of box over a 7px font is 4x, capped here at 2x. */
+    static const char capped[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,28],"
+        "\"text\":\"8\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"max_scale\":2}]}";
+
+    ml_canvas c;
+    if (!render_doc(capped, 64, 64, &c)) { CHECK(false, "capped doc parses"); return; }
+    CHECK(ink_rows(&c, 64, 64) == 12, "max_scale caps what fit would have chosen");
+    ml_canvas_free(&c);
+
+    /* A one-row box is 1x on its own. min_scale insists on more, and the result
+     * is drawn and clipped rather than silently shrunk back. */
+    static const char floored[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,7],"
+        "\"text\":\"8\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"min_scale\":3}]}";
+    static const char plain[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,7],"
+        "\"text\":\"8\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+
+    ml_canvas a, b;
+    if (!render_doc(floored, 64, 64, &a) || !render_doc(plain, 64, 64, &b)) {
+        CHECK(false, "min_scale docs parse");
+        return;
+    }
+    CHECK(ink_total(&a, 64, 64) > ink_total(&b, 64, 64),
+          "min_scale raises a scale the box would have kept at 1x");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+
+    /*
+     * A layout arriving over the network can carry nonsense. An inverted pair
+     * must still draw something, because a widget that cannot be drawn is a
+     * worse outcome than one drawn at the wrong size.
+     */
+    static const char inverted[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,28],"
+        "\"text\":\"8\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"min_scale\":5,\"max_scale\":2}]}";
+
+    if (!render_doc(inverted, 64, 64, &c)) { CHECK(false, "inverted doc parses"); return; }
+    CHECK(ink_total(&c, 64, 64) > 0, "an inverted min/max pair still draws");
+    ml_canvas_free(&c);
+}
+
+static void test_auto_font(void)
+{
+    group("automatic font choice");
+
+    /*
+     * A 64x32 clock box. digits16 fits once on height but its 52px would not
+     * survive 2x, so it sits at 16 of the 32 rows. digits10 goes to 2x and
+     * fills 20, which is what auto_font is for.
+     */
+    static const char named[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
+        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    static const char automatic[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
+        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"auto_font\":true}]}";
+
+    ml_canvas a, b;
+    if (!render_doc(named, 64, 64, &a) || !render_doc(automatic, 64, 64, &b)) {
+        CHECK(false, "auto_font docs parse");
+        return;
+    }
+
+    CHECK(ink_rows(&a, 64, 64) == 16, "a named font is left alone without auto_font");
+    CHECK(ink_rows(&b, 64, 64) > ink_rows(&a, 64, 64),
+          "auto_font finds a font that fills the box better");
+    CHECK(ink_right(&b, 64, 64) < 64, "and the one it picks still fits the width");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+
+    /*
+     * Icons are indexed by digit and every body font has digits, so a naive
+     * "which font can draw this string" would answer tom5x7 and put a numeral
+     * where the weather icon belongs. Icon widgets must render identically
+     * whether or not auto_font is set.
+     */
+    static const char icon_plain[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,32,32],"
+        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    static const char icon_auto[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,32,32],"
+        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"auto_font\":true}]}";
+
+    if (!render_doc(icon_plain, 64, 64, &a) || !render_doc(icon_auto, 64, 64, &b)) {
+        CHECK(false, "icon docs parse");
+        return;
+    }
+
+    bool same = true;
+    for (int y = 0; y < 64 && same; y++)
+        for (int x = 0; x < 64; x++) {
+            ml_rgb p = ml_canvas_get(&a, x, y), q = ml_canvas_get(&b, x, y);
+            if (p.r != q.r || p.g != q.g || p.b != q.b) { same = false; break; }
+        }
+    CHECK(same, "auto_font never substitutes a font for an icon set");
+    CHECK(ink_total(&a, 64, 64) > 0, "the icon actually drew");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+}
+
 static void test_render_purity(void)
 {
     group("render purity");
@@ -896,6 +1104,9 @@ int main(void)
     test_scale();
     test_scale_parse();
     test_fit();
+    test_fit_axes();
+    test_scale_bounds();
+    test_auto_font();
     test_render_purity();
     test_ffi();
     test_golden();

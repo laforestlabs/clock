@@ -88,11 +88,33 @@ typedef struct {
      */
     int            scale;
     /*
-     * Derive scale from the box height instead of taking it from the layout, so
+     * Derive scale from the box instead of taking it from the layout, so
      * resizing a widget in the designer grows the text inside it. Overrides
      * scale when set.
+     *
+     * Both axes are considered. Height alone was enough while every fit widget
+     * held one short string, and silently overflowed as soon as the text was
+     * long enough to matter.
      */
     bool           fit;
+
+    /*
+     * Bounds on whatever fit works out, 0 meaning unset. A headline that shrinks
+     * to 1x to fit one long word has stopped being a headline, and a box given
+     * more room than anyone intended should not grow into a wall of pixels.
+     * An inverted pair is treated as the lower bound rather than as an error,
+     * because a layout arriving over the network must not be able to make a
+     * widget undrawable.
+     */
+    int            min_scale;
+    int            max_scale;
+
+    /*
+     * Let the engine choose the font as well as the size, out of those that can
+     * render the string in question. Off by default: naming a font has to keep
+     * meaning exactly that font.
+     */
+    bool           auto_font;
 
     int            max_items;   /* agenda / todo row cap */
     int            line_gap;    /* extra pixels between rows */
