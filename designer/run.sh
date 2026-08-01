@@ -21,11 +21,14 @@ REPO="$(cd .. && pwd)"
 BUNDLE="$DESIGNER/build/linux/x64/release/bundle"
 BIN="$BUNDLE/mirror_designer"
 
-# Freshness is tracked with an explicit stamp rather than the binary's mtime.
-# The runner executable is only relinked when the C++ shell changes, so after a
-# pure Dart or asset edit it keeps its old timestamp and every launch would look
-# stale and rebuild.
+# Freshness is tracked by hashing the contents of the sources, not by comparing
+# timestamps. Two things defeat mtimes here. The runner executable is only
+# relinked when the C++ shell changes, so a pure Dart or asset edit leaves it
+# looking current. And git rewrites mtimes wholesale on checkout, rebase and
+# pull, so any branch switch made an unchanged tree look stale and forced a
+# rebuild that produced a byte identical bundle.
 STAMP="$DESIGNER/build/linux/.mirror-run-stamp"
+BUILD_LOG="/tmp/mirror-designer-build.log"
 
 # Desktop launchers get a bare environment, so look in the usual install spots
 # rather than assuming PATH is set up the way an interactive shell has it.
@@ -54,59 +57,100 @@ fail() {
 # ------------------------------------------------------------ staleness check
 
 # Only real sources count. Generated platform directories and build output are
-# excluded, since the build itself touches those and would look perpetually
-# stale.
-# A build run by hand, without this script, leaves no stamp. Seed one from the
-# newest file already in the bundle so that build still counts as current.
-ensure_stamp() {
-  [ -f "$STAMP" ] && return 0
-  [ -d "$BUNDLE" ] || return 1
-  local newest
-  newest="$(find "$BUNDLE" -type f -printf '%T@ %p\n' 2>/dev/null \
-              | sort -rn | head -1 | cut -d' ' -f2-)"
-  [ -n "$newest" ] && touch -r "$newest" "$STAMP" 2>/dev/null
-}
+# excluded, since the build itself writes into those and they would never
+# settle. Paths are listed relative to the repository root so that the digest
+# survives moving or renaming the checkout.
+SOURCE_ROOTS=(
+  designer/lib
+  designer/pubspec.yaml
+  designer/packages/mirror_core_ffi/lib
+  designer/packages/mirror_core_ffi/src
+  core/src
+  core/include
+  core/ffi
+  # Stock layouts are bundled as Flutter assets, so editing one needs a
+  # rebuild before the app sees it.
+  layouts
+)
 
-sources_newer_than_stamp() {
-  local roots=(
-    "$DESIGNER/lib"
-    "$DESIGNER/pubspec.yaml"
-    "$DESIGNER/packages/mirror_core_ffi/lib"
-    "$DESIGNER/packages/mirror_core_ffi/src"
-    "$REPO/core/src"
-    "$REPO/core/include"
-    "$REPO/core/ffi"
-    # Stock layouts are bundled as Flutter assets, so editing one needs a
-    # rebuild before the app sees it.
-    "$REPO/layouts"
-  )
-  local existing=()
-  local r
-  for r in "${roots[@]}"; do [ -e "$r" ] && existing+=("$r"); done
+# One digest over the whole source set, roughly 47 files and half a megabyte,
+# which costs a couple of milliseconds per launch. Names go into the hash along
+# with contents, so adding or deleting a file counts as a change even when no
+# surviving file was edited.
+source_hash() {
+  local existing=() r
+  for r in "${SOURCE_ROOTS[@]}"; do [ -e "$REPO/$r" ] && existing+=("$r"); done
   [ ${#existing[@]} -eq 0 ] && return 1
 
-  local hit
-  hit="$(find "${existing[@]}" -type f \
-           \( -name '*.dart' -o -name '*.c' -o -name '*.h' \
-              -o -name '*.yaml' -o -name '*.json' -o -name 'CMakeLists.txt' \) \
-           -newer "$STAMP" -print -quit 2>/dev/null)"
-  [ -n "$hit" ]
+  local digest
+  digest="$(cd "$REPO" && find "${existing[@]}" -type f \
+              \( -name '*.dart' -o -name '*.c' -o -name '*.h' \
+                 -o -name '*.yaml' -o -name '*.json' -o -name 'CMakeLists.txt' \) \
+              -print0 2>/dev/null \
+            | LC_ALL=C sort -z \
+            | xargs -0 -r sha256sum 2>/dev/null \
+            | sha256sum | cut -d' ' -f1)"
+
+  [ -n "$digest" ] || return 1
+  printf '%s\n' "$digest"
 }
+
+# A stamp left by an older version of this script carries no digest, only an
+# mtime. Anything that is not a bare hash reads as unknown, which costs one
+# rebuild and writes the current format.
+stored_hash() {
+  [ -f "$STAMP" ] || return 1
+  local h
+  h="$(head -1 "$STAMP" 2>/dev/null || true)"
+  [ ${#h} -eq 64 ] || return 1
+  printf '%s\n' "$h"
+}
+
+# Both are read through || true so that a failure inside them cannot trip the
+# errexit at the top of this file; an empty result is the signal instead.
+CURRENT_HASH="$(source_hash || true)"
+STORED_HASH="$(stored_hash || true)"
 
 need_build=0
 if [ ! -x "$BIN" ]; then
   need_build=1
 elif [ -n "${MIRROR_FORCE_BUILD:-}" ]; then
   need_build=1
-elif ! ensure_stamp; then
+elif [ -z "$CURRENT_HASH" ]; then
+  # The sources could not be read at all, so the checkout is in a state this
+  # script cannot reason about. Attempting a build beats launching a bundle of
+  # unknown vintage.
   need_build=1
-elif sources_newer_than_stamp; then
+elif [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+  # Covers a missing stamp and a legacy one too, since both read as empty.
   need_build=1
 fi
 
 [ -n "${MIRROR_NO_BUILD:-}" ] && need_build=0
 
 # -------------------------------------------------------------------- build
+
+# Started from the launcher there is no terminal, so a build that only writes to
+# a log file looks exactly like a launcher that did nothing at all. Put a window
+# on screen in that case, and stay plain text when there is a terminal to read.
+build_with_feedback() {
+  if [ -t 1 ] || ! command -v zenity >/dev/null 2>&1; then
+    printf 'Building the designer, sources changed. Log: %s\n' "$BUILD_LOG" >&2
+    "$FLUTTER" build linux --release >"$BUILD_LOG" 2>&1
+    return
+  fi
+
+  "$FLUTTER" build linux --release >"$BUILD_LOG" 2>&1 &
+  local pid=$!
+  # zenity pulses for as long as its stdin stays open and closes on end of
+  # file, so the feeder subshell just has to outlive the build. Cancel is off
+  # because nothing here can actually call the compiler back.
+  ( while kill -0 "$pid" 2>/dev/null; do sleep 1; done ) \
+    | zenity --progress --pulsate --auto-close --no-cancel \
+        --title="Mirror Designer" --width=380 \
+        --text="Building the designer, sources changed..." 2>/dev/null || true
+  wait "$pid"
+}
 
 if [ "$need_build" -eq 1 ]; then
   FLUTTER="$(find_flutter || true)"
@@ -120,17 +164,23 @@ Install Flutter, then run designer/setup.sh once:
     notify "Launching without rebuilding" "Flutter was not found, so this may be an older build."
   else
     notify "Building the designer" "Sources changed since the last build."
-    if "$FLUTTER" build linux --release >/tmp/mirror-designer-build.log 2>&1; then
-      touch "$STAMP"
+    # CURRENT_HASH was taken before the build started, deliberately. Recording
+    # it afterwards would swallow any edit made while the compiler was running:
+    # that edit would be hashed as though it had been built. Storing the older
+    # digest just means one more rebuild, which is the safe direction to err.
+    if build_with_feedback; then
+      if [ -n "$CURRENT_HASH" ]; then
+        printf '%s\n' "$CURRENT_HASH" >"$STAMP"
+      fi
     else
       if [ -x "$BIN" ]; then
-        notify "Build failed, launching the previous build" "See /tmp/mirror-designer-build.log"
+        notify "Build failed, launching the previous build" "See $BUILD_LOG"
       else
         fail "The build failed and there is no previous build to fall back on.
 
-See /tmp/mirror-designer-build.log
+See $BUILD_LOG
 
-$(tail -15 /tmp/mirror-designer-build.log 2>/dev/null)"
+$(tail -15 "$BUILD_LOG" 2>/dev/null)"
       fi
     fi
   fi

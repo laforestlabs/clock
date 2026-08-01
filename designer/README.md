@@ -39,11 +39,17 @@ and a double-clickable shortcut on the Desktop. Both run `run.sh`, which starts
 the prebuilt release bundle. That bundle is self contained, so it opens in well
 under a second and does not need Flutter on PATH.
 
-`run.sh` rebuilds first, but only when a source file is newer than the binary:
-`.dart`, `.c` or `.h` under `lib/`, `packages/mirror_core_ffi/` or the
-repository's `core/`, and the stock `layouts/*.json`, which are bundled as
-assets. An edit is never silently missed, and an unchanged tree never pays for
-a build.
+`run.sh` rebuilds first, but only when the sources have really changed. It
+hashes their contents: `.dart`, `.c` or `.h` under `lib/`,
+`packages/mirror_core_ffi/` or the repository's `core/`, plus the stock
+`layouts/*.json`, which are bundled as assets. Contents rather than timestamps,
+because git rewrites mtimes on every checkout, rebase and pull, which used to
+leave an untouched tree looking stale and rebuilding for nothing. An edit is
+never silently missed, and an unchanged tree never pays for a build.
+
+A rebuild started from the launcher opens a progress window. There is no
+terminal to watch in that case, and a build that only wrote to a log file was
+indistinguishable from a launcher that had done nothing at all.
 
 | Want | Do |
 |---|---|
