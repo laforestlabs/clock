@@ -191,6 +191,21 @@ class _PanelViewState extends State<PanelView> {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The controller decides the zoom but cannot see the window, so hand it
+        // the box this view was given. Reported after the frame rather than
+        // during it, because a re-fit notifies listeners and doing that in the
+        // middle of a build is an error.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _c.reportViewport(constraints.biggest);
+        });
+        return _buildPanel();
+      },
+    );
+  }
+
+  Widget _buildPanel() {
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {

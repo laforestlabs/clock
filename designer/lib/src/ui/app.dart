@@ -394,6 +394,15 @@ class _ViewToolbar extends StatelessWidget {
               icon: const Icon(Icons.zoom_in),
               onPressed: () => controller.zoom = controller.zoom + 1,
             ),
+            IconButton(
+              tooltip: 'Fit to window',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.fit_screen),
+              // Greyed out while the zoom is already following the window,
+              // which doubles as the indicator for which mode is active.
+              onPressed:
+                  controller.zoomFitsWindow ? null : controller.fitToWindow,
+            ),
 
             const SizedBox(width: 12),
             IconButton(

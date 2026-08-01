@@ -54,11 +54,70 @@ class DesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Zoom is a whole-number pixel multiplier. It fills the window by default and
+  // re-fits when the window or the panel size changes. Touching the zoom
+  // controls pins it to that choice instead, until the user asks to fit again,
+  // so a deliberate close-up is never yanked away by a stray resize.
+  static const double minZoom = 1;
+  static const double maxZoom = 24;
+
+  // Only a starting point, replaced by the fit as soon as the canvas reports
+  // its size on the first frame.
   double _zoom = 6;
   double get zoom => _zoom;
   set zoom(double value) {
-    _zoom = value.clamp(1, 24);
+    _zoomPinned = true;
+    _zoom = value.clamp(minZoom, maxZoom).toDouble();
     notifyListeners();
+  }
+
+  bool _zoomPinned = false;
+
+  /// Whether the zoom is currently following the window rather than a manual
+  /// choice. Drives the enabled state of the fit control.
+  bool get zoomFitsWindow => !_zoomPinned;
+
+  ui.Size _viewport = ui.Size.zero;
+
+  /// Reported by the canvas with the room it actually has. The controller
+  /// cannot work this out for itself, since only the layout knows the box size.
+  void reportViewport(ui.Size size) {
+    if (!size.width.isFinite || !size.height.isFinite) return;
+    if (size == _viewport) return;
+    _viewport = size;
+    if (_applyFit()) notifyListeners();
+  }
+
+  /// Discard a pinned zoom and go back to filling the window.
+  void fitToWindow() {
+    _zoomPinned = false;
+    _applyFit();
+    notifyListeners();
+  }
+
+  /// The largest whole multiplier that still shows the entire panel.
+  double _fitZoom() {
+    if (_viewport.width <= 0 || _viewport.height <= 0) return _zoom;
+    if (_doc.width <= 0 || _doc.height <= 0) return _zoom;
+
+    final fit = _viewport.width / _doc.width < _viewport.height / _doc.height
+        ? _viewport.width / _doc.width
+        : _viewport.height / _doc.height;
+
+    // Rounded down, never up, so that nothing is ever cut off. Fractional
+    // multipliers are refused outright: the painter samples nearest neighbour,
+    // and half-pixel LED edges are the blurring this whole scheme avoids.
+    return fit.floorToDouble().clamp(minZoom, maxZoom).toDouble();
+  }
+
+  /// Whether the zoom moved. Notifying is left to the caller so that a re-render
+  /// does not fire two rebuilds for one change.
+  bool _applyFit() {
+    if (_zoomPinned) return false;
+    final z = _fitZoom();
+    if (z == _zoom) return false;
+    _zoom = z;
+    return true;
   }
 
   bool _ledGrid = true;
@@ -104,6 +163,9 @@ class DesignerController extends ChangeNotifier {
     _undo.clear();
     _redo.clear();
     if (markClean) _dirty = false;
+    // A different document gets a fresh look at the window. A zoom pinned for
+    // the previous layout says nothing about this one.
+    _zoomPinned = false;
     await _refresh();
   }
 
@@ -114,6 +176,7 @@ class DesignerController extends ChangeNotifier {
     _undo.clear();
     _redo.clear();
     _dirty = true;
+    _zoomPinned = false;
     await _refresh();
   }
 
@@ -314,6 +377,11 @@ class DesignerController extends ChangeNotifier {
 
   /// Serialize, hand to the engine, re-render. Everything funnels through here.
   Future<void> _refresh() async {
+    // Everything that can change the panel's dimensions funnels through here,
+    // so this is the one place a re-fit has to happen. It notifies nothing on
+    // its own; the notifyListeners below covers it.
+    _applyFit();
+
     final json = _doc.encode(pretty: false);
     final ok = _engine.load(json);
 
