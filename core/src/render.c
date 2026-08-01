@@ -32,22 +32,57 @@ static const ml_font *pick_font(const char *name, const char *fallback_name)
 }
 
 /*
+ * Whether f may stand in for a font the box cannot hold.
+ *
+ * Icon sets are refused by role, not by coverage. wx16 carries exactly the ten
+ * digit codepoints, so "23" is inside its coverage and no measurement of its
+ * bitmaps reveals that the glyphs are weather pictograms. Only the declared role
+ * separates a numeral from a rain cloud.
+ *
+ * Past that, coverage decides, so a clock face is never handed a word it would
+ * drop most of. A caller with no sample to name draws strings this code cannot
+ * see (the list widgets, a row at a time), and there only a full text font is
+ * safe: substituting a 10px clock face for a 32px one would silently erase
+ * every letter in an agenda.
+ */
+static bool can_stand_in(const ml_font *f, const char *sample)
+{
+    if (!f) return false;
+    if (f->role == ML_FONT_ICONS) return false;
+    if (!sample || !*sample) return f->role == ML_FONT_TEXT;
+    return ml_font_covers(f, sample);
+}
+
+/*
  * Choose a font that actually fits the box. A layout authored for 128x64 and
  * then dropped onto a 64x64 panel would otherwise render a clock as a row of
- * clipped stumps; falling back to the small font keeps it readable.
+ * clipped stumps; falling back to a shorter font keeps it readable.
+ *
+ * Under the shortest font there is nothing left to fall back to, so that font
+ * is the floor rather than the oversized one the layout asked for. A 5px box
+ * then loses the last row of a 6px font instead of showing the top five rows of
+ * a 16px one, which is the difference between small text and wreckage.
  */
-static const ml_font *fit_font(const ml_font *want, int box_h)
+static const ml_font *fit_font(const ml_font *want, const char *sample, int box_h)
 {
     if (!want) return ml_font_default();
     if (want->height <= box_h) return want;
 
-    const ml_font *best = NULL;
+    const ml_font *best     = NULL;
+    const ml_font *shortest = NULL;
+
     for (int i = 0; i < ml_font_count(); i++) {
         const ml_font *f = ml_font_at(i);
+        if (!can_stand_in(f, sample)) continue;
+
+        if (!shortest || f->height < shortest->height) shortest = f;
         if (f->height > box_h) continue;
         if (!best || f->height > best->height) best = f;
     }
-    return best ? best : want;
+
+    if (best)     return best;
+    if (shortest) return shortest;
+    return want;
 }
 
 /*
@@ -132,11 +167,10 @@ static bool scale_fits(const ml_font *f, const char *sample, int s,
  * Choose the font that fills the box best, out of those that can draw this
  * string at all.
  *
- * Membership is decided by glyph coverage rather than by declared families. A
- * font is a candidate when it has a glyph for every character of the sample,
- * which excludes the clock faces from a label and wx16 from anything textual
- * without any font having to say what it is, and means a new .font joins the
- * right group purely by what it covers.
+ * Membership is decided by what a font can draw rather than by declared
+ * families: glyph coverage of the sample, plus a role that is not an icon set.
+ * That keeps the clock faces out of a label and the weather pictograms out of
+ * anything textual, and means a new .font joins the right group on its own.
  *
  * Ties go to the font the layout actually named. Choosing the size is a service;
  * quietly overruling a deliberate choice for no gain is not.
@@ -150,10 +184,14 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
                                 ? want->height * best_s
                                 : -1;
 
+    const ml_font *shortest = NULL;
+
     for (int i = 0; i < ml_font_count(); i++) {
         const ml_font *f = ml_font_at(i);
-        if (!f || f == want) continue;
-        if (!ml_font_covers(f, sample)) continue;
+        if (!can_stand_in(f, sample)) continue;
+
+        if (!shortest || f->height < shortest->height) shortest = f;
+        if (f == want) continue;
 
         const int s = widget_scale(w, f, sample);
         if (!scale_fits(f, sample, s, &w->rect)) continue;
@@ -164,6 +202,17 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
             best_s = s;
             best_h = h;
         }
+    }
+
+    /*
+     * Nothing fits, the named font included. Fall to the shortest font that can
+     * carry this string at its smallest allowed scale: a box this size is going
+     * to clip something, and clipping the least of the smallest is the readable
+     * end of a bad situation.
+     */
+    if (best_h < 0 && shortest) {
+        best   = shortest;
+        best_s = clamp_scale(w, 1);
     }
 
     *scale_out = best_s;
@@ -181,7 +230,7 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
 static const ml_font *choose_font(const ml_widget *w, const char *fallback,
                                   const char *sample, int *scale_out)
 {
-    const ml_font *f = fit_font(pick_font(w->font, fallback), w->rect.h);
+    const ml_font *f = fit_font(pick_font(w->font, fallback), sample, w->rect.h);
 
     if (w->auto_font && sample && *sample) return best_font(w, f, sample, scale_out);
 

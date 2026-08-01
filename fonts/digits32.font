@@ -17,6 +17,7 @@
 # picture it is meant to be.
 
 @name     digits32
+@role     digits
 @height   32
 @baseline 32
 @gap      4

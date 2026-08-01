@@ -19,6 +19,7 @@
 # temperature reads correctly whichever of the three a widget names.
 
 @name     tiny4x6
+@role     text
 @height   6
 @baseline 5
 @gap      1

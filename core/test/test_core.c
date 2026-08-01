@@ -436,6 +436,22 @@ static void test_fonts(void)
     CHECK(ml_font_count() == 7, "seven fonts in the registry");
 
     /*
+     * Roles. Coverage cannot separate a clock face from an icon set, because the
+     * digits are the whole of what either one carries, so the declared role is
+     * the only thing keeping the weather pictograms out of the font pickers and
+     * out of substitution.
+     */
+    CHECK(body->role == ML_FONT_TEXT, "tom5x7 is a text font");
+    CHECK(clock->role == ML_FONT_DIGITS, "digits16 is a clock face");
+    CHECK(icons->role == ML_FONT_ICONS, "wx16 is an icon set");
+    CHECK(ml_font_find("tiny4x6")->role == ML_FONT_TEXT, "tiny4x6 is a text font");
+    CHECK(ml_font_find("bold5x7")->role == ML_FONT_TEXT, "bold5x7 is a text font");
+    CHECK(ml_font_find("digits10")->role == ML_FONT_DIGITS, "digits10 is a clock face");
+    CHECK(ml_font_find("digits32")->role == ML_FONT_DIGITS, "digits32 is a clock face");
+    CHECK(ml_font_covers(icons, "23"),
+          "an icon set covers the digits, which is why coverage alone cannot judge");
+
+    /*
      * Every body font carries the degree sign in the DEL slot, so a layout can
      * swap between them without a temperature losing its unit.
      */
@@ -860,6 +876,106 @@ static void test_auto_font(void)
     ml_canvas_free(&b);
 }
 
+/* Whether two canvases of the same size hold identical pixels. */
+static bool same_canvas(const ml_canvas *a, const ml_canvas *b, int w, int h)
+{
+    return memcmp(a->px, b->px, (size_t)w * (size_t)h * sizeof(ml_rgb)) == 0;
+}
+
+/*
+ * What happens when the box runs out of room.
+ *
+ * Two separate failures used to live here. A box shorter than every registered
+ * font kept the font the layout named and drew its top few rows, so dragging a
+ * widget past a threshold turned its text into stumps instead of into small
+ * text. And substitution went by height alone, so a box too small for a named
+ * clock face could land on a shorter clock face and silently drop every letter.
+ */
+static void test_scale_floor(void)
+{
+    group("scale floor");
+
+    /* 5px, which is shorter than tiny4x6 and so shorter than everything. */
+    static const char under_floor[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
+        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    static const char shortest[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
+        "\"font\":\"tiny4x6\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+
+    ml_canvas a, b;
+    if (!render_doc(under_floor, 64, 64, &a) || !render_doc(shortest, 64, 64, &b)) {
+        CHECK(false, "scale floor docs parse");
+        return;
+    }
+    CHECK(ink_total(&a, 64, 64) > 0, "a box under the shortest font still draws");
+    CHECK(same_canvas(&a, &b, 64, 64),
+          "a box under the shortest font draws it, not the top of a tall one");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+
+    /* With room for a shorter face it still takes the tallest that fits. The
+     * floor is a floor, not a shortcut past the search. */
+    static const char ten_high[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,10],"
+        "\"font\":\"digits32\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    if (!render_doc(ten_high, 64, 64, &a)) {
+        CHECK(false, "ten_high parses");
+        return;
+    }
+    CHECK(ink_rows(&a, 64, 64) == 10, "a 10px box takes the 10px face, not the floor");
+    ml_canvas_free(&a);
+
+    /*
+     * A word in a box too small for the named face has to keep its letters.
+     * digits10 fits this 12px box on height and carries no letters at all, so
+     * height-only substitution chose it and drew a completely empty widget.
+     */
+    static const char word[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,12],\"text\":\"Cloudy\","
+        "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
+    if (!render_doc(word, 64, 64, &a)) {
+        CHECK(false, "word parses");
+        return;
+    }
+    CHECK(ink_total(&a, 64, 64) > 0,
+          "letters survive a box too small for the named clock face");
+    CHECK(ink_rows(&a, 64, 64) <= 7, "and land in a font that has them");
+    ml_canvas_free(&a);
+
+    /*
+     * A list widget names no single string to measure, since it fits each row
+     * separately by design. With nothing to check coverage against, the only
+     * safe stand-in is a full text font: a clock face fits the box and carries
+     * the times, so the old rule drew an agenda's clock columns and dropped
+     * every title.
+     */
+    static const char list_named[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
+        "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
+    static const char list_face[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
+        "\"font\":\"digits10\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
+    if (!render_doc(list_named, 64, 64, &a) || !render_doc(list_face, 64, 64, &b)) {
+        CHECK(false, "list docs parse");
+        return;
+    }
+    CHECK(ink_total(&a, 64, 64) > 0, "an agenda in a 14px box draws");
+    CHECK(!same_canvas(&a, &b, 64, 64),
+          "a list falls back to a text font rather than to a clock face");
+    ml_canvas_free(&a);
+    ml_canvas_free(&b);
+}
+
 static void test_render_purity(void)
 {
     group("render purity");
@@ -1032,6 +1148,17 @@ static void test_ffi(void)
     CHECK(ml_sim_font_count() >= 3, "fonts enumerated");
     CHECK(strlen(ml_sim_font_name(0)) > 0, "font names available");
     CHECK(ml_sim_font_height(0) > 0, "font heights available");
+
+    /* The role the designer filters its pickers on. Crosses as an int, so the
+     * enumerator order is part of the contract. */
+    CHECK(ml_sim_font_role(0) == (int)ML_FONT_TEXT, "the shortest font reads as text");
+    bool saw_icons = false;
+    for (int i = 0; i < ml_sim_font_count(); i++) {
+        if (strcmp(ml_sim_font_name(i), "wx16") == 0)
+            saw_icons = ml_sim_font_role(i) == (int)ML_FONT_ICONS;
+    }
+    CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
+    CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
     CHECK(ml_sim_type_count() == 9, "all widget types enumerated");
     CHECK(ml_sim_bind_count() > 10, "bind paths enumerated");
 
@@ -1241,6 +1368,7 @@ int main(void)
     test_fit_axes();
     test_scale_bounds();
     test_auto_font();
+    test_scale_floor();
     test_render_purity();
     test_ffi();
     test_golden();

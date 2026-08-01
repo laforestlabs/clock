@@ -10,6 +10,7 @@
 #   50 '2'  cloudy         53 '5'  drizzle       56 '8'  showers
 
 @name     wx16
+@role     icons
 @height   16
 @baseline 16
 @gap      0

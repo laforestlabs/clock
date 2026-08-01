@@ -4,7 +4,7 @@
  * Source:      fonts/digits16.font
  * Regenerate:  python3 tools/fontgen.py
  *
- * 14 glyphs, codepoints 45 to 58, 
+ * 14 glyphs, codepoints 45 to 58, role digits, 
  * cell height 16, baseline 16, 416 bytes of bitmap.
  */
 #include "mirror/font.h"
@@ -261,6 +261,7 @@ static const uint16_t s_digits16_offsets[14] = {
 
 const ml_font ml_font_digits16 = {
     .name     = "digits16",
+    .role     = ML_FONT_DIGITS,
     .first    = 45,
     .count    = 14,
     .height   = 16,

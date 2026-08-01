@@ -4,7 +4,7 @@
  * Source:      fonts/wx16.font
  * Regenerate:  python3 tools/fontgen.py
  *
- * 10 glyphs, codepoints 48 to 57, 
+ * 10 glyphs, codepoints 48 to 57, role icons, 
  * cell height 16, baseline 16, 320 bytes of bitmap.
  */
 #include "mirror/font.h"
@@ -192,6 +192,7 @@ static const uint16_t s_wx16_offsets[10] = {
 
 const ml_font ml_font_wx16 = {
     .name     = "wx16",
+    .role     = ML_FONT_ICONS,
     .first    = 48,
     .count    = 10,
     .height   = 16,

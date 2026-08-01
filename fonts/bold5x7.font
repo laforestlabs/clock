@@ -22,6 +22,7 @@
 # renders in either font without the layout changing.
 
 @name     bold5x7
+@role     text
 @height   7
 @baseline 6
 @gap      1

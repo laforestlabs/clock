@@ -220,7 +220,12 @@ class _Field extends StatelessWidget {
         return _Dropdown(
           label: spec.label,
           value: widget.getString(spec.key),
+          // Icon sets are excluded. They are fonts only in the sense that they
+          // reuse the glyph machinery: wx16 maps the digits onto weather
+          // pictograms, so picking it for a label replaces the text with
+          // symbols. Nobody reaches for that on purpose from a font menu.
           options: controller.engine.fonts
+              .where((f) => f.drawsText)
               .map((f) => f.name)
               .toList(growable: false),
           onChanged: (v) =>
@@ -231,10 +236,12 @@ class _Field extends StatelessWidget {
         return _Dropdown(
           label: spec.label,
           value: widget.getString(spec.key),
-          // Icon sets are fonts, so the same catalogue serves both. Filtering
-          // to the tall ones keeps body fonts out of the icon picker.
+          // Icon sets are fonts, so the same catalogue serves both, filtered by
+          // the declared role. Height used to stand in for this, which offered
+          // the clock faces as icon sets: an icon is indexed by digit, so
+          // digits32 was a valid pick that drew the numeral instead of the icon.
           options: controller.engine.fonts
-              .where((f) => f.height >= 8)
+              .where((f) => f.isIconSet)
               .map((f) => f.name)
               .toList(growable: false),
           onChanged: (v) =>

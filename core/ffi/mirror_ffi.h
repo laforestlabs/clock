@@ -125,6 +125,14 @@ ML_EXPORT int         ml_sim_font_count(void);
 ML_EXPORT const char *ml_sim_font_name(int index);
 ML_EXPORT int         ml_sim_font_height(int index);
 
+/*
+ * The font's ml_font_role as an int: 0 text, 1 digits, 2 icons. What the picker
+ * needs it for is knowing which fonts are not fonts. An icon set draws
+ * pictograms from digit codepoints, so offering wx16 as a choice for a label is
+ * offering to turn the text into weather symbols.
+ */
+ML_EXPORT int         ml_sim_font_role(int index);
+
 ML_EXPORT int         ml_sim_type_count(void);
 ML_EXPORT const char *ml_sim_type_name(int index);
 

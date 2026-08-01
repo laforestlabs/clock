@@ -105,6 +105,8 @@ class MirrorBindings {
             lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_font_name'),
         fontHeight =
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_height'),
+        fontRole =
+            lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_role'),
         typeCount =
             lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_type_count'),
         typeName =
@@ -142,6 +144,7 @@ class MirrorBindings {
   final int Function() fontCount;
   final Pointer<Utf8> Function(int) fontName;
   final int Function(int) fontHeight;
+  final int Function(int) fontRole;
   final int Function() typeCount;
   final Pointer<Utf8> Function(int) typeName;
   final int Function() bindCount;

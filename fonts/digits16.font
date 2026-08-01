@@ -11,6 +11,7 @@
 # sync, and without a '-' glyph that placeholder collapses to a bare colon.
 
 @name     digits16
+@role     digits
 @height   16
 @baseline 16
 @gap      2

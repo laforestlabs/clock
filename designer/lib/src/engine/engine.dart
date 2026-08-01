@@ -20,12 +20,37 @@ import 'package:flutter/foundation.dart';
 
 import 'bindings.dart';
 
+/// What a font is for, as declared by `@role` in its `.font` source.
+///
+/// Declaration order matches `ml_font_role` in core/include/mirror/font.h: the
+/// value crosses the FFI boundary as its index.
+enum FontRole {
+  /// The full printable range, safe for any string.
+  text,
+
+  /// A clock or temperature face: digits and a little punctuation.
+  digits,
+
+  /// Pictograms indexed by digit, never text.
+  icons,
+}
+
 /// One item from the engine's font catalogue.
 @immutable
 class FontInfo {
-  const FontInfo(this.name, this.height);
+  const FontInfo(this.name, this.height, this.role);
   final String name;
   final int height;
+  final FontRole role;
+
+  /// Whether this font can be handed a string. An icon set cannot: it answers
+  /// the digits with weather pictograms, so a label set to one turns into
+  /// symbols rather than shrinking or falling back.
+  bool get drawsText => role != FontRole.icons;
+
+  /// Whether this is a pictogram set, and so belongs in the icon picker and
+  /// nowhere else.
+  bool get isIconSet => role == FontRole.icons;
 }
 
 /// Geometry of a widget as the engine understands it, in canvas pixels.
@@ -237,10 +262,22 @@ class MirrorEngine {
     final count = _b.fontCount();
     return List<FontInfo>.generate(
       count,
-      (i) => FontInfo(_b.fontName(i).toDartString(), _b.fontHeight(i)),
+      (i) => FontInfo(
+        _b.fontName(i).toDartString(),
+        _b.fontHeight(i),
+        _roleFromIndex(_b.fontRole(i)),
+      ),
       growable: false,
     );
   }
+
+  /// A role this build has no name for reads as text, which is the role that
+  /// asks for no special handling. Hiding an unrecognised font from the pickers
+  /// entirely would be the worse failure.
+  static FontRole _roleFromIndex(int value) =>
+      value >= 0 && value < FontRole.values.length
+          ? FontRole.values[value]
+          : FontRole.text;
 
   List<String> get widgetTypes => List<String>.generate(
         _b.typeCount(),

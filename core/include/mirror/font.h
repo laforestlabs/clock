@@ -22,8 +22,24 @@
 extern "C" {
 #endif
 
+/*
+ * What a font is for. Declared by @role in the .font source.
+ *
+ * This is the one thing about a font its bitmaps cannot imply. A clock face and
+ * an icon set both carry nothing but the digits, so asking "which fonts can
+ * draw 23?" puts a numeral and a rain cloud in the same bucket and then picks
+ * between them on height. Coverage answers what a font can draw; only the role
+ * answers whether the result would be text.
+ */
+typedef enum {
+    ML_FONT_TEXT = 0,  /* full printable range, safe for any string */
+    ML_FONT_DIGITS,    /* clock and temperature faces: digits and a little punctuation */
+    ML_FONT_ICONS      /* pictograms indexed by digit, never text */
+} ml_font_role;
+
 typedef struct {
     const char     *name;
+    ml_font_role    role;
     uint8_t         first;     /* codepoint of glyph 0, normally 32 (space) */
     uint16_t        count;     /* number of glyphs */
     uint8_t         height;    /* rows per glyph */
@@ -51,7 +67,10 @@ const ml_font *ml_font_at(int index);
  * else, wx16 carries ten icons. Drawing skips what it cannot find, so a font
  * asked for the wrong string quietly renders a shorter one. This lets a caller
  * ask first, which is how automatic font choice tells a body font from a clock
- * face without either of them having to declare what it is.
+ * face without either of them having to declare a size or a family.
+ *
+ * Coverage cannot separate a clock face from an icon set, since the digits are
+ * all either one carries. That is what ml_font_role is for.
  */
 bool           ml_font_has_glyph(const ml_font *f, unsigned char ch);
 

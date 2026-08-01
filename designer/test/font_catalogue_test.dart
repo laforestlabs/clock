@@ -62,18 +62,60 @@ void main() {
       expect(byName['digits32'], 32);
     });
 
-    test('the icon picker filter still selects only the tall fonts', () {
-      // inspector.dart offers height >= 8 as icon sets. The body fonts must
-      // stay out of that list, and wx16 must stay in it.
-      final iconish = engine!.fonts
-          .where((f) => f.height >= 8)
+    test('reports the role each font declared', () {
+      final byName = <String, FontRole>{
+        for (final f in engine!.fonts) f.name: f.role,
+      };
+
+      expect(byName['tiny4x6'], FontRole.text);
+      expect(byName['bold5x7'], FontRole.text);
+      expect(byName['tom5x7'], FontRole.text);
+      expect(byName['digits10'], FontRole.digits);
+      expect(byName['digits16'], FontRole.digits);
+      expect(byName['digits32'], FontRole.digits);
+      expect(byName['wx16'], FontRole.icons);
+    });
+
+    test('the font picker leaves the pictograms out', () {
+      // wx16 maps the ten digits onto weather symbols, so choosing it for a
+      // label swaps the text for pictures. It is an icon set that reuses the
+      // glyph machinery, not a typeface anybody would pick from a font menu.
+      final fonts = engine!.fonts
+          .where((f) => f.drawsText)
           .map((f) => f.name)
           .toList();
 
-      expect(iconish, contains('wx16'));
-      expect(iconish, isNot(contains('tom5x7')));
-      expect(iconish, isNot(contains('bold5x7')));
-      expect(iconish, isNot(contains('tiny4x6')));
+      expect(fonts, isNot(contains('wx16')));
+      expect(
+        fonts,
+        containsAll(<String>[
+          'tiny4x6',
+          'bold5x7',
+          'tom5x7',
+          'digits10',
+          'digits16',
+          'digits32',
+        ]),
+        reason: 'a clock face is still a legitimate choice for a clock',
+      );
+    });
+
+    test('the icon picker offers icon sets and nothing else', () {
+      // Both pickers filter on the declared role. Height used to stand in for
+      // it, which offered the clock faces as icon sets: an icon is indexed by
+      // digit, so digits32 was accepted and drew the numeral, not the icon.
+      final iconSets = engine!.fonts
+          .where((f) => f.isIconSet)
+          .map((f) => f.name)
+          .toList();
+
+      expect(iconSets, contains('wx16'));
+      expect(iconSets, isNot(contains('digits10')));
+      expect(iconSets, isNot(contains('digits16')));
+      expect(iconSets, isNot(contains('digits32')));
+      expect(iconSets, isNot(contains('tom5x7')));
+      expect(iconSets, isNot(contains('bold5x7')));
+      expect(iconSets, isNot(contains('tiny4x6')));
     });
   }, skip: skip);
 }

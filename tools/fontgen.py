@@ -11,9 +11,20 @@ Source format
 Directives, one per line, before any glyphs:
 
     @name     tom5x7      identifier used by layouts and ml_font_find()
+    @role     text        text, digits or icons (see below)
     @height   7           rows per glyph cell
     @baseline 6           rows from the top of the cell down to the baseline
     @gap      1           horizontal pixels inserted between adjacent glyphs
+
+@role is required, because it is the one property of a font that its bitmaps
+cannot imply and the renderer cannot guess:
+
+    text      the full printable range, safe to substitute for any string
+    digits    a clock or temperature face: digits and a little punctuation
+    icons     pictograms indexed by digit, never a stand-in for text
+
+A clock face and an icon set carry the same ten codepoints, so without this the
+renderer answering "what can draw 23?" cannot tell a numeral from a rain cloud.
 
 Then one line per glyph:
 
@@ -65,6 +76,14 @@ class FontError(Exception):
     pass
 
 
+# Source spelling to the ml_font_role enumerator it emits.
+ROLES = {
+    "text": "ML_FONT_TEXT",
+    "digits": "ML_FONT_DIGITS",
+    "icons": "ML_FONT_ICONS",
+}
+
+
 class Glyph:
     def __init__(self, codepoint: int, rows: list[str]):
         self.codepoint = codepoint
@@ -89,6 +108,7 @@ class Font:
     def __init__(self, path: Path):
         self.path = path
         self.name = ""
+        self.role = ""
         self.height = 0
         self.baseline = 0
         self.gap = 1
@@ -134,6 +154,13 @@ class Font:
                 key, value = parts[0], parts[1].strip()
                 if key == "name":
                     self.name = value
+                elif key == "role":
+                    if value not in ROLES:
+                        raise FontError(
+                            f"{self.path}:{lineno}: unknown @role {value!r}, "
+                            f"expected one of {', '.join(sorted(ROLES))}"
+                        )
+                    self.role = value
                 elif key in ("height", "baseline", "gap"):
                     setattr(self, key, int(value))
                 else:
@@ -181,6 +208,14 @@ class Font:
     def _validate(self) -> None:
         if not self.name:
             raise FontError(f"{self.path}: missing @name")
+        # Deliberately not defaulted. Whichever way a default fell it would be
+        # wrong for some font silently, and the whole point of the role is that
+        # the glyphs never imply it.
+        if not self.role:
+            raise FontError(
+                f"{self.path}: missing @role, expected one of "
+                f"{', '.join(sorted(ROLES))}"
+            )
         if self.height <= 0:
             raise FontError(f"{self.path}: missing or invalid @height")
         if not self.glyphs:
@@ -226,7 +261,7 @@ class Font:
         out.append(f" * Source:      fonts/{self.path.name}")
         out.append(" * Regenerate:  python3 tools/fontgen.py")
         out.append(" *")
-        out.append(f" * {self.count} glyphs, codepoints {self.first} to {max(self.glyphs)}, ")
+        out.append(f" * {self.count} glyphs, codepoints {self.first} to {max(self.glyphs)}, role {self.role}, ")
         out.append(f" * cell height {self.height}, baseline {self.baseline}, {len(blob)} bytes of bitmap.")
         out.append(" */")
         out.append('#include "mirror/font.h"')
@@ -263,6 +298,7 @@ class Font:
 
         out.append(f"const ml_font ml_font_{ident} = {{")
         out.append(f'    .name     = "{self.name}",')
+        out.append(f"    .role     = {ROLES[self.role]},")
         out.append(f"    .first    = {self.first},")
         out.append(f"    .count    = {self.count},")
         out.append(f"    .height   = {self.height},")
@@ -350,7 +386,7 @@ def main(argv: list[str]) -> int:
     for font in fonts:
         total = sum(((g.width + 7) // 8) * font.height for g in font.glyphs.values())
         print(
-            f"fontgen: {font.name:<10} {font.count:3d} glyphs  "
+            f"fontgen: {font.name:<10} {font.role:<6} {font.count:3d} glyphs  "
             f"cell {font.height:2d}px  baseline {font.baseline:2d}  {total:5d} bytes"
         )
     print(f"fontgen: wrote {len(outputs)} files to {FONT_OUT_DIR.relative_to(ROOT)}")

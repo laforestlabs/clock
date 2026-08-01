@@ -4,7 +4,7 @@
  * Source:      fonts/tom5x7.font
  * Regenerate:  python3 tools/fontgen.py
  *
- * 96 glyphs, codepoints 32 to 127, 
+ * 96 glyphs, codepoints 32 to 127, role text, 
  * cell height 7, baseline 6, 672 bytes of bitmap.
  */
 #include "mirror/font.h"
@@ -802,6 +802,7 @@ static const uint16_t s_tom5x7_offsets[96] = {
 
 const ml_font ml_font_tom5x7 = {
     .name     = "tom5x7",
+    .role     = ML_FONT_TEXT,
     .first    = 32,
     .count    = 96,
     .height   = 7,

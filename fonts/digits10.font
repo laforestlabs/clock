@@ -13,6 +13,7 @@
 # before the first SNTP sync, and without a '-' that placeholder is a bare colon.
 
 @name     digits10
+@role     digits
 @height   10
 @baseline 10
 @gap      1

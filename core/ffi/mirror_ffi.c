@@ -271,6 +271,13 @@ int ml_sim_font_height(int index)
     return f ? f->height : 0;
 }
 
+int ml_sim_font_role(int index)
+{
+    const ml_font *f = ml_font_at(index);
+    /* A bad index reads as text, the role that grants no special treatment. */
+    return f ? (int)f->role : (int)ML_FONT_TEXT;
+}
+
 /* Kept in the same order as ml_widget_type so index maps straight to the enum. */
 static const char *k_type_names[] = {
     "rect", "line", "text", "clock", "date", "weather", "icon", "agenda", "todo",

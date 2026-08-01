@@ -158,12 +158,15 @@ In a 64x32 box `digits16` fits once on height but its 52px will not survive 2x,
 so it occupies 16 of the 32 rows. `digits10` goes to 2x and fills 20. With
 `auto_font` the engine works that out; without it, the named font stands.
 
-Membership of a family is decided by glyph coverage rather than declared
-anywhere: a font is a candidate when it has a glyph for every character of the
-string. That keeps the clock faces out of a label and `wx16` out of everything
-textual, and it means a new `.font` joins the right group purely by what it
-covers. Ties go to the font the layout named, since choosing the size is a
-service and quietly overruling a deliberate choice for no gain is not.
+Membership is decided by what a font can actually draw, not by a family
+declared in a layout: a font is a candidate when it has a glyph for every
+character of the string, and when its `@role` is not an icon set. Coverage keeps
+the clock faces out of a label, and it means a new `.font` joins the right group
+on its own. The role is what coverage cannot supply, since an icon set carries
+the ten digits and nothing else: measure `wx16` however you like and no
+measurement reveals that its glyphs are rain clouds. Ties go to the font the
+layout named, since choosing the size is a service and quietly overruling a
+deliberate choice for no gain is not.
 
 It is off by default and ignored on `icon`, `agenda` and `todo`. An icon is
 indexed by digit and every body font has digits, so a naive "which font can
@@ -171,9 +174,14 @@ draw this?" would answer `tom5x7` and put the numeral 3 where the rain icon
 belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
-`tom5x7` clock stays chunky at 4x where `digits16` would be smoother; and a box
-too short for even one unscaled row still falls back to a smaller font, as it
-always has.
+`tom5x7` clock stays chunky at 4x where `digits16` would be smoother.
+
+A box too small for the font it names falls back to the tallest font that does
+fit and can draw the string. Under the shortest font there is nothing left to
+fall back to, so that font is the floor: a 5px box draws `tiny4x6` with its last
+row clipped rather than the top five rows of `digits16`, which is the difference
+between small text and wreckage. Shrinking a widget past the point where text
+can fit degrades; it does not break.
 
 Two rules worth knowing:
 
@@ -201,6 +209,21 @@ python3 tools/fontgen.py --check            # fail if the tables are stale
 python3 tools/fontproof.py tom5x7 "Wed 29 Jul"   # see it in the terminal
 ```
 
+Every source declares a `@role`, which is required because it is the one thing
+about a font its bitmaps cannot imply:
+
+| Role | Meaning |
+|---|---|
+| `text` | The full printable range. Substitutable for any string |
+| `digits` | A clock or temperature face: digits and a little punctuation |
+| `icons` | Pictograms indexed by digit. Never a stand-in for text |
+
+A clock face and an icon set carry the same ten codepoints, so without this the
+renderer asking "what can draw `23`?" cannot tell a numeral from a rain cloud.
+The designer filters on it too: an icon set is offered in the icon-set picker
+and kept out of the font picker, where choosing it would silently replace a
+label with weather symbols.
+
 | Font | Size | Contents |
 |---|---|---|
 | `tom5x7` | 7px cell, proportional | Full printable ASCII, plus a degree sign at codepoint 127. The default body font |
@@ -209,7 +232,7 @@ python3 tools/fontproof.py tom5x7 "Wed 29 Jul"   # see it in the terminal
 | `digits10` | 6x10 | `- . /` and `0-9 :`, a clock for the 64x32 panel |
 | `digits16` | 10x16 | The same set, the clock for a 64px-tall panel |
 | `digits32` | 20x32 | The same set again, for a 128x128 build |
-| `wx16` | 16x16 | Ten weather icons, indexed by category |
+| `wx16` | 16x16 | Ten weather icons, indexed by category. An icon set, not a typeface |
 
 Total glyph data is about 3.9 KB, of which `digits32` alone is 1.2 KB. Drop a font you
 do not use and it stops being compiled in: the build discovers `core/src/fonts/*.c`

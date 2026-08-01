@@ -4,7 +4,7 @@
  * Source:      fonts/digits32.font
  * Regenerate:  python3 tools/fontgen.py
  *
- * 14 glyphs, codepoints 45 to 58, 
+ * 14 glyphs, codepoints 45 to 58, role digits, 
  * cell height 32, baseline 32, 1216 bytes of bitmap.
  */
 #include "mirror/font.h"
@@ -485,6 +485,7 @@ static const uint16_t s_digits32_offsets[14] = {
 
 const ml_font ml_font_digits32 = {
     .name     = "digits32",
+    .role     = ML_FONT_DIGITS,
     .first    = 45,
     .count    = 14,
     .height   = 32,
