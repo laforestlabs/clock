@@ -68,6 +68,12 @@ SOURCE_ROOTS=(
   core/src
   core/include
   core/ffi
+  # The games compile into the same shared library as the render core, so a
+  # physics change in gamekit must invalidate the bundle just the same.
+  gamekit/src
+  gamekit/include
+  gamekit/ffi
+  gamekit/examples
   # Stock layouts are bundled as Flutter assets, so editing one needs a
   # rebuild before the app sees it.
   layouts
