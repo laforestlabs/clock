@@ -52,8 +52,10 @@ class DesignerController extends ChangeNotifier {
 
   /// Wood veneer diffusion as a percentage. Applied by the view as scatter
   /// around the emitters, never by the engine: the veneer sits in front of the
-  /// panel, it is not part of anything the panel does.
-  double _veneer = 50;
+  /// panel, it is not part of anything the panel does. The painters halve the
+  /// value when mapping it to diffusion strength, so 100% here matches what
+  /// 50% produced before the scale was rebased.
+  double _veneer = 60;
   double get veneer => _veneer;
   set veneer(double value) {
     _veneer = value.clamp(0, 100);

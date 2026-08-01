@@ -322,7 +322,9 @@ class _PanelPainter extends CustomPainter {
     final img = image;
     if (img == null) return;
 
-    final v = veneer / 100;
+    // Calibrated so 100% is what 50% meant before the slider was rebased:
+    // the diffusion strength is half the slider value.
+    final v = veneer / 200;
     final src =
         Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
     final dst = Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom);
@@ -361,8 +363,8 @@ class _PanelPainter extends CustomPainter {
   /// pass does two things: the discs themselves blur into growing gaussian
   /// blobs (a real veneer softens the emitters, not only the gaps between
   /// them), and blurred copies of the frame underneath spread their light
-  /// sideways. At 100% the blobs merge into one diffuse field and individual
-  /// emitters stop reading.
+  /// sideways. At 100% the scatter fills the gaps and softens the emitters
+  /// while the discs still read as individual sources.
   void _paintLed(Canvas canvas, ui.Image img, Rect bounds, double v) {
     final pixels = frame!;
     const emitterPitch = 0.68;

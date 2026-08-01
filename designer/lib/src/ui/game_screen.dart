@@ -428,7 +428,9 @@ class _GamePainter extends CustomPainter {
     final img = image;
     if (img == null) return;
 
-    final v = veneer / 100;
+    // Calibrated so 100% is what 50% meant before the slider was rebased:
+    // the diffusion strength is half the slider value.
+    final v = veneer / 200;
     final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
     final dst = Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom);
 
