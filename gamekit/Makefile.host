@@ -1,0 +1,81 @@
+# Host build for the gamekit simulation.
+#
+# Same plain make-and-gcc rule as the render core: nothing but a C compiler is
+# needed to run a game today. gamekit links the portable core for ml_canvas,
+# ml_color, ml_font and the read-only ml_model, plus core's PNG writer for frame
+# output. The same gamekit sources compile unchanged into the firmware later.
+#
+#   make -f Makefile.host          build game-cli
+#   make -f Makefile.host clean    remove the build
+#   ./build/host/game-cli rally --sizes 64x32,128x64,128x128 --led
+
+CC      ?= gcc
+OPT     ?= -O2 -g
+
+STD     := -std=c99
+WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes \
+           -Wmissing-prototypes -Wpointer-arith -Wwrite-strings
+INC     := -Iinclude -I../core/include -I../core/host -I../core/ffi
+CFLAGS  := $(STD) $(WARN) $(OPT) $(INC)
+LDLIBS  :=
+
+BUILD    := build/host
+CORE_LIB := $(BUILD)/../core/host/libmirrorcore.a
+CORE_LIB := ../core/build/host/libmirrorcore.a
+
+GK_SRC  := $(sort $(wildcard src/*.c))
+EX_SRC  := $(sort $(wildcard examples/*/*.c))
+CLI_SRC := host/game_cli.c
+PNG_SRC := ../core/host/png_write.c
+
+GK_OBJ  := $(patsubst %.c,$(BUILD)/%.o,$(GK_SRC))
+EX_OBJ  := $(patsubst %.c,$(BUILD)/%.o,$(EX_SRC))
+CLI_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(CLI_SRC))
+PNG_OBJ := $(BUILD)/png_write.o
+
+CLI     := $(BUILD)/game-cli
+
+# Host tests, compiled against the FFI layer like Dart binds to it. Run with:
+#   make -f Makefile.host check
+TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test
+
+.PHONY: all clean cli core check
+
+all: $(CLI)
+cli: $(CLI)
+
+# Auto-build the render core if its static lib is missing.
+$(CORE_LIB):
+	@$(MAKE) -C ../core -f Makefile.host lib
+
+$(PNG_OBJ): $(PNG_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(CLI): $(CLI_OBJ) $(GK_OBJ) $(EX_OBJ) $(PNG_OBJ) $(CORE_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) -o $@ $(CLI_OBJ) $(GK_OBJ) $(EX_OBJ) $(PNG_OBJ) $(CORE_LIB) $(LDLIBS)
+	@echo "  LINK  $@"
+
+$(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/ffi/game_ffi.o: ffi/game_ffi.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Iffi -c $< -o $@
+
+$(BUILD)/%_test: host/%_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(EX_OBJ) $(CORE_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
+
+check: $(TEST_BIN)
+	@for t in $(TEST_BIN); do echo "== $$t"; $$t > /dev/null || { $$t; exit 1; }; done
+	@echo "  CHECK ok"
+
+clean:
+	@rm -rf $(BUILD)
+	@echo "  CLEAN $(BUILD)"
+
+-include $(GK_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(EX_OBJ:.o=.d) $(PNG_OBJ:.o=.d)
+CFLAGS += -MMD -MP

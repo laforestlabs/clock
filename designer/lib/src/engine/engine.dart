@@ -3,7 +3,7 @@
 // Owns the native handle and every allocation that crosses the boundary. The
 // rest of the app never touches dart:ffi.
 //
-// The contract worth remembering: [renderImage] returns exactly what the LED
+// The contract worth remembering: [renderBytes] returns exactly what the LED
 // panel would display. No selection highlight, no mirror dimming, no editor
 // chrome of any kind. Those are drawn on top by the view layer, because the
 // moment they leak into these pixels the preview stops being trustworthy and
@@ -229,15 +229,12 @@ class MirrorEngine {
     return Uint8List.fromList(ptr.asTypedList(size));
   }
 
-  /// Renders to an image ready for the canvas.
+  /// Decodes a frame from [renderBytes] into an image ready for the canvas.
   ///
   /// Callers must draw this with [ui.FilterQuality.none]. Any smoothing turns
   /// crisp 5x7 glyphs into grey mush and stops the preview predicting the
   /// panel.
-  Future<ui.Image?> renderImage() async {
-    final bytes = renderBytes();
-    if (bytes == null) return null;
-
+  Future<ui.Image?> decodeImage(Uint8List bytes) async {
     final w = width;
     final h = height;
     if (w <= 0 || h <= 0) return null;

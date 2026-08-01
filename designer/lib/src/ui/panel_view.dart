@@ -1,10 +1,13 @@
 // The panel preview.
 //
-// Draws the engine's frame at an integer zoom with nearest-neighbour sampling,
-// then puts editor chrome on top as a separate layer. Selection outlines and
-// mirror dimming are painted here rather than by the engine, so the image
-// underneath stays exactly what the hardware would show.
+// Draws the engine's frame the way the physical panel presents it: one
+// emitter disc per lit cell with dead space between pixels, and an optional
+// veneer pass that scatters the light the way a wood face over the matrix
+// would. Selection outlines are painted here rather than
+// by the engine, so the pixels underneath stay exactly what the hardware
+// would show.
 
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -242,17 +245,37 @@ class _PanelViewState extends State<PanelView> {
                 onPanUpdate: _onPanUpdate,
                 onPanEnd: _onPanEnd,
                 onPanCancel: _endGesture,
-                child: CustomPaint(
-                  size: Size(w, h),
-                  isComplex: true,
-                  painter: _PanelPainter(
-                    image: _c.image,
-                    zoom: _c.zoom,
-                    ledGrid: _c.ledGrid,
-                    transmission: _c.transmission,
-                    selection: selection,
-                    canvasWidth: _c.doc.width,
-                    canvasHeight: _c.doc.height,
+                child: SizedBox(
+                  width: w,
+                  height: h,
+                  child: Stack(
+                    children: <Widget>[
+                      // In its own layer so dragging a selection around does
+                      // not re-rasterise the emitter field underneath.
+                      RepaintBoundary(
+                        child: CustomPaint(
+                          size: Size(w, h),
+                          isComplex: true,
+                          painter: _PanelPainter(
+                            image: _c.image,
+                            frame: _c.frame,
+                            zoom: _c.zoom,
+                            ledPixels: _c.ledPixels,
+                            veneer: _c.veneer,
+                            canvasWidth: _c.doc.width,
+                            canvasHeight: _c.doc.height,
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _ChromePainter(
+                            zoom: _c.zoom,
+                            selection: selection,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -267,84 +290,164 @@ class _PanelViewState extends State<PanelView> {
 class _PanelPainter extends CustomPainter {
   _PanelPainter({
     required this.image,
+    required this.frame,
     required this.zoom,
-    required this.ledGrid,
-    required this.transmission,
-    required this.selection,
+    required this.ledPixels,
+    required this.veneer,
     required this.canvasWidth,
     required this.canvasHeight,
   });
 
   final ui.Image? image;
+
+  /// The RGBA8888 bytes [image] was decoded from. The emitters are drawn one
+  /// disc per cell, which needs the pixel colours synchronously; a [ui.Image]
+  /// cannot be read back without an async round trip.
+  final Uint8List? frame;
   final double zoom;
-  final bool ledGrid;
-  final double transmission;
-  final Rect? selection;
+
+  /// Whether to draw discrete emitters rather than the smooth bitmap.
+  final bool ledPixels;
+
+  /// Veneer diffusion strength, 0 to 100.
+  final double veneer;
   final int canvasWidth;
   final int canvasHeight;
 
-  /// Scales RGB uniformly to approximate the fraction of light a two-way
-  /// mirror passes. Applied to the view only; the engine's pixels are
-  /// untouched.
-  ColorFilter? get _transmissionFilter {
-    if (transmission >= 100) return null;
-    final t = transmission / 100.0;
-    return ColorFilter.matrix(<double>[
-      t, 0, 0, 0, 0, //
-      0, t, 0, 0, 0, //
-      0, 0, t, 0, 0, //
-      0, 0, 0, 1, 0, //
-    ]);
-  }
-
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFF000000),
-    );
+    final bounds = Offset.zero & size;
+    canvas.drawRect(bounds, Paint()..color = const Color(0xFF000000));
 
     final img = image;
-    if (img != null) {
+    if (img == null) return;
+
+    final v = veneer / 100;
+    final src =
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+    final dst = Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom);
+
+    // Below 3x a cell is too small to read as a separate emitter, so draw the
+    // plain bitmap rather than sub-pixel mush.
+    if (!ledPixels || frame == null || zoom < 3) {
       final paint = Paint()
         // Nearest neighbour is mandatory. Any interpolation blurs a 5x7 glyph
         // into unreadable grey and the preview stops matching the panel.
         ..filterQuality = FilterQuality.none
-        ..isAntiAlias = false
-        ..colorFilter = _transmissionFilter;
-
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom),
-        paint,
-      );
+        ..isAntiAlias = false;
+      if (v <= 0) {
+        canvas.drawImageRect(img, src, dst, paint);
+      } else {
+        // Veneer over the plain bitmap: the blur replaces the sharp draw
+        // rather than overlaying it, because diffusion is what the veneer
+        // does to the whole image, not something added on top.
+        canvas.saveLayer(
+          bounds,
+          Paint()
+            ..imageFilter = ui.ImageFilter.blur(
+                sigmaX: zoom * 8 * v, sigmaY: zoom * 8 * v),
+        );
+        canvas.drawImageRect(img, src, dst, paint);
+        canvas.restore();
+      }
+      return;
     }
 
-    if (ledGrid && zoom >= 3) _paintGrid(canvas);
-    if (selection != null) _paintSelection(canvas, selection!);
+    _paintLed(canvas, img, bounds, v);
   }
 
-  /// Dark seams between pixels, so the preview reads as discrete LEDs rather
-  /// than a continuous image. Worth having: text that looks solid as a bitmap
-  /// can look sparse on a real panel with visible gaps.
-  void _paintGrid(Canvas canvas) {
-    final paint = Paint()
-      ..color = const Color(0x66000000)
-      ..strokeWidth = 1
-      ..isAntiAlias = false;
-
-    final w = canvasWidth * zoom;
-    final h = canvasHeight * zoom;
-
-    for (var x = 1; x <= canvasWidth; x++) {
-      final dx = x * zoom - 0.5;
-      canvas.drawLine(Offset(dx, 0), Offset(dx, h), paint);
+  /// The panel as a field of point sources. Each lit cell is a disc smaller
+  /// than the cell pitch, so dead space stays dark between pixels. The veneer
+  /// pass does two things: the discs themselves blur into growing gaussian
+  /// blobs (a real veneer softens the emitters, not only the gaps between
+  /// them), and blurred copies of the frame underneath spread their light
+  /// sideways. At 100% the blobs merge into one diffuse field and individual
+  /// emitters stop reading.
+  void _paintLed(Canvas canvas, ui.Image img, Rect bounds, double v) {
+    final pixels = frame!;
+    const emitterPitch = 0.68;
+    final radius = zoom * emitterPitch / 2;
+    final half = zoom * 0.5;
+    final paint = Paint()..isAntiAlias = true;
+    if (v > 0) {
+      // Each emitter becomes a soft gaussian whose radius grows with the
+      // veneer thickness, the way a point source behind wood spreads rather
+      // than stays a hard edge.
+      paint.maskFilter =
+          ui.MaskFilter.blur(ui.BlurStyle.normal, zoom * 2 * v);
     }
-    for (var y = 1; y <= canvasHeight; y++) {
-      final dy = y * zoom - 0.5;
-      canvas.drawLine(Offset(0, dy), Offset(w, dy), paint);
+
+    if (v > 0) {
+      // Wide, faint scatter: light travelling sideways through the veneer.
+      _drawScatter(canvas, img, bounds, zoom * 5 * v, 0.50 * v);
+      // Tight halo: the bright ring right around each emitter.
+      _drawScatter(canvas, img, bounds, zoom * 1.8 * v, 0.65 * v);
     }
+
+    for (var y = 0; y < canvasHeight; y++) {
+      final cy = y * zoom + half;
+      final row = y * canvasWidth * 4;
+      for (var x = 0; x < canvasWidth; x++) {
+        final i = row + x * 4;
+        final r = pixels[i];
+        final g = pixels[i + 1];
+        final b = pixels[i + 2];
+        // Unlit cells draw nothing: the dead space between emitters stays
+        // dark, which is what makes the panel read as discrete LEDs.
+        if (r == 0 && g == 0 && b == 0) continue;
+        paint.color = Color.fromARGB(255, r, g, b);
+        canvas.drawCircle(Offset(x * zoom + half, cy), radius, paint);
+      }
+    }
+  }
+
+  /// The frame drawn through a gaussian blur at [opacity]. The blur runs on
+  /// the layer composite, so it blurs the actual colours; a MaskFilter would
+  /// only soften the coverage mask of an already opaque rect.
+  void _drawScatter(Canvas canvas, ui.Image img, Rect bounds, double sigma,
+      double opacity) {
+    canvas.saveLayer(
+      bounds,
+      Paint()
+        ..imageFilter =
+            ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+    );
+    canvas.drawImageRect(
+      img,
+      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+      Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom),
+      Paint()
+        ..filterQuality = FilterQuality.none
+        ..isAntiAlias = false
+        ..colorFilter = ColorFilter.mode(
+            Color.fromRGBO(255, 255, 255, opacity), BlendMode.modulate),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_PanelPainter old) =>
+      old.image != image ||
+      old.frame != frame ||
+      old.zoom != zoom ||
+      old.ledPixels != ledPixels ||
+      old.veneer != veneer ||
+      old.canvasWidth != canvasWidth ||
+      old.canvasHeight != canvasHeight;
+}
+
+/// Editor chrome: the selection outline and its resize handles. Kept off the
+/// panel painter so dragging a selection does not re-rasterise the emitters.
+class _ChromePainter extends CustomPainter {
+  _ChromePainter({required this.zoom, required this.selection});
+
+  final double zoom;
+  final Rect? selection;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = selection;
+    if (r != null) _paintSelection(canvas, r);
   }
 
   void _paintSelection(Canvas canvas, Rect r) {
@@ -389,12 +492,6 @@ class _PanelPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_PanelPainter old) =>
-      old.image != image ||
-      old.zoom != zoom ||
-      old.ledGrid != ledGrid ||
-      old.transmission != transmission ||
-      old.selection != selection ||
-      old.canvasWidth != canvasWidth ||
-      old.canvasHeight != canvasHeight;
+  bool shouldRepaint(_ChromePainter old) =>
+      old.zoom != zoom || old.selection != selection;
 }

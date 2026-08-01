@@ -12,9 +12,8 @@ import '../engine/engine.dart';
 import '../services/layout_repository.dart';
 import 'inspector.dart';
 import 'panel_view.dart';
+import 'game_screen.dart';
 import 'widget_list.dart';
-
-/// Below this width the side panels are folded into tabs.
 const double _wideBreakpoint = 900;
 
 class WorkspaceScreen extends StatefulWidget {
@@ -234,6 +233,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           onPressed: _c.canRedo ? _c.redo : null,
         ),
         AddWidgetButton(controller: _c),
+        IconButton(
+          tooltip: 'Games',
+          icon: const Icon(Icons.sports_esports),
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => GameScreen(controller: _c),
+              ),
+            );
+          },
+        ),
         PopupMenuButton<String>(
           onSelected: (choice) {
             // Explicit breaks: implicit fallthrough rules differ across Dart
@@ -406,31 +416,31 @@ class _ViewToolbar extends StatelessWidget {
 
             const SizedBox(width: 12),
             IconButton(
-              tooltip: 'Show LED gaps',
+              tooltip: 'Show discrete LED pixels',
               visualDensity: VisualDensity.compact,
-              isSelected: controller.ledGrid,
+              isSelected: controller.ledPixels,
               icon: const Icon(Icons.grid_on_outlined),
               selectedIcon: const Icon(Icons.grid_on),
-              onPressed: () => controller.ledGrid = !controller.ledGrid,
+              onPressed: () => controller.ledPixels = !controller.ledPixels,
             ),
 
-            const SizedBox(width: 20),
+            const SizedBox(width: 12),
             Tooltip(
-              message: 'Simulates how much light a two-way mirror passes.\n'
-                  'Check legibility here before buying glass.',
+              message: 'Simulates diffusion through a wood veneer face.\n'
+                  'Thicker veneer spreads each pixel\'s light into the gaps.',
               child: Row(
                 children: <Widget>[
-                  const Icon(Icons.filter_b_and_w, size: 18),
+                  const Icon(Icons.blur_on, size: 18),
                   const SizedBox(width: 4),
-                  Text('Mirror ${controller.transmission.toInt()}%',
+                  Text('Veneer ${controller.veneer.toInt()}%',
                       style: theme.textTheme.bodySmall),
                   SizedBox(
                     width: 130,
                     child: Slider(
-                      value: controller.transmission,
-                      min: 5,
+                      value: controller.veneer,
+                      min: 0,
                       max: 100,
-                      onChanged: (v) => controller.transmission = v,
+                      onChanged: (v) => controller.veneer = v,
                     ),
                   ),
                 ],

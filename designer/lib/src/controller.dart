@@ -29,6 +29,12 @@ class DesignerController extends ChangeNotifier {
   ui.Image? _image;
   ui.Image? get image => _image;
 
+  /// The RGBA8888 bytes [image] was decoded from. The LED view reads these
+  /// to place one emitter per panel cell, which a [ui.Image] cannot hand
+  /// back synchronously.
+  Uint8List? _frame;
+  Uint8List? get frame => _frame;
+
   int _selected = -1;
   int get selected => _selected;
 
@@ -44,13 +50,13 @@ class DesignerController extends ChangeNotifier {
   int? _brightnessOverride;
   int? get brightnessOverride => _brightnessOverride;
 
-  /// Two-way mirror transmission as a percentage. Applied by the view as a
-  /// colour filter, never by the engine, because it simulates glass in front
-  /// of the panel rather than anything the panel does.
-  double _transmission = 100;
-  double get transmission => _transmission;
-  set transmission(double value) {
-    _transmission = value.clamp(5, 100);
+  /// Wood veneer diffusion as a percentage. Applied by the view as scatter
+  /// around the emitters, never by the engine: the veneer sits in front of the
+  /// panel, it is not part of anything the panel does.
+  double _veneer = 50;
+  double get veneer => _veneer;
+  set veneer(double value) {
+    _veneer = value.clamp(0, 100);
     notifyListeners();
   }
 
@@ -120,10 +126,12 @@ class DesignerController extends ChangeNotifier {
     return true;
   }
 
-  bool _ledGrid = true;
-  bool get ledGrid => _ledGrid;
-  set ledGrid(bool value) {
-    _ledGrid = value;
+  /// Whether the preview draws the panel as discrete LED emitters with dead
+  /// space between them, rather than as a smooth bitmap.
+  bool _ledPixels = true;
+  bool get ledPixels => _ledPixels;
+  set ledPixels(bool value) {
+    _ledPixels = value;
     notifyListeners();
   }
 
@@ -400,13 +408,15 @@ class DesignerController extends ChangeNotifier {
     _widgetInfo = _engine.widgets();
 
     final seq = ++_renderSeq;
-    final decoded = await _engine.renderImage();
+    final bytes = _engine.renderBytes();
+    final decoded = bytes == null ? null : await _engine.decodeImage(bytes);
     if (seq != _renderSeq) {
       // A newer render already landed. Drop this frame and its image.
       decoded?.dispose();
       return;
     }
 
+    _frame = bytes;
     _image?.dispose();
     _image = decoded;
     notifyListeners();

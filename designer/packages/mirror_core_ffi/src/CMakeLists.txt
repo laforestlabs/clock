@@ -34,6 +34,20 @@ foreach(_level RANGE 8)
     get_filename_component(_mirror_probe "${_mirror_probe}" DIRECTORY)
 endforeach()
 
+# Same probing for the gamekit directory.
+set(_gk_probe "${_mirror_probe}")
+set(MIRROR_GAMEKIT "")
+foreach(_level2 RANGE 8)
+    if(EXISTS "${_gk_probe}/gamekit/ffi/game_ffi.c")
+        set(MIRROR_GAMEKIT "${_gk_probe}/gamekit")
+        break()
+    endif()
+    get_filename_component(_gk_probe "${_gk_probe}" DIRECTORY)
+endforeach()
+if(NOT MIRROR_GAMEKIT STREQUAL "")
+    message(STATUS "mirror: compiling gamekit from ${MIRROR_GAMEKIT}")
+endif()
+
 if(MIRROR_CORE STREQUAL "")
     message(FATAL_ERROR
         "Cannot find the render core.\n"
@@ -76,11 +90,19 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_CORE}/src/render.c"
     ${MIRROR_FONT_SRC}
     "${MIRROR_CORE}/ffi/mirror_ffi.c"
+    # gamekit: runtime, view, loopback, and the games compiled in.
+    "${MIRROR_GAMEKIT}/src/view.c"
+    "${MIRROR_GAMEKIT}/src/runtime.c"
+    "${MIRROR_GAMEKIT}/src/net_loopback.c"
+    "${MIRROR_GAMEKIT}/examples/rally/game_rally.c"
+    "${MIRROR_GAMEKIT}/ffi/game_ffi.c"
 )
 
 target_include_directories(mirror_core_ffi PRIVATE
     "${MIRROR_CORE}/include"
     "${MIRROR_CORE}/ffi"
+    "${MIRROR_GAMEKIT}/include"
+    "${MIRROR_GAMEKIT}/ffi"
 )
 
 set_target_properties(mirror_core_ffi PROPERTIES
@@ -88,8 +110,8 @@ set_target_properties(mirror_core_ffi PROPERTIES
     C_STANDARD_REQUIRED ON
     PUBLIC_HEADER "${MIRROR_CORE}/ffi/mirror_ffi.h"
     OUTPUT_NAME "mirror_core_ffi"
-    # Only the ml_sim_* entry points are marked visible, so the exported
-    # surface ends up being exactly the documented API.
+    # Only the ml_sim_* and ml_game_* entry points are marked visible, so the
+    # exported surface ends up being exactly the documented API.
     C_VISIBILITY_PRESET hidden
 )
 

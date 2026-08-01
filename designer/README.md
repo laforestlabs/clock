@@ -116,14 +116,20 @@ being silently dropped.
 
 ## What is deliberately not in the engine's pixels
 
-Two things are drawn by the view layer, never by C:
+Several things are drawn by the view layer, never by C:
 
 **Selection outlines.** The moment editor chrome lands in the framebuffer the
 preview stops being what the panel shows, and the shared-renderer design stops
 being worth anything.
 
-**Two-way mirror dimming.** That simulates glass sitting between the panel and
-your eye, not anything the panel does, so it is a `ColorFilter` on the view.
+**LED emitters.** The panel is not a smooth display: each lit cell is a disc
+smaller than the cell pitch, with dead space between pixels. That is purely a
+presentation of the same frame, so the view draws it per cell from the frame
+bytes rather than asking the engine for it.
+
+**Wood veneer diffusion.** A veneer face over the matrix scatters each
+emitter's light into the dead space around it. The view adds that as blurred
+passes of the frame underneath the discs; the engine's pixels stay untouched.
 
 Brightness is the opposite case and *is* applied by the engine, because the
 device genuinely scales by it before applying gamma.
@@ -149,9 +155,14 @@ The **Data** selector switches between mock fixtures. Check `cold` before
 calling a layout done: that is a freshly booted mirror with no network yet, and
 it is where placeholder text either fits or wrecks your spacing.
 
-The **Mirror** slider dims the preview to the fraction of light a two-way mirror
-passes, typically 10 to 30 percent. Use it before buying glass. Dim greys and
-thin strokes that look fine at full brightness disappear entirely.
+The **Veneer** slider spreads each pixel's light into the gaps around it, the
+way a wood veneer face over the matrix diffuses the emitters. Check small text
+against the veneer thickness you plan to use: a stroke that reads as a
+hairline through thick veneer needs a bolder font or a bigger box.
+
+The LED toggle switches between the emitter view, discrete discs with dead
+space, and the raw engine bitmap. The bitmap is the reference; the emitter
+view is how the panel actually reads.
 
 Resizing a box does not by itself make the text in it bigger, because a bitmap
 font has no intermediate sizes. Turn on **Fit to box** and it will: the engine
@@ -177,9 +188,9 @@ fonts at least 8px tall, which keeps the body fonts out of it.
 
 Widths differ enough between fonts to change a layout. `bold5x7` is about 30
 percent wider than `tom5x7`, so swapping a widget over can push a line into
-truncation that fitted a moment earlier. The **Mirror** slider is the other
-half of that judgement: `bold5x7` exists because thin strokes disappear behind
-two-way glass, and 20 percent transmission is where that becomes obvious.
+truncation that fitted a moment earlier. Thin strokes are the first thing the
+veneer softens away, so a hairline that reads at zero veneer can vanish at full;
+`bold5x7` is the fallback when `tom5x7` stops holding up.
 
 **Auto font** hands that choice to the engine, which picks whichever font fills
 the box best out of those that can render the string. Drag a clock box wider
