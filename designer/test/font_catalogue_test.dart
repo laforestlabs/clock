@@ -36,15 +36,13 @@ void main() {
       expect(
         names,
         containsAll(<String>[
-          'tom5x7',
-          'bold5x7',
-          'tiny4x6',
+          'sans8',
+          'sans9',
+          'sans24',
           'digits10',
           'digits16',
           'digits32',
           'wx16',
-          'sans9',
-          'sans24',
           'digits48',
         ]),
         reason: 'the picker reads this list straight from the engine, so a '
@@ -57,17 +55,13 @@ void main() {
       // ladder of cuts and the engine picks the cut that fills the box.
       final names = engine!.families.map((f) => f.name).toList();
 
-      expect(
-        names,
-        containsAll(<String>['sans', 'digits', 'pixel', 'pixel-bold', 'wx']),
-      );
+      expect(names, containsAll(<String>['sans', 'digits', 'wx']));
 
       final roleByName = <String, FontRole>{
         for (final f in engine!.families) f.name: f.role,
       };
       expect(roleByName['sans'], FontRole.text);
       expect(roleByName['digits'], FontRole.digits);
-      expect(roleByName['pixel'], FontRole.text);
       expect(roleByName['wx'], FontRole.icons);
     });
 
@@ -76,9 +70,9 @@ void main() {
         for (final f in engine!.fonts) f.name: f.height,
       };
 
-      expect(byName['tiny4x6'], 6);
-      expect(byName['tom5x7'], 7);
-      expect(byName['bold5x7'], 7);
+      expect(byName['sans8'], 8);
+      expect(byName['sans9'], 9);
+      expect(byName['sans24'], 24);
       expect(byName['digits10'], 10);
       expect(byName['digits16'], 16);
       expect(byName['digits32'], 32);
@@ -89,9 +83,9 @@ void main() {
         for (final f in engine!.fonts) f.name: f.role,
       };
 
-      expect(byName['tiny4x6'], FontRole.text);
-      expect(byName['bold5x7'], FontRole.text);
-      expect(byName['tom5x7'], FontRole.text);
+      expect(byName['sans8'], FontRole.text);
+      expect(byName['sans9'], FontRole.text);
+      expect(byName['sans24'], FontRole.text);
       expect(byName['digits10'], FontRole.digits);
       expect(byName['digits16'], FontRole.digits);
       expect(byName['digits32'], FontRole.digits);
@@ -110,7 +104,7 @@ void main() {
       expect(families, isNot(contains('wx')));
       expect(
         families,
-        containsAll(<String>['sans', 'digits', 'pixel', 'pixel-bold']),
+        containsAll(<String>['sans', 'digits']),
         reason: 'a clock face is still a legitimate choice for a clock',
       );
     });

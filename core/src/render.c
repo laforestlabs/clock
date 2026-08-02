@@ -13,7 +13,7 @@
 
 #include "mirror/font.h"
 
-/* The degree sign lives in the unused DEL slot of tom5x7. Written as its own
+/* The degree sign lives in the unused DEL slot every font carries. Written as its own
  * string literal because a hex escape would otherwise swallow a following
  * hex digit: "\x7fC" is one out-of-range character, not two. */
 #define ML_DEGREE "\x7f"
@@ -176,10 +176,14 @@ static int widget_scale(const ml_widget *w, const ml_font *f, const char *sample
 {
     int s = w->fit ? fit_scale(f, sample, w->rect.w, w->rect.h)
                    : (w->scale > 0 ? w->scale : 1) * ML_SCALE_1X;
-    /* A deliberately blocky font never anti-aliases: a box-derived scale
-     * floors to a whole-pixel multiple, keeping its hard edges. An explicit
-     * scale is already whole, so this only touches fit. */
-    if (w->fit && f && !f->smooth) s &= ~255;
+    /*
+     * A blocky render never anti-aliases: a box-derived scale floors to a
+     * whole-pixel multiple, keeping its hard edges. An explicit scale is
+     * already whole, so this only touches fit. The widget's smooth setting
+     * overrules the font's own flag in both directions.
+     */
+    const bool smooth = w->has_smooth ? w->smooth : (f && f->smooth);
+    if (w->fit && !smooth) s &= ~255;
     return clamp_scale(s);
 }
 
@@ -209,6 +213,37 @@ static int scale_px(int scale_q8)
 }
 
 /*
+ * The inked height sample actually draws in f: bottom ink row minus top ink
+ * row plus one, over the string's glyphs. A cell counts ascender and
+ * descender room the string may never use: "09:41" inks 4 of sans7's 7 rows
+ * but all 10 of digits10's, so sizing by cell lets a small text cut outbid a
+ * clock face for a clock string while drawing visibly smaller. 0 for a
+ * sample with no ink.
+ */
+static int sample_ink_rows(const ml_font *f, const char *sample)
+{
+    int top = f->height, bottom = -1;
+    for (const unsigned char *p = (const unsigned char *)sample; *p; p++) {
+        const int idx = (int)*p - (int)f->first;
+        if (idx < 0 || idx >= (int)f->count) continue;
+        const int width  = f->widths[idx];
+        const int stride = (width + 7) / 8;
+        const uint8_t *bits = &f->bitmap[f->offsets[idx]];
+        for (int row = 0; row < f->height; row++) {
+            const uint8_t *rowbits = bits + (size_t)row * (size_t)stride;
+            for (int col = 0; col < width; col++) {
+                if (rowbits[col >> 3] & (0x80u >> (col & 7))) {
+                    if (row < top)    top = row;
+                    if (row > bottom) bottom = row;
+                    break;
+                }
+            }
+        }
+    }
+    return bottom >= top ? bottom - top + 1 : 0;
+}
+
+/*
  * Choose the font that fills the box best, out of those that can draw this
  * string at all.
  *
@@ -216,6 +251,10 @@ static int scale_px(int scale_q8)
  * families: glyph coverage of the sample, plus a role that is not an icon set.
  * That keeps the clock faces out of a label and the weather pictograms out of
  * anything textual, and means a new .font joins the right group on its own.
+ *
+ * Filling is measured in ink, not cells: the scaled ink height of the sample
+ * itself, so a face whose digits fill their cell beats a text cut whose
+ * digits sit in a cell padded for ascenders and descenders.
  *
  * Ties go to the font the layout actually named. Choosing the size is a service;
  * quietly overruling a deliberate choice for no gain is not.
@@ -228,7 +267,7 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
     const int        want_s = w->fit ? widget_scale(w, want, sample) : ML_SCALE_1X;
     const ml_font *best     = want;
     int            best_h   = scale_fits(want, sample, want_s, &w->rect)
-                                  ? want->height * want_s
+                                  ? sample_ink_rows(want, sample) * want_s
                                   : -1;
 
     const ml_font *shortest = NULL;
@@ -243,7 +282,7 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
         const int s = w->fit ? widget_scale(w, f, sample) : ML_SCALE_1X;
         if (!scale_fits(f, sample, s, &w->rect)) continue;
 
-        const int h = f->height * s;
+        const int h = sample_ink_rows(f, sample) * s;
         if (h > best_h) {
             best   = f;
             best_h = h;
@@ -699,7 +738,7 @@ static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
     /* Font after the text, because the text is what has to fit. */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
+    const ml_font *f = choose_font(w, "sans9", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
@@ -727,7 +766,7 @@ static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         sample_date(w, m, buf, sizeof(buf)) ? dim(w->color) : w->color;
 
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
+    const ml_font *f = choose_font(w, "sans9", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
@@ -745,7 +784,7 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     /*
      * Scaled to the box like everything else, but never font-substituted. Icons
      * are indexed by digit, and every body font has digits, so letting
-     * auto_font loose here would answer "which font can draw '3'?" with tom5x7
+     * auto_font loose here would answer "which font can draw '3'?" with sans9
      * and quietly put the numeral 3 where the rain icon belongs.
      */
     const int sc = widget_scale(w, f, glyph);
@@ -772,7 +811,7 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     sample_temp(m, buf, sizeof(buf));
 
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "tom5x7", buf, &sc);
+    const ml_font *f = choose_font(w, "sans9", buf, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -813,7 +852,7 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
      * would shrink every row because one meeting has a long title.
      */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "tom5x7", NULL, &sc);
+    const ml_font *f = choose_font(w, "sans9", NULL, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -862,7 +901,7 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     /* Height decides, for the same reason as the agenda. */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "tom5x7", NULL, &sc);
+    const ml_font *f = choose_font(w, "sans9", NULL, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -936,7 +975,7 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
     switch (w->type) {
     case ML_W_TEXT:
         sample_text(w, m, buf, sizeof(buf));
-        f = choose_font(w, "tom5x7", buf, &sc);
+        f = choose_font(w, "sans9", buf, &sc);
         break;
     case ML_W_CLOCK:
         sample_clock(w, m, buf, sizeof(buf));
@@ -944,11 +983,11 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
         break;
     case ML_W_DATE:
         sample_date(w, m, buf, sizeof(buf));
-        f = choose_font(w, "tom5x7", buf, &sc);
+        f = choose_font(w, "sans9", buf, &sc);
         break;
     case ML_W_WEATHER:
         sample_temp(m, buf, sizeof(buf));
-        f = choose_font(w, "tom5x7", buf, &sc);
+        f = choose_font(w, "sans9", buf, &sc);
         break;
     case ML_W_ICON: {
         char glyph[2];
@@ -959,7 +998,7 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
     }
     case ML_W_AGENDA:
     case ML_W_TODO:
-        f = choose_font(w, "tom5x7", NULL, &sc);
+        f = choose_font(w, "sans9", NULL, &sc);
         break;
     default:
         return NULL;

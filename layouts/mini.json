@@ -16,13 +16,13 @@
       "color": "#FFC24D" },
 
     { "type": "text", "id": "temp",
-      "rect": [18, 17, 46, 7],
-      "font": "tom5x7", "bind": "weather.temp_c", "format": "%.0f\u00b0C",
+      "rect": [18, 16, 46, 8],
+      "font": "sans", "bind": "weather.temp_c", "format": "%.0f\u00b0C",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "conditions",
-      "rect": [18, 25, 46, 7],
-      "font": "tom5x7", "bind": "weather.label",
+      "rect": [18, 24, 46, 8],
+      "font": "sans", "bind": "weather.label",
       "color": "#8899AA" }
   ]
 }

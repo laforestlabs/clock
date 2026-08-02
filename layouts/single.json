@@ -11,8 +11,8 @@
       "color": "#00E5FF", "align": "center" },
 
     { "type": "date", "id": "date",
-      "rect": [0, 17, 64, 7],
-      "font": "tom5x7", "format": "%a %e %b",
+      "rect": [0, 17, 64, 8],
+      "font": "sans", "format": "%a %e %b",
       "color": "#7A8A99", "align": "center" },
 
     { "type": "icon", "id": "wx-icon",
@@ -21,13 +21,13 @@
       "color": "#FFC24D" },
 
     { "type": "text", "id": "temp",
-      "rect": [18, 27, 46, 7],
-      "font": "tom5x7", "bind": "weather.temp_c", "format": "%.0f\u00b0C",
+      "rect": [18, 27, 46, 8],
+      "font": "sans", "bind": "weather.temp_c", "format": "%.0f\u00b0C",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "conditions",
-      "rect": [18, 36, 46, 7],
-      "font": "tom5x7", "bind": "weather.label",
+      "rect": [18, 36, 46, 8],
+      "font": "sans", "bind": "weather.label",
       "color": "#8899AA" },
 
     { "type": "line", "id": "rule",
@@ -36,8 +36,8 @@
 
     { "type": "agenda", "id": "agenda",
       "rect": [1, 47, 62, 17],
-      "font": "tom5x7",
+      "font": "sans8",
       "color": "#FFFFFF", "accent": "#66D9EF",
-      "max_items": 2, "line_gap": 2, "show_time": true }
+      "max_items": 2, "line_gap": 1, "show_time": true }
   ]
 }

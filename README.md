@@ -121,16 +121,20 @@ Bindings are dotted paths into the model: `weather.temp_c`, `weather.label`,
 
 ### Fonts: a few styles, many sizes
 
-The catalogue is a handful of font *families*, each a style with a ladder of
-size *cuts*, rather than a shelf of unrelated typefaces:
+The catalogue is one typeface, Open Sans, in two *families* with a ladder of
+size *cuts* each, plus a weather icon set:
 
-| family | role | cuts | scaling |
+| family | role | cuts | source |
 |---|---|---|---|
-| `sans` | text | 9 to 24px | smooth: anti-aliases between whole scales |
-| `digits` | digits | 10 to 48px, tabular figures | smooth |
-| `pixel` | text | tiny4x6, tom5x7 | blocky: whole-pixel multiples only |
-| `pixel-bold` | text | bold5x7 | blocky |
-| `wx` | icons | wx16 weather pictograms | blocky |
+| `sans` | text | 8 to 24px | Open Sans Regular |
+| `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
+| `wx` | icons | wx16 weather pictograms | hand-drawn |
+
+Every text and clock cut is smooth: under `fit` it grows a fraction of a
+pixel at a time, anti-aliasing between whole-pixel steps, so dragging a box
+corner in the designer never jumps. Only the icon set keeps hard pixels, and
+any widget can overrule its font either way with `"smooth": true` or
+`"smooth": false`.
 
 Naming a family leaves the size to the engine, which picks the cut that fills
 the widget's box and scales it the rest of the way:
@@ -142,9 +146,8 @@ the widget's box and scales it the rest of the way:
 Naming an exact cut, `"font": "digits16"`, still pins that cut, so every
 layout written before families existed renders as it always did. The `sans`
 and `digits` cuts are rasterized from Open Sans at build time by
-`tools/fontraster.py` into the same ASCII-art `.font` sources the hand-drawn
-pixel fonts use, so a bad glyph can be touched up by hand and everything
-still compiles through `tools/fontgen.py`.
+`tools/fontraster.py` into ASCII-art `.font` sources, so a bad glyph can be
+touched up by hand and everything still compiles through `tools/fontgen.py`.
 
 ### Sizing text
 
@@ -153,14 +156,18 @@ pixel as a 3x3 block. Scale is capped at 8 and defaults to 1, so any layout
 written before it existed renders byte for byte as it always did.
 
 `"fit": true` derives the scale from the box instead, taking the largest scale
-that fits **both** the widget's width and its height. In a smooth family the
-derived scale is not limited to whole multiples: between them the glyphs
-anti-alias, each panel pixel inked in proportion to the area the scaled glyph
-covers, so dragging a widget in the designer grows its text one pixel at a
-time rather than parking at one size until the box reaches the next multiple.
-A blocky family floors the derived scale to a whole multiple instead, because
-hard pixel edges are the point of pixel art. Either way `fit` overrides
-`scale` when both are set.
+that fits **both** the widget's width and its height. The derived scale is not
+limited to whole multiples: between them the glyphs anti-alias, each panel
+pixel inked in proportion to the area the scaled glyph covers, so dragging a
+widget in the designer grows its text one pixel at a time rather than parking
+at one size until the box reaches the next multiple. `fit` overrides `scale`
+when both are set.
+
+`"smooth"` controls that anti-aliasing per widget, as a tri-state. Unset, the
+font decides: every text and clock cut smooths, the `wx` icon set floors the
+derived scale to a whole multiple to keep its hard pixels. `"smooth": true`
+anti-aliases any font on upscale, icons included; `"smooth": false` forces
+whole-pixel steps for hard edges on any font.
 
 Width counts as much as height. Fitting on height alone was fine while every
 `fit` widget held one short string, and wrong the moment one did not: a 64x32
@@ -196,11 +203,11 @@ deliberate choice for no gain is not.
 
 It is off by default and ignored on `icon`, `agenda` and `todo`. An icon is
 indexed by digit and every body font has digits, so a naive "which font can
-draw this?" would answer `tom5x7` and put the numeral 3 where the rain icon
+draw this?" would answer `sans9` and put the numeral 3 where the rain icon
 belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
-`tom5x7` clock stays chunky where `digits` would be smooth.
+`sans` clock stays a text face where `digits` draws tabular figures.
 
 A box too small for the font it names falls back to the tallest cut of the
 same family that does fit, and under that to the family's shortest, clipped:
@@ -234,7 +241,7 @@ Fonts are authored as readable pixel art in `fonts/*.font` and compiled to C tab
 ```sh
 python3 tools/fontgen.py                    # regenerate core/src/fonts/
 python3 tools/fontgen.py --check            # fail if the tables are stale
-python3 tools/fontproof.py tom5x7 "Wed 29 Jul"   # see it in the terminal
+python3 tools/fontproof.py sans9 "Wed 29 Jul"    # see it in the terminal
 ```
 
 Every source declares a `@role`, which is required because it is the one thing
@@ -254,38 +261,21 @@ label with weather symbols.
 
 | Font | Size | Contents |
 |---|---|---|
-| `tom5x7` | 7px cell, proportional | Full printable ASCII, plus a degree sign at codepoint 127. The default body font |
-| `bold5x7` | 7px cell, proportional | The same set with 2px stems, for legibility through the glass |
-| `tiny4x6` | 6px cell, proportional | The same set at 3px caps, for dense rows |
-| `digits10` | 6x10 | `- . /` and `0-9 :`, a clock for the 64x32 panel |
-| `digits16` | 10x16 | The same set, the clock for a 64px-tall panel |
-| `digits32` | 20x32 | The same set again, for a 128x128 build |
+| `sans8` to `sans24` | 8 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
+| `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
 | `wx16` | 16x16 | Ten weather icons, indexed by category. An icon set, not a typeface |
 
-Total glyph data is about 3.9 KB, of which `digits32` alone is 1.2 KB. Drop a font you
-do not use and it stops being compiled in: the build discovers `core/src/fonts/*.c`
-rather than listing them.
+Drop a font you do not use and it stops being compiled in: the build discovers
+`core/src/fonts/*.c` rather than listing them.
 
-The three body fonts share a codepoint range and a degree sign, so a widget can swap
-between them without a layout changing. They are not interchangeable in width, though.
-The same string "Standup 10:00 Design" measures **73px** in `tiny4x6`, **94px** in
-`tom5x7` and **123px** in `bold5x7`, so switching to bold can push a line into
-truncation that previously fit.
-
-Which to reach for:
-
-- **`tom5x7`** unless there is a reason not to.
-- **`bold5x7`** when the mirror is the problem. Two-way film passes 10 to 30 percent of
-  the light, and a 1px stem is the first thing it takes. Check with `--mirror 20`.
-- **`tiny4x6`** when the rows are the problem, typically an agenda on the 64x32 panel.
-  Its counters are one pixel wide, so it is the worst of the three behind dark glass.
-
-`tom5x7` is proportional, which recovers several characters per line versus a fixed
-cell: "Standup 10:00" is 63px, so it fits a 64px column with a pixel to spare.
+One typeface everywhere is the point: body text, dates, temperatures and the
+clock share a design, differing only in size and, for the clock, in weight.
+Both families are proportional, which recovers several characters per line
+versus a fixed cell: "Standup 10:00" is 67px in `sans8`.
 
 The clock faces exist so the time can suit the panel rather than the panel suiting the
-time. "09:41" is 30px in `digits10`, 52px in `digits16` and 104px in `digits32`. All
-three keep the placeholder `--:--` exactly as wide as a real time, so nothing reflows
+time. "09:41" is 40px in `digits10`, 54px in `digits16` and 98px in `digits32`. All
+cuts keep the placeholder `--:--` exactly as wide as a real time, so nothing reflows
 when the first SNTP sync lands.
 
 Tall glyphs are written as a block rather than one long line, which is the same data

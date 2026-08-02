@@ -6,9 +6,9 @@ consumes and shows what a string actually looks like, so a misplaced pixel is
 obvious before it ends up in a golden image.
 
 Usage:
-    python3 tools/fontproof.py tom5x7 "Wed 29 Jul"
+    python3 tools/fontproof.py sans9 "Wed 29 Jul"
     python3 tools/fontproof.py digits16 "09:41"
-    python3 tools/fontproof.py tom5x7 --all
+    python3 tools/fontproof.py sans9 --all
 """
 
 from __future__ import annotations

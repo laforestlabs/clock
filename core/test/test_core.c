@@ -409,11 +409,11 @@ static void test_fonts(void)
 {
     group("fonts");
 
-    const ml_font *body = ml_font_find("tom5x7");
+    const ml_font *body = ml_font_find("sans9");
     const ml_font *clock = ml_font_find("digits16");
     const ml_font *icons = ml_font_find("wx16");
 
-    CHECK(body != NULL, "tom5x7 registered");
+    CHECK(body != NULL, "sans9 registered");
     CHECK(clock != NULL, "digits16 registered");
     CHECK(icons != NULL, "wx16 registered");
     CHECK(ml_font_find("nosuchfont") == NULL, "unknown font not found");
@@ -425,40 +425,38 @@ static void test_fonts(void)
      * same height sorting earlier, would otherwise change what every widget
      * naming no font renders as. Adding a .font file must not do that.
      */
-    CHECK(ml_font_default() == body, "default font is tom5x7, not whatever sorts first");
+    CHECK(ml_font_default() == body, "default font is sans9, not whatever sorts first");
     CHECK(ml_font_at(0) != NULL, "registry entry zero exists");
 
     /* The rest of the catalogue. The cuts are what the designer's picker
-     * groups into families. */
-    CHECK(ml_font_find("bold5x7") != NULL, "bold5x7 registered");
-    CHECK(ml_font_find("tiny4x6") != NULL, "tiny4x6 registered");
+     * groups into families: one text family from 6px up, one clock family,
+     * one icon set. */
+    CHECK(ml_font_find("sans8") != NULL, "sans8 registered");
+    CHECK(ml_font_find("sans9") != NULL, "sans9 registered");
     CHECK(ml_font_find("digits10") != NULL, "digits10 registered");
     CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
-    CHECK(ml_font_find("sans9") != NULL, "sans9 registered");
     CHECK(ml_font_find("sans24") != NULL, "sans24 registered");
     CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
-    CHECK(ml_font_count() == 25, "25 font cuts in the registry");
+    CHECK(ml_font_count() == 23, "23 font cuts in the registry");
 
     /*
      * Families and smoothness. A layout naming a family gets the cut that
-     * fills its box; a layout naming a cut pins that cut. Smooth cuts
-     * anti-alias between whole scales, blocky ones floor to whole multiples,
-     * which is the whole point of the pixel styles.
+     * fills its box; a layout naming a cut pins that cut. Every text and
+     * clock cut anti-aliases between whole scales; only the icon set keeps
+     * hard pixels, and any widget can overrule its font with "smooth".
      */
     CHECK(ml_font_is_family("sans"), "sans is a family");
     CHECK(ml_font_is_family("digits"), "digits is a family");
-    CHECK(ml_font_is_family("pixel"), "pixel is a family");
-    CHECK(ml_font_is_family("pixel-bold"), "pixel-bold is a family");
     CHECK(ml_font_is_family("wx"), "wx is a family");
-    CHECK(!ml_font_is_family("tom5x7"), "a cut is not a family");
+    CHECK(!ml_font_is_family("pixel"), "the pixel families are gone");
+    CHECK(!ml_font_is_family("sans9"), "a cut is not a family");
     CHECK(!ml_font_is_family("nosuch"), "an unknown name is not a family");
-    CHECK(strcmp(body->family, "pixel") == 0, "tom5x7 is in the pixel family");
+    CHECK(strcmp(body->family, "sans") == 0, "sans9 is in the sans family");
     CHECK(strcmp(clock->family, "digits") == 0, "digits16 is in the digits family");
-    CHECK(body->smooth == false, "tom5x7 is deliberately blocky");
-    CHECK(ml_font_find("bold5x7")->smooth == false, "bold5x7 is deliberately blocky");
-    CHECK(icons->smooth == false, "wx16 keeps hard pixels too");
-    CHECK(ml_font_find("sans9")->smooth == true, "sans anti-aliases");
+    CHECK(body->smooth == true, "sans anti-aliases");
+    CHECK(ml_font_find("sans8")->smooth == true, "even the smallest cut anti-aliases");
     CHECK(clock->smooth == true, "the digits face anti-aliases");
+    CHECK(icons->smooth == false, "wx16 keeps hard pixels");
 
     /*
      * Roles. Coverage cannot separate a clock face from an icon set, because the
@@ -466,11 +464,11 @@ static void test_fonts(void)
      * the only thing keeping the weather pictograms out of the font pickers and
      * out of substitution.
      */
-    CHECK(body->role == ML_FONT_TEXT, "tom5x7 is a text font");
+    CHECK(body->role == ML_FONT_TEXT, "sans9 is a text font");
     CHECK(clock->role == ML_FONT_DIGITS, "digits16 is a clock face");
     CHECK(icons->role == ML_FONT_ICONS, "wx16 is an icon set");
-    CHECK(ml_font_find("tiny4x6")->role == ML_FONT_TEXT, "tiny4x6 is a text font");
-    CHECK(ml_font_find("bold5x7")->role == ML_FONT_TEXT, "bold5x7 is a text font");
+    CHECK(ml_font_find("sans8")->role == ML_FONT_TEXT, "sans8 is a text font");
+    CHECK(ml_font_find("sans24")->role == ML_FONT_TEXT, "sans24 is a text font");
     CHECK(ml_font_find("digits10")->role == ML_FONT_DIGITS, "digits10 is a clock face");
     CHECK(ml_font_find("digits32")->role == ML_FONT_DIGITS, "digits32 is a clock face");
     CHECK(ml_font_covers(icons, "23"),
@@ -478,20 +476,20 @@ static void test_fonts(void)
 
     /*
      * Every body font carries the degree sign in the DEL slot, so a layout can
-     * swap between them without a temperature losing its unit.
+     * swap between cuts without a temperature losing its unit.
      */
-    const ml_font *bold = ml_font_find("bold5x7");
-    const ml_font *tiny = ml_font_find("tiny4x6");
-    if (bold && tiny) {
-        CHECK(ml_text_width(bold, "\177", 1) > 0, "bold5x7 has the degree sign");
-        CHECK(ml_text_width(tiny, "\177", 1) > 0, "tiny4x6 has the degree sign");
-        CHECK(tiny->height < body->height, "tiny4x6 is shorter than tom5x7");
-        CHECK(bold->height == body->height, "bold5x7 shares the tom5x7 cell height");
-        /* Same text costs more width in bold and less in tiny. */
-        CHECK(ml_text_width(bold, "Standup", 1) > ml_text_width(body, "Standup", 1),
-              "bold5x7 is wider than tom5x7");
-        CHECK(ml_text_width(tiny, "Standup", 1) < ml_text_width(body, "Standup", 1),
-              "tiny4x6 is narrower than tom5x7");
+    const ml_font *small = ml_font_find("sans8");
+    const ml_font *large = ml_font_find("sans24");
+    if (small && large) {
+        CHECK(ml_text_width(small, "\177", 1) > 0, "sans8 has the degree sign");
+        CHECK(ml_text_width(large, "\177", 1) > 0, "sans24 has the degree sign");
+        CHECK(small->height < body->height, "sans8 is shorter than sans9");
+        CHECK(large->height > body->height, "sans24 is taller than sans9");
+        /* The same text costs less width in a shorter cut. */
+        CHECK(ml_text_width(small, "Standup", 1) < ml_text_width(body, "Standup", 1),
+              "sans8 is narrower than sans9");
+        CHECK(ml_text_width(large, "Standup", 1) > ml_text_width(body, "Standup", 1),
+              "sans24 is wider than sans9");
     }
 
     /* The new clock faces must keep the placeholder-width property too. */
@@ -546,7 +544,7 @@ static void test_scale(void)
 {
     group("glyph scale");
 
-    const ml_font *body = ml_font_find("tom5x7");
+    const ml_font *body = ml_font_find("sans9");
     if (!body) return;
 
     CHECK(ml_text_width(body, "Hello", 2 * ML_SCALE_1X) == 2 * ml_text_width(body, "Hello", ML_SCALE_1X),
@@ -559,9 +557,9 @@ static void test_scale(void)
           "and a fractional scale below one is too");
 
     /*
-     * 'i' in tom5x7 is a single column of ink, which makes it the clearest
-     * possible probe: at 3x its stem must be exactly three pixels wide and
-     * three tall per source row, with nothing beside it.
+     * 'i' in sans9 is a narrow column of ink, which makes it the clearest
+     * possible probe: at 3x every source pixel must become a 3x3 block with
+     * nothing beside it.
      */
     ml_canvas c;
     ml_canvas_init(&c, 32, 32, NULL);
@@ -621,7 +619,9 @@ static void test_scale_parse(void)
         "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"b\",\"scale\":3},"
         "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"c\",\"scale\":999},"
         "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"d\",\"scale\":0},"
-        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"e\",\"fit\":true}"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"e\",\"fit\":true},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"f\",\"smooth\":false},"
+        "{\"type\":\"text\",\"rect\":[0,0,64,32],\"text\":\"g\",\"smooth\":true}"
         "]}";
 
     CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "layout with scale parses");
@@ -633,6 +633,9 @@ static void test_scale_parse(void)
     CHECK(l.widgets[2].scale == ML_MAX_SCALE, "an absurd scale clamps, not rejects");
     CHECK(l.widgets[3].scale == 1, "a zero scale clamps up to 1");
     CHECK(l.widgets[4].fit == true, "fit is read");
+    CHECK(l.widgets[0].has_smooth == false, "smooth is unset by default");
+    CHECK(l.widgets[5].has_smooth && !l.widgets[5].smooth, "smooth false is read");
+    CHECK(l.widgets[6].has_smooth && l.widgets[6].smooth, "smooth true is read");
 
     /* Round trip: both must survive a write and reparse, or pushing a layout to
      * the device and reading it back would quietly drop them. */
@@ -642,10 +645,15 @@ static void test_scale_parse(void)
 
     ml_layout back;
     CHECK(ml_layout_parse(buf, strlen(buf), &back, &diag), "reparses its own output");
-    if (back.count < 5) return;
+    if (back.count < 7) return;
     CHECK(back.widgets[1].scale == 3, "round trip preserves scale");
     CHECK(back.widgets[4].fit == true, "round trip preserves fit");
     CHECK(back.widgets[0].scale == 1, "round trip leaves the default alone");
+    CHECK(back.widgets[0].has_smooth == false, "round trip leaves smooth unset");
+    CHECK(back.widgets[5].has_smooth && !back.widgets[5].smooth,
+          "round trip preserves an explicit smooth false");
+    CHECK(back.widgets[6].has_smooth && back.widgets[6].smooth,
+          "round trip preserves an explicit smooth true");
 }
 
 /*
@@ -665,9 +673,9 @@ static void test_fit(void)
     static const char doc[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":["
-        "{\"type\":\"text\",\"rect\":[0,0,64,7],\"text\":\"8\",\"font\":\"tom5x7\","
+        "{\"type\":\"text\",\"rect\":[0,0,64,10],\"text\":\"8\",\"font\":\"digits10\","
         "\"color\":\"#FFFFFF\",\"fit\":true},"
-        "{\"type\":\"text\",\"rect\":[0,8,64,21],\"text\":\"8\",\"font\":\"tom5x7\","
+        "{\"type\":\"text\",\"rect\":[0,10,64,30],\"text\":\"8\",\"font\":\"digits10\","
         "\"color\":\"#FFFFFF\",\"fit\":true}"
         "]}";
 
@@ -680,13 +688,14 @@ static void test_fit(void)
     ml_canvas_init(&c, 64, 64, NULL);
     ml_render(&l, &m, &c);
 
-    /* Count ink in each widget's band. The 21px box fits three rows of a 7px
-     * font, so its glyph must be built from 3x3 blocks: nine times the ink. */
+    /* Count ink in each widget's band. The 30px box lands exactly on 3x, a
+     * whole multiple, so its glyph is built from 3x3 blocks: nine times the
+     * ink, the case where smooth scaling is exact rather than anti-aliased. */
     int small_ink = 0, large_ink = 0;
-    for (int y = 0; y < 7; y++)
+    for (int y = 0; y < 10; y++)
         for (int x = 0; x < 64; x++)
             if (ml_canvas_get(&c, x, y).r != 0) small_ink++;
-    for (int y = 8; y < 29; y++)
+    for (int y = 10; y < 40; y++)
         for (int x = 0; x < 64; x++)
             if (ml_canvas_get(&c, x, y).r != 0) large_ink++;
 
@@ -751,32 +760,32 @@ static void test_fit_axes(void)
     group("fit on both axes");
 
     /*
-     * Width used to be ignored entirely. This box is two rows tall, so height
-     * alone says 2x, and at 2x the string is 94px wide in a 64px box. The old
-     * behaviour drew it at 2x and let the ellipsis eat the overflow. tom5x7 is
-     * a blocky family cut, so its box-derived scale floors to a whole multiple
-     * and width pulls it back to 1x.
+     * Width used to be ignored entirely. This box is two scales tall, so height
+     * alone says 2x, and at 2x the string is 190px wide in a 64px box. The old
+     * behaviour drew it at 2x and let the ellipsis eat the overflow. The widget
+     * pins smooth off, so its box-derived scale floors to a whole multiple and
+     * width pulls it back to 1x.
      */
     static const char narrow[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
-        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,14],"
-        "\"text\":\"88888888\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
-        "\"fit\":true}]}";
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,16],"
+        "\"text\":\"8888888888888888\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"smooth\":false}]}";
 
-    /* '8' inks 6 of the 7 rows in tom5x7; row 6 is the descender row, empty for
-     * a digit. So the row count is 6 per unit of scale, not 7. */
+    /* '8' inks 6 of the 8 rows in sans8; the rest is descender room a digit
+     * never uses. So the row count is 6 per unit of scale. */
     ml_canvas c;
     if (!render_doc(narrow, 64, 64, &c)) { CHECK(false, "narrow doc parses"); return; }
-    CHECK(ink_rows(&c, 64, 64) == 6, "a blocky font too narrow for 2x floors to 1x");
+    CHECK(ink_rows(&c, 64, 64) == 6, "blocky text too narrow for 2x floors to 1x");
     CHECK(ink_right(&c, 64, 64) < 64, "fitted text stays inside the canvas");
     ml_canvas_free(&c);
 
     /* Same box, same font, a string short enough that 2x fits both ways. */
     static const char roomy[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
-        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,14],"
-        "\"text\":\"88\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
-        "\"fit\":true}]}";
+        "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,16],"
+        "\"text\":\"88\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"smooth\":false}]}";
 
     if (!render_doc(roomy, 64, 64, &c)) { CHECK(false, "roomy doc parses"); return; }
     CHECK(ink_rows(&c, 64, 64) == 12, "the same box still reaches 2x when the text is short");
@@ -896,7 +905,7 @@ static void test_family_pick(void)
     static const char agenda_default[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
+        "\"font\":\"sans9\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
     if (!render_doc(agenda, 64, 64, &a) || !render_doc(agenda_default, 64, 64, &b)) {
         CHECK(false, "agenda docs parse");
         return;
@@ -908,31 +917,54 @@ static void test_family_pick(void)
 }
 
 /*
- * The blocky exception. tom5x7 is pixel art on purpose: its fitted scale
- * floors to a whole multiple, so a box growing from 7 to 13 rows changes
- * nothing and the 14th doubles the text. That is a feature of the style,
- * not a dead band to fix.
+ * The blocky exception. "smooth": false asks for whole-pixel steps on
+ * purpose: the fitted scale floors to a whole multiple, so a box growing
+ * from 7 to 13 rows changes nothing and the 14th doubles the text. That is
+ * a deliberate rendering choice, not a dead band to fix.
  */
 static void test_fit_blocky(void)
 {
     group("blocky fit");
 
-    /* 'g' inks 6 of the 7 rows in tom5x7. */
-    for (int box_h = 7; box_h <= 15; box_h++) {
+    /* 'g' inks 7 of the 8 rows in sans8, descender included. */
+    for (int box_h = 8; box_h <= 17; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,%d],"
-                 "\"text\":\"g\",\"font\":\"tom5x7\",\"color\":\"#FFFFFF\","
-                 "\"fit\":true}]}",
+                 "\"text\":\"g\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+                 "\"fit\":true,\"smooth\":false}]}",
                  box_h);
         ml_canvas c;
         if (!render_doc(doc, 64, 64, &c)) { CHECK(false, "blocky doc parses"); return; }
         const int rows = ink_rows(&c, 64, 64);
-        const int want = box_h < 14 ? 6 : 12;
-        CHECK(rows == want, "a blocky font only moves at whole multiples");
+        const int want = box_h < 16 ? 7 : 14;
+        CHECK(rows == want, "smooth off only moves at whole multiples");
         ml_canvas_free(&c);
     }
+
+    /* The toggle overrules the font in the other direction too: wx16 is a
+     * blocky icon set, yet a widget that asks for smooth gets the fractional
+     * 1.5x this 24px box derives, anti-aliased edges and all. */
+    ml_sim *s = ml_sim_create();
+    if (!s) { CHECK(false, "sim created"); return; }
+    static const char icon_blocky[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,24,24],"
+        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    static const char icon_smooth[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,24,24],"
+        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"smooth\":true}]}";
+    CHECK(ml_sim_load(s, icon_blocky) == 1, "icon doc loads");
+    CHECK(ml_sim_widget_scale(s, 0) == ML_SCALE_1X,
+          "an icon set floors its fitted scale by default");
+    CHECK(ml_sim_load(s, icon_smooth) == 1, "smooth icon doc loads");
+    CHECK(ml_sim_widget_scale(s, 0) == 384,
+          "smooth on anti-aliases even a blocky icon set");
+    ml_sim_destroy(s);
 }
 
 static void test_auto_font(void)
@@ -940,19 +972,21 @@ static void test_auto_font(void)
     group("automatic font choice");
 
     /*
-     * A 64x32 clock box. A named tom5x7 is blocky, so its fit floors to 2x and
-     * 12 rows, held back by its width. auto_font shops every family and finds
-     * a smooth cut that fills 18, which is what auto_font is for.
+     * A 64x32 clock box. A named digits10 is held to 1.6x by its width and
+     * inks 16 rows. auto_font shops every family and finds the cut whose
+     * scaled ink fills the box best: digits12 at 1.45x, 18 rows. Measured in
+     * ink rather than cells, so a text cut whose digits sit in a padded cell
+     * cannot outbid a clock face for a clock string.
      */
     static const char named[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char automatic[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"auto_font\":true}]}";
 
     ml_canvas a, b;
@@ -961,7 +995,7 @@ static void test_auto_font(void)
         return;
     }
 
-    CHECK(ink_rows(&a, 64, 64) == 12, "a named font is left alone without auto_font");
+    CHECK(ink_rows(&a, 64, 64) == 16, "a named font is left alone without auto_font");
     CHECK(ink_rows(&b, 64, 64) == 18,
           "auto_font finds a font that fills the box better");
     CHECK(ink_right(&b, 64, 64) < 64, "and the one it picks still fits the width");
@@ -970,7 +1004,7 @@ static void test_auto_font(void)
 
     /*
      * Icons are indexed by digit and every body font has digits, so a naive
-     * "which font can draw this string" would answer tom5x7 and put a numeral
+     * "which font can draw this string" would answer sans9 and put a numeral
      * where the weather icon belongs. Icon widgets must render identically
      * whether or not auto_font is set.
      */
@@ -1028,25 +1062,36 @@ static void test_resolve_font(void)
     static const char pinned[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"scale\":2,\"color\":\"#FFFFFF\"}]}";
+        "\"font\":\"sans9\",\"scale\":2,\"color\":\"#FFFFFF\"}]}";
     CHECK(ml_sim_load(s, pinned) == 1, "pinned doc loads");
-    CHECK(strcmp(ml_sim_widget_font(s, 0), "tom5x7") == 0,
+    CHECK(strcmp(ml_sim_widget_font(s, 0), "sans9") == 0,
           "a pinned cut reports itself");
     CHECK(ml_sim_widget_scale(s, 0) == 2 * ML_SCALE_1X,
           "a pinned scale reports itself");
 
-    /* tom5x7 is blocky on purpose: a fitted scale floors to a whole multiple,
-     * matching the 12 ink rows test_auto_font counts for this box. */
+    /* digits16 is held to 1.18x by its width in this box. With smooth off the
+     * fitted scale floors to a whole multiple; with the font left to decide it
+     * keeps the fraction and anti-aliases. Same cut, same box, one toggle. */
     static const char fitted[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
-        "\"fit\":true}]}";
+        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true,\"smooth\":false}]}";
     CHECK(ml_sim_load(s, fitted) == 1, "fitted doc loads");
-    CHECK(strcmp(ml_sim_widget_font(s, 0), "tom5x7") == 0,
+    CHECK(strcmp(ml_sim_widget_font(s, 0), "digits16") == 0,
           "a named cut keeps its name under fit");
-    CHECK(ml_sim_widget_scale(s, 0) == 2 * ML_SCALE_1X,
-          "a blocky font floors its fitted scale");
+    CHECK(ml_sim_widget_scale(s, 0) == ML_SCALE_1X,
+          "smooth off floors the fitted scale");
+
+    static const char fitted_smooth[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
+        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"fit\":true}]}";
+    CHECK(ml_sim_load(s, fitted_smooth) == 1, "smooth fitted doc loads");
+    CHECK(ml_sim_widget_scale(s, 0) > ML_SCALE_1X &&
+          (ml_sim_widget_scale(s, 0) & 255) != 0,
+          "the font default keeps the fractional scale");
 
     /*
      * auto_font shops every family. The renderer's choice inks 18 rows in
@@ -1057,11 +1102,11 @@ static void test_resolve_font(void)
     static const char automatic[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"tom5x7\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"auto_font\":true}]}";
     CHECK(ml_sim_load(s, automatic) == 1, "auto_font doc loads");
     const ml_font *picked = ml_font_find(ml_sim_widget_font(s, 0));
-    CHECK(picked != NULL && strcmp(picked->name, "tom5x7") != 0,
+    CHECK(picked != NULL && strcmp(picked->name, "digits10") != 0,
           "auto_font reports the font it upgraded to");
     if (picked) {
         ml_canvas probe;
@@ -1189,7 +1234,7 @@ static void test_scale_floor(void)
      * A box shorter than every cut of the named family draws the family's
      * shortest, clipped. The floor is family-relative: a clock asking for
      * digits16 means digits, and five rows of digits10 keeps that style
-     * where a switch to tiny4x6, which fits, would not.
+     * where a switch to sans8, the shortest text cut, would not.
      */
     static const char under_floor[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
@@ -1204,7 +1249,7 @@ static void test_scale_floor(void)
     static const char other_style[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
-        "\"font\":\"tiny4x6\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"sans8\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
 
     ml_canvas a, b;
@@ -1256,9 +1301,8 @@ static void test_scale_floor(void)
     }
     CHECK(ink_total(&a, 64, 64) > 0,
           "letters survive a box too small for the named clock face");
-    /* bold5x7 takes it at the 1.64x that fills the width: more than the 7
-     * rows of 1x, and still a face that carries every letter. The 'y'
-     * descender reaches into the twelfth. */
+    /* sans12 takes it at 1x, held there by the box height: a face that
+     * carries every letter, descender reaching the twelfth row. */
     CHECK(ink_rows(&a, 64, 64) == 12, "and land in a font that has them");
     ml_canvas_free(&a);
 

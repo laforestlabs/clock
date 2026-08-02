@@ -27,9 +27,11 @@ Usage:
     python3 tools/fontraster.py <ttf> <name-prefix> <role> <height...> \
         [--family NAME] [--codepoints text|digits] [--threshold N]
 
-Example:
+Example (the two commands that build the shipped catalogue):
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Regular.ttf \
-        sans text 9 10 11 12 13 14 16 18 20 24 --family sans
+        sans text 8 9 10 11 12 13 14 16 18 20 24 --family sans
+    python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Semibold.ttf \
+        digits digits 10 12 14 16 18 20 24 28 32 40 48 --family digits
 """
 
 from __future__ import annotations

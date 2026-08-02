@@ -47,11 +47,11 @@ void main() {
     final engine = MirrorEngine.open();
     engine.load('{"canvas":{"width":64,"height":64},'
         '"background":"#000000","widgets":['
-        '{"type":"clock","rect":[0,0,64,32],"font":"tom5x7",'
+        '{"type":"clock","rect":[0,0,64,32],"font":"sans9",'
         '"scale":2,"color":"#FFFFFF"}]}');
 
     final info = engine.widgets().single;
-    expect(info.font, 'tom5x7');
+    expect(info.font, 'sans9');
     expect(info.scale, 2.0);
     engine.dispose();
   }, skip: skip);

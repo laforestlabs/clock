@@ -109,6 +109,16 @@ typedef struct {
      */
     bool           auto_font;
 
+    /*
+     * Subpixel anti-aliasing on upscale, as a tri-state. Unset, the font
+     * decides: smooth families (sans, digits) grow a fraction of a pixel at
+     * a time under fit, anything else floors the box-derived scale to a
+     * whole-pixel multiple to keep hard edges. Set, it overrules the font:
+     * true anti-aliases any font, false forces whole-pixel steps.
+     */
+    bool           smooth;
+    bool           has_smooth;
+
     int            max_items;   /* agenda / todo row cap */
     int            line_gap;    /* extra pixels between rows */
     bool           show_time;   /* agenda: prefix each row with its time */

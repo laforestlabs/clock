@@ -186,12 +186,12 @@ handle.
 ### Choosing a font
 
 The inspector's **Font** dropdown lists font *families*, read from the engine
-rather than from a list in Dart: `sans` and `digits` are smooth faces
-rasterized from Open Sans in many sizes, `pixel` and `pixel-bold` are the
-hand-drawn pixel-art faces, deliberately blocky. Choosing a family chooses a
-style; the engine chooses the size cut that fills the widget's box. A layout
-that names an exact cut (`tom5x7`, `digits16`) still pins it, and the dropdown
-shows such a value even though it is not a family.
+rather than from a list in Dart: `sans` and `digits`, both rasterized from
+Open Sans in many sizes, plus the `wx` icon set kept to its own picker.
+Choosing a family chooses a style; the engine chooses the size cut that fills
+the widget's box. A layout that names an exact cut (`sans9`, `digits16`)
+still pins it, and the dropdown shows such a value even though it is not a
+family.
 
 A box smaller than the named font steps down to a shorter cut of the same
 family and stops at the family's shortest, clipped, so resizing never changes
@@ -212,14 +212,16 @@ be: the preview is the real renderer, so the text visibly empties out the
 moment you choose it. The **Icon set** dropdown is filtered separately, to
 the icon role, which keeps the body fonts out of it.
 
-Widths differ enough between fonts to change a layout. `bold5x7` is about 30
-percent wider than `tom5x7`, so swapping a widget over can push a line into
-truncation that fitted a moment earlier. Thin strokes are the first thing the
-veneer softens away, so a hairline that reads at zero veneer can vanish at full;
-`bold5x7` is the fallback when `tom5x7` stops holding up.
+The **Smoothing** control is a tri-state over the layout's `smooth` key. Auto
+writes nothing and lets the font decide, which today means every text and
+clock face anti-aliases between whole-pixel steps while the icon set keeps
+hard pixels. Smooth and Blocky write the key and overrule the font in either
+direction: a smoothed icon grows a fraction of a pixel at a time, a blocky
+text face steps in whole-pixel multiples.
 
 **Auto font** hands the size *and* style choice to the engine, which picks
-whichever font fills the box best out of those that can render the string.
+whichever font fills the box best out of those that can render the string,
+measured in the ink the string actually draws rather than in cell heights.
 Drag a clock box wider with it on and the face changes, not just the size. It
 is offered on text, clock, date and weather, and withheld from icons, agendas
 and todos, where the engine ignores it. A switch that leaves the preview

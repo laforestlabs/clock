@@ -243,6 +243,8 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
 
     ml_json_get_bool(j, obj, "fit",       &w->fit);
     ml_json_get_bool(j, obj, "auto_font", &w->auto_font);
+    /* Tri-state: only a present key overrules the font's own smooth flag. */
+    w->has_smooth = ml_json_get_bool(j, obj, "smooth", &w->smooth);
     ml_json_get_bool(j, obj, "show_time", &w->show_time);
     ml_json_get_bool(j, obj, "hide_done", &w->hide_done);
     ml_json_get_bool(j, obj, "visible",   &w->visible);
@@ -504,6 +506,11 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
          * as small as the layouts people hand-write. */
         if (w->scale > 1) appendf(buf, cap, &len, ", \"scale\": %d", w->scale);
         if (w->fit)       appendf(buf, cap, &len, ", \"fit\": true");
+        if (w->auto_font) appendf(buf, cap, &len, ", \"auto_font\": true");
+        /* Tri-state: written whenever set, false included, because absent
+         * means the font decides. */
+        if (w->has_smooth)
+            appendf(buf, cap, &len, ", \"smooth\": %s", w->smooth ? "true" : "false");
 
         if (!w->visible) appendf(buf, cap, &len, ", \"visible\": false");
 

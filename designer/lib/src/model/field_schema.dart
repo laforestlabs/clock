@@ -21,6 +21,7 @@ enum FieldKind {
   valign,
   integer,
   boolean,
+  triState,
 }
 
 @immutable
@@ -59,6 +60,10 @@ const FieldSpec _scale = FieldSpec('scale', 'Scale', FieldKind.integer,
     help: 'Whole-pixel glyph scale. Ignored while Fit is on');
 const FieldSpec _fit = FieldSpec('fit', 'Fit to box', FieldKind.boolean,
     help: 'Grow the text with the box, width and height, anti-aliasing between whole-pixel steps');
+// Subpixel anti-aliasing on upscale, as a tri-state. Auto leaves it to the
+// font: every text and clock face smooths, the icon set stays blocky. The
+// other two overrule the font in either direction.
+const FieldSpec _smooth = FieldSpec('smooth', 'Smoothing', FieldKind.triState);
 // Offered on text, clock, date and weather only, because those are the widgets
 // the engine honours it for. An icon is indexed by digit and every body font
 // has digits, so substituting there would put a numeral where the weather icon
@@ -89,6 +94,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _autoFont,
     _align,
     _valign,
@@ -99,6 +105,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _autoFont,
     _align,
     _valign,
@@ -109,6 +116,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _autoFont,
     _align,
     _valign,
@@ -117,6 +125,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _autoFont,
     _accent,
     _lineGap,
@@ -126,6 +135,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('icon_set', 'Icon set', FieldKind.iconSet),
     _scale,
     _fit,
+    _smooth,
     FieldSpec('bind', 'Binding', FieldKind.bind,
         help: 'Usually weather.code'),
     _align,
@@ -135,6 +145,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _accent,
     _maxItems,
     _lineGap,
@@ -144,6 +155,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
+    _smooth,
     _accent,
     _maxItems,
     _lineGap,

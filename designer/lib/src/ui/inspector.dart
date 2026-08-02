@@ -310,6 +310,20 @@ class _Field extends StatelessWidget {
               controller.updateSelected((w) => w.setString(spec.key, v)),
         );
 
+      case FieldKind.triState:
+        // A tri-state over an absent key: Auto removes it and lets the font
+        // decide; the other two write it explicitly. A switch cannot say
+        // this, because its off state would write false and force blocky
+        // where the layout meant no opinion.
+        final smooth = widget.getBool(spec.key);
+        return _Segmented(
+          label: spec.label,
+          value: smooth == null ? 'Auto' : (smooth ? 'Smooth' : 'Blocky'),
+          options: const <String>['Auto', 'Smooth', 'Blocky'],
+          onChanged: (v) => controller.updateSelected((w) => w.setBool(
+              spec.key, v == 'Auto' ? null : v == 'Smooth')),
+        );
+
       case FieldKind.integer:
         // With Fit on, the pinned scale is parked and the box decides. Show
         // the figure the engine is actually drawing at, which is what moves

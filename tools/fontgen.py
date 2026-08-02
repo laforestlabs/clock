@@ -10,10 +10,10 @@ Source format
 -------------
 Directives, one per line, before any glyphs:
 
-    @name     tom5x7      identifier used by layouts and ml_font_find()
+    @name     sans9        identifier used by layouts and ml_font_find()
     @role     text        text, digits or icons (see below)
-    @height   7           rows per glyph cell
-    @baseline 6           rows from the top of the cell down to the baseline
+    @height   9           rows per glyph cell
+    @baseline 7           rows from the top of the cell down to the baseline
     @gap      1           horizontal pixels inserted between adjacent glyphs
     @family   pixel       style this cut belongs to (default: the @name)
     @smooth   no          yes: fractional scales anti-alias (default)

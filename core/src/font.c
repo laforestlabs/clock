@@ -27,11 +27,11 @@ const ml_font *ml_font_default(void)
      * every widget that names no font renders as, which is a surprising way for
      * an unrelated addition to alter a layout.
      *
-     * tom5x7 is the body font the widget defaults in render.c already name, so
+     * sans9 is the body font the widget defaults in render.c already name, so
      * pinning here keeps the two agreeing. Entry zero remains the backstop for
      * a build that somehow lacks it.
      */
-    const ml_font *body = ml_font_find("tom5x7");
+    const ml_font *body = ml_font_find("sans9");
     if (body) return body;
     return ml_font_registry_count > 0 ? ml_font_registry[0] : NULL;
 }
