@@ -811,4 +811,6 @@ const ml_font ml_font_bold5x7 = {
     .widths   = s_bold5x7_widths,
     .offsets  = s_bold5x7_offsets,
     .bitmap   = s_bold5x7_bitmap,
+    .family   = "pixel-bold",
+    .smooth   = false,
 };

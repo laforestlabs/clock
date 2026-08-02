@@ -274,7 +274,7 @@ static void rally_draw(const void *state, const ml_view *view, ml_canvas *c,
      * of the paddles rather than tucked into the corners behind them */
     const ml_font *f = ml_font_find("digits10");
     if (!f) f = ml_font_default();
-    int fs = f->height <= H / 3 ? 1 : 1;
+    const int fs = ML_SCALE_1X;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score[0]);
     ml_text_draw(c, f, s->face[0] + 2, 1, buf, cyan, fs);
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score[1]);

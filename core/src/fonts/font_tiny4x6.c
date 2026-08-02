@@ -715,4 +715,6 @@ const ml_font ml_font_tiny4x6 = {
     .widths   = s_tiny4x6_widths,
     .offsets  = s_tiny4x6_offsets,
     .bitmap   = s_tiny4x6_bitmap,
+    .family   = "pixel",
+    .smooth   = false,
 };

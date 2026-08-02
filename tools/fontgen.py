@@ -15,6 +15,14 @@ Directives, one per line, before any glyphs:
     @height   7           rows per glyph cell
     @baseline 6           rows from the top of the cell down to the baseline
     @gap      1           horizontal pixels inserted between adjacent glyphs
+    @family   pixel       style this cut belongs to (default: the @name)
+    @smooth   no          yes: fractional scales anti-alias (default)
+                          no:  box-derived scales floor to whole multiples
+
+@family groups cuts into one style in many sizes. A layout naming a family
+gets the cut that fills its box; naming a cut pins that cut. Every cut of a
+family must agree on @role and @smooth, because those are what make the style
+one style, and fontgen refuses to compile a family that splits on either.
 
 @role is required, because it is the one property of a font that its bitmaps
 cannot imply and the renderer cannot guess:
@@ -112,6 +120,8 @@ class Font:
         self.height = 0
         self.baseline = 0
         self.gap = 1
+        self.family = ""
+        self.smooth = True
         self.glyphs: dict[int, Glyph] = {}
         self._parse()
         self._validate()
@@ -154,6 +164,14 @@ class Font:
                 key, value = parts[0], parts[1].strip()
                 if key == "name":
                     self.name = value
+                elif key == "family":
+                    self.family = value
+                elif key == "smooth":
+                    if value not in ("yes", "no"):
+                        raise FontError(
+                            f"{self.path}:{lineno}: @smooth expects yes or no"
+                        )
+                    self.smooth = value == "yes"
                 elif key == "role":
                     if value not in ROLES:
                         raise FontError(
@@ -208,6 +226,10 @@ class Font:
     def _validate(self) -> None:
         if not self.name:
             raise FontError(f"{self.path}: missing @name")
+        # A cut with no declared family is a family of one, named after itself,
+        # so the runtime never has to handle a missing family.
+        if not self.family:
+            self.family = self.name
         # Deliberately not defaulted. Whichever way a default fell it would be
         # wrong for some font silently, and the whole point of the role is that
         # the glyphs never imply it.
@@ -307,6 +329,8 @@ class Font:
         out.append(f"    .widths   = s_{ident}_widths,")
         out.append(f"    .offsets  = s_{ident}_offsets,")
         out.append(f"    .bitmap   = s_{ident}_bitmap,")
+        out.append(f'    .family   = "{self.family}",')
+        out.append(f"    .smooth   = {'true' if self.smooth else 'false'},")
         out.append("};")
         out.append("")
         del widths
@@ -359,6 +383,21 @@ def main(argv: list[str]) -> int:
     if len(set(names)) != len(names):
         print(f"fontgen: duplicate @name among {names}", file=sys.stderr)
         return 1
+
+    # A family is one style in many sizes, so its cuts must agree on the two
+    # things that define the style: the role (what it may be handed) and the
+    # smoothness (how it scales). A cut that disagrees splits the family in a
+    # way the runtime cannot see.
+    by_family: dict[str, Font] = {}
+    for font in fonts:
+        first = by_family.setdefault(font.family, font)
+        if first.role != font.role or first.smooth != font.smooth:
+            print(
+                f"fontgen: {font.path.name}: family {font.family!r} splits on "
+                f"role or @smooth between {first.path.name} and it",
+                file=sys.stderr,
+            )
+            return 1
 
     # Sort so the smallest-height font lands first and becomes the fallback.
     fonts.sort(key=lambda f: (f.height, f.name))

@@ -87,6 +87,16 @@ ML_EXPORT const char *ml_sim_widget_type(const ml_sim *s, int index);
 ML_EXPORT const char *ml_sim_widget_id(const ml_sim *s, int index);
 
 /*
+ * What a widget resolves to against the current mock data: the font cut it
+ * draws with, and its scale in q8 (256 = 1x). A box resize changes these when
+ * fit or a font family is in play, and the inspector shows them as the
+ * widget's drawn state. Empty string and 0 for a widget with no text, or a
+ * bad index.
+ */
+ML_EXPORT const char *ml_sim_widget_font(const ml_sim *s, int index);
+ML_EXPORT int         ml_sim_widget_scale(const ml_sim *s, int index);
+
+/*
  * Topmost visible widget whose rect covers a canvas pixel, or -1 for none.
  * Done here rather than in Dart so a tap always selects what is actually drawn
  * at that pixel, even if the two models ever disagree.
@@ -132,6 +142,18 @@ ML_EXPORT int         ml_sim_font_height(int index);
  * offering to turn the text into weather symbols.
  */
 ML_EXPORT int         ml_sim_font_role(int index);
+
+/*
+ * The font families, deduplicated in first-appearance order: "sans", "digits"
+ * and friends, each standing for its whole ladder of cuts. The font picker
+ * offers these rather than the raw cuts, because choosing a style is a
+ * decision and choosing a size is a service the fit machinery provides.
+ * A family's role is the role of its first cut; fontgen refuses to compile a
+ * family whose cuts disagree.
+ */
+ML_EXPORT int         ml_sim_family_count(void);
+ML_EXPORT const char *ml_sim_family_name(int index);
+ML_EXPORT int         ml_sim_family_role(int index);
 
 ML_EXPORT int         ml_sim_type_count(void);
 ML_EXPORT const char *ml_sim_type_name(int index);

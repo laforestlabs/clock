@@ -22,8 +22,6 @@ void main() {
       ]) {
         expect(keysFor(type), contains('scale'), reason: '$type has no scale');
         expect(keysFor(type), contains('fit'), reason: '$type has no fit');
-        expect(keysFor(type), contains('min_scale'), reason: '$type min');
-        expect(keysFor(type), contains('max_scale'), reason: '$type max');
       }
     });
 
@@ -48,14 +46,5 @@ void main() {
       }
     });
 
-    test('scale bounds allow 0, which is how the engine spells unset', () {
-      final min = fieldsFor('text').firstWhere((f) => f.key == 'min_scale');
-      final max = fieldsFor('text').firstWhere((f) => f.key == 'max_scale');
-
-      expect(min.min, 0);
-      expect(max.min, 0);
-      expect(min.max, 8);
-      expect(max.max, 8);
-    });
   });
 }

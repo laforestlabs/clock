@@ -83,31 +83,24 @@ typedef struct {
     ml_valign      valign;
 
     /*
-     * Whole-pixel glyph scale, 1 or more. Bitmap fonts have no intermediate
-     * sizes, so growing text means repeating each pixel rather than resampling.
+     * Whole-pixel glyph scale, 1 or more. An explicit scale pins the text to
+     * whole-pixel replication; continuous growth is fit's job.
      */
     int            scale;
     /*
-     * Derive scale from the box instead of taking it from the layout, so
+     * Derive the scale from the box instead of taking it from the layout, so
      * resizing a widget in the designer grows the text inside it. Overrides
      * scale when set.
+     *
+     * The derived scale is continuous: the text tracks the box a fraction of
+     * a pixel at a time, anti-aliasing between whole multiples, rather than
+     * parking at one whole-pixel scale until the box reaches the next.
      *
      * Both axes are considered. Height alone was enough while every fit widget
      * held one short string, and silently overflowed as soon as the text was
      * long enough to matter.
      */
     bool           fit;
-
-    /*
-     * Bounds on whatever fit works out, 0 meaning unset. A headline that shrinks
-     * to 1x to fit one long word has stopped being a headline, and a box given
-     * more room than anyone intended should not grow into a wall of pixels.
-     * An inverted pair is treated as the lower bound rather than as an error,
-     * because a layout arriving over the network must not be able to make a
-     * widget undrawable.
-     */
-    int            min_scale;
-    int            max_scale;
 
     /*
      * Let the engine choose the font as well as the size, out of those that can

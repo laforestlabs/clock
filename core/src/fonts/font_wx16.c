@@ -201,4 +201,6 @@ const ml_font ml_font_wx16 = {
     .widths   = s_wx16_widths,
     .offsets  = s_wx16_offsets,
     .bitmap   = s_wx16_bitmap,
+    .family   = "wx",
+    .smooth   = false,
 };

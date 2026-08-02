@@ -13,6 +13,7 @@
 #define MIRROR_RENDER_H
 
 #include "mirror/canvas.h"
+#include "mirror/font.h"
 #include "mirror/layout.h"
 #include "mirror/model.h"
 
@@ -27,6 +28,16 @@ void ml_render(const ml_layout *layout, const ml_model *model, ml_canvas *out);
 void ml_render_widget(const ml_widget *w, const ml_model *model, ml_canvas *out);
 
 /*
+ * The font cut and q8 scale (256 = 1x) a widget draws with against this
+ * model, or NULL when it draws no text: a rect, a line, an icon without
+ * data, a hidden or zero-size widget. Measures exactly what ml_render_widget
+ * would draw, so the designer can report the effect of a box resize without
+ * rendering one.
+ */
+const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
+                                      int *scale_q8);
+
+/*
  * Version of the render engine, bumped when output changes in a way that
  * invalidates golden images. Reported by the device so the designer can warn
  * about a mismatch with its own core.
@@ -38,8 +49,12 @@ void ml_render_widget(const ml_widget *w, const ml_model *model, ml_canvas *out)
  *      unchanged, but a version 2 device sent a scaled layout draws it at 1x
  *      and silently disagrees with the designer's preview, which is exactly
  *      the mismatch this constant exists to catch.
+ *   4  "fit" derives a continuous fixed-point scale instead of the largest
+ *      whole multiple, and fractional scales anti-alias. Explicit whole-pixel
+ *      "scale" output is unchanged, but a version 3 device floors a fitted
+ *      widget to a whole multiple and disagrees with the preview.
  */
-#define ML_RENDER_VERSION 3
+#define ML_RENDER_VERSION 4
 
 #ifdef __cplusplus
 }

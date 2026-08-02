@@ -119,17 +119,48 @@ Bindings are dotted paths into the model: `weather.temp_c`, `weather.label`,
 `weather.code`, `now.hour`, `system.rssi`, `counts.events`, and so on. See
 `ml_model_lookup()` in `core/src/model.c` for the full set.
 
+### Fonts: a few styles, many sizes
+
+The catalogue is a handful of font *families*, each a style with a ladder of
+size *cuts*, rather than a shelf of unrelated typefaces:
+
+| family | role | cuts | scaling |
+|---|---|---|---|
+| `sans` | text | 9 to 24px | smooth: anti-aliases between whole scales |
+| `digits` | digits | 10 to 48px, tabular figures | smooth |
+| `pixel` | text | tiny4x6, tom5x7 | blocky: whole-pixel multiples only |
+| `pixel-bold` | text | bold5x7 | blocky |
+| `wx` | icons | wx16 weather pictograms | blocky |
+
+Naming a family leaves the size to the engine, which picks the cut that fills
+the widget's box and scales it the rest of the way:
+
+```json
+{ "type": "clock", "rect": [0, 0, 64, 32], "font": "digits", "fit": true }
+```
+
+Naming an exact cut, `"font": "digits16"`, still pins that cut, so every
+layout written before families existed renders as it always did. The `sans`
+and `digits` cuts are rasterized from Open Sans at build time by
+`tools/fontraster.py` into the same ASCII-art `.font` sources the hand-drawn
+pixel fonts use, so a bad glyph can be touched up by hand and everything
+still compiles through `tools/fontgen.py`.
+
 ### Sizing text
 
-Bitmap glyphs have no in-between sizes, so text grows by whole-pixel
-replication: `"scale": 3` draws every glyph pixel as a 3x3 block. Scale is
-capped at 8 and defaults to 1, so any layout written before it existed renders
-byte for byte as it always did.
+Bitmap glyphs grow by whole-pixel replication: `"scale": 3` draws every glyph
+pixel as a 3x3 block. Scale is capped at 8 and defaults to 1, so any layout
+written before it existed renders byte for byte as it always did.
 
-`"fit": true` derives the scale from the box instead, picking the largest whole
-multiple of the font that fits **both** the widget's width and its height. That
-is what makes dragging a widget taller in the designer grow the text inside it.
-It overrides `scale` when both are set.
+`"fit": true` derives the scale from the box instead, taking the largest scale
+that fits **both** the widget's width and its height. In a smooth family the
+derived scale is not limited to whole multiples: between them the glyphs
+anti-alias, each panel pixel inked in proportion to the area the scaled glyph
+covers, so dragging a widget in the designer grows its text one pixel at a
+time rather than parking at one size until the box reaches the next multiple.
+A blocky family floors the derived scale to a whole multiple instead, because
+hard pixel edges are the point of pixel art. Either way `fit` overrides
+`scale` when both are set.
 
 Width counts as much as height. Fitting on height alone was fine while every
 `fit` widget held one short string, and wrong the moment one did not: a 64x32
@@ -137,12 +168,6 @@ clock box put `digits16` at 2x on height and then drew 104px of `09:41` into
 64px of box. Widgets that draw a list, `agenda` and `todo`, are still sized on
 height, because they clip each row with an ellipsis by design and fitting the
 whole widget to its longest entry would shrink every row to suit one long title.
-
-`"min_scale"` and `"max_scale"` bound whatever `fit` works out, and default to
-the global range of 1 to 8. A headline that shrinks to 1x to swallow one long
-word has stopped being a headline. An inverted pair collapses to the lower
-bound rather than being rejected, because a layout arriving over the network
-must not be able to make a widget undrawable.
 
 ### Letting the engine choose the font
 
@@ -154,16 +179,17 @@ render the string in question:
   "fit": true, "auto_font": true }
 ```
 
-In a 64x32 box `digits16` fits once on height but its 52px will not survive 2x,
-so it occupies 16 of the 32 rows. `digits10` goes to 2x and fills 20. With
-`auto_font` the engine works that out; without it, the named font stands.
+In a 64x32 box `digits16` is held to 1.23x by its 47px of width and fills
+about 20 of the 32 rows. `digits10` is narrower, reaches a higher scale and
+fills more. With `auto_font` the engine works that out; without it, the named
+font stands.
 
-Membership is decided by what a font can actually draw, not by a family
-declared in a layout: a font is a candidate when it has a glyph for every
-character of the string, and when its `@role` is not an icon set. Coverage keeps
-the clock faces out of a label, and it means a new `.font` joins the right group
-on its own. The role is what coverage cannot supply, since an icon set carries
-the ten digits and nothing else: measure `wx16` however you like and no
+Membership is decided by what a font can actually draw, not by the family it
+belongs to: a font is a candidate when it has a glyph for every character of
+the string, and when its `@role` is not an icon set. Coverage keeps the clock
+faces out of a label, and it means a new `.font` joins the right group on its
+own. The role is what coverage cannot supply, since an icon set carries the
+ten digits and nothing else: measure `wx16` however you like and no
 measurement reveals that its glyphs are rain clouds. Ties go to the font the
 layout named, since choosing the size is a service and quietly overruling a
 deliberate choice for no gain is not.
@@ -174,14 +200,16 @@ draw this?" would answer `tom5x7` and put the numeral 3 where the rain icon
 belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
-`tom5x7` clock stays chunky at 4x where `digits16` would be smoother.
+`tom5x7` clock stays chunky where `digits` would be smooth.
 
-A box too small for the font it names falls back to the tallest font that does
-fit and can draw the string. Under the shortest font there is nothing left to
-fall back to, so that font is the floor: a 5px box draws `tiny4x6` with its last
-row clipped rather than the top five rows of `digits16`, which is the difference
-between small text and wreckage. Shrinking a widget past the point where text
-can fit degrades; it does not break.
+A box too small for the font it names falls back to the tallest cut of the
+same family that does fit, and under that to the family's shortest, clipped:
+the style is the author's choice and only the size is the box's, so resizing a
+widget never changes what its text looks like. A 5px box naming `digits16`
+draws five rows of `digits10`, not a smaller face of a different style. Only
+when no cut of the family can draw the string at all, a word asked of a
+digits-only clock face, does the search widen to another family. Shrinking a
+widget past the point where text can fit degrades; it does not break.
 
 Two rules worth knowing:
 

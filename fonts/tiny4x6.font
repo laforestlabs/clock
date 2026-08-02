@@ -23,6 +23,8 @@
 @height   6
 @baseline 5
 @gap      1
+@family   pixel
+@smooth   no
 
 # --- space and punctuation ---
 32  ../../../../../..

@@ -28,6 +28,9 @@ typedef _SimToIntD = int Function(Pointer<Void>);
 typedef _SimIntToStrC = Pointer<Utf8> Function(Pointer<Void>, Int);
 typedef _SimIntToStrD = Pointer<Utf8> Function(Pointer<Void>, int);
 
+typedef _SimIntToIntC = Int Function(Pointer<Void>, Int);
+typedef _SimIntToIntD = int Function(Pointer<Void>, int);
+
 typedef _SimSetIntC = Void Function(Pointer<Void>, Int);
 typedef _SimSetIntD = void Function(Pointer<Void>, int);
 
@@ -85,6 +88,10 @@ class MirrorBindings {
             .lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_widget_type'),
         simWidgetId = lib
             .lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_widget_id'),
+        simWidgetFont = lib
+            .lookupFunction<_SimIntToStrC, _SimIntToStrD>('ml_sim_widget_font'),
+        simWidgetScale = lib
+            .lookupFunction<_SimIntToIntC, _SimIntToIntD>('ml_sim_widget_scale'),
         simHitTest =
             lib.lookupFunction<_HitTestC, _HitTestD>('ml_sim_hit_test'),
         simSetVariant = lib
@@ -107,6 +114,12 @@ class MirrorBindings {
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_height'),
         fontRole =
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_font_role'),
+        familyCount =
+            lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_family_count'),
+        familyName =
+            lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_sim_family_name'),
+        familyRole =
+            lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_sim_family_role'),
         typeCount =
             lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_sim_type_count'),
         typeName =
@@ -134,6 +147,8 @@ class MirrorBindings {
       Pointer<Int>, Pointer<Int>) simWidgetRect;
   final Pointer<Utf8> Function(Pointer<Void>, int) simWidgetType;
   final Pointer<Utf8> Function(Pointer<Void>, int) simWidgetId;
+  final Pointer<Utf8> Function(Pointer<Void>, int) simWidgetFont;
+  final int Function(Pointer<Void>, int) simWidgetScale;
   final int Function(Pointer<Void>, int, int) simHitTest;
   final void Function(Pointer<Void>, int) simSetVariant;
   final void Function(Pointer<Void>, int) simSetBrightness;
@@ -145,6 +160,9 @@ class MirrorBindings {
   final Pointer<Utf8> Function(int) fontName;
   final int Function(int) fontHeight;
   final int Function(int) fontRole;
+  final int Function() familyCount;
+  final Pointer<Utf8> Function(int) familyName;
+  final int Function(int) familyRole;
   final int Function() typeCount;
   final Pointer<Utf8> Function(int) typeName;
   final int Function() bindCount;

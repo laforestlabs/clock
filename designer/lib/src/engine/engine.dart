@@ -53,7 +53,26 @@ class FontInfo {
   bool get isIconSet => role == FontRole.icons;
 }
 
-/// Geometry of a widget as the engine understands it, in canvas pixels.
+/// One style from the engine's font catalogue: a family standing for its
+/// whole ladder of cuts. The picker offers these; the engine picks the cut.
+@immutable
+class FamilyInfo {
+  const FamilyInfo(this.name, this.role);
+  final String name;
+  final FontRole role;
+
+  /// Whether this family can be handed a string. An icon set cannot: it
+  /// answers the digits with weather pictograms, so a label set to one turns
+  /// into symbols rather than shrinking or falling back.
+  bool get drawsText => role != FontRole.icons;
+
+  /// Whether this is a pictogram set, and so belongs in the icon picker and
+  /// nowhere else.
+  bool get isIconSet => role == FontRole.icons;
+}
+
+/// Geometry of a widget as the engine understands it, in canvas pixels, plus
+/// the font the widget actually draws with against the current mock data.
 @immutable
 class WidgetInfo {
   const WidgetInfo({
@@ -61,12 +80,22 @@ class WidgetInfo {
     required this.type,
     required this.id,
     required this.rect,
+    required this.font,
+    required this.scale,
   });
 
   final int index;
   final String type;
   final String id;
   final ui.Rect rect;
+
+  /// The font cut the engine resolves for this widget: the size it picked for
+  /// a named family or with Auto font on. Empty for a widget with no text.
+  final String font;
+
+  /// The glyph scale the widget draws at. Whole for a pinned scale,
+  /// fractional when Fit derives it from the box. Zero when [font] is empty.
+  final double scale;
 
   /// What to show in a list: the author's id when they gave one, else the type.
   String get label => id.isNotEmpty ? id : type;
@@ -177,6 +206,9 @@ class MirrorEngine {
               box[2].toDouble(),
               box[3].toDouble(),
             ),
+            font: _b.simWidgetFont(_sim, i).toDartString(),
+            // q8 fixed point: 256 is 1x.
+            scale: _b.simWidgetScale(_sim, i) / 256.0,
           ),
         );
       }
@@ -275,6 +307,21 @@ class MirrorEngine {
       value >= 0 && value < FontRole.values.length
           ? FontRole.values[value]
           : FontRole.text;
+
+  /// Font families compiled into this build, deduplicated by the engine. The
+  /// picker offers styles, not sizes: naming a family lets the engine choose
+  /// the cut that fills the widget's box.
+  List<FamilyInfo> get families {
+    final count = _b.familyCount();
+    return List<FamilyInfo>.generate(
+      count,
+      (i) => FamilyInfo(
+        _b.familyName(i).toDartString(),
+        _roleFromIndex(_b.familyRole(i)),
+      ),
+      growable: false,
+    );
+  }
 
   List<String> get widgetTypes => List<String>.generate(
         _b.typeCount(),

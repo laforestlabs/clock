@@ -4,21 +4,21 @@
 # Regenerate deliberately after an intended rendering change:
 #   MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test
 #
-# render engine version 3
+# render engine version 4
 
-mini:typical             8c3b0466986db7d7
-mini:cold                9a2edb1b8a5b6bbb
-mini:overflow            443c34d41067eb13
-mini:evening             36e4cd71c6b78dfe
-dual:typical             5d6dcc05fa9d17ec
-dual:cold                9f34bf4c81e2a9af
-dual:overflow            9d52c205d3973b2f
-dual:evening             44797e68c56ac94c
-single:typical           7262533948abeea0
-single:cold              255eb398125fdd2c
-single:overflow          5cb2a56fef11738f
-single:evening           32222e65977d92d7
-quad:typical             9e1d1720a098d085
-quad:cold                edabbc6bfcf7b39f
-quad:overflow            3453539950fc04d4
-quad:evening             d2b16de5066e833e
+mini:typical             73c4d0364a73d78c
+mini:cold                e1e4436397dcc2e7
+mini:overflow            abae887743529dfc
+mini:evening             931165fe60a81be2
+dual:typical             d60f041ae12cff95
+dual:cold                ff4c34ea6076e9e7
+dual:overflow            67d342dcac653afa
+dual:evening             11d27658a21d3264
+single:typical           7477857eb4da73f7
+single:cold              79c1ac99c81927c8
+single:overflow          7ce576ca272497f8
+single:evening           ef7310da17db0293
+quad:typical             2096dc240fdd4948
+quad:cold                41217d1ba2777ceb
+quad:overflow            2864ce734bb5d75d
+quad:evening             29c3405a1d99f1f2

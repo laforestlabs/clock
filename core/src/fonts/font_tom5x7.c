@@ -811,4 +811,6 @@ const ml_font ml_font_tom5x7 = {
     .widths   = s_tom5x7_widths,
     .offsets  = s_tom5x7_offsets,
     .bitmap   = s_tom5x7_bitmap,
+    .family   = "pixel",
+    .smooth   = false,
 };

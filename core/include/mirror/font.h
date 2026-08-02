@@ -48,10 +48,29 @@ typedef struct {
     const uint8_t  *widths;    /* [count] ink width of each glyph */
     const uint16_t *offsets;   /* [count] byte offset of each glyph in bitmap */
     const uint8_t  *bitmap;    /* packed glyph rows */
+    /*
+     * The style this cut belongs to, e.g. "sans" or "digits". A layout that
+     * names a family lets the engine pick the cut that fills the box; naming
+     * an individual cut still pins exactly that cut.
+     */
+    const char     *family;
+    /*
+     * Whether fractional scales anti-alias. Smooth fonts grow a fraction of a
+     * pixel at a time; a font with smooth off is deliberately blocky, and a
+     * box-derived scale floors to a whole-pixel multiple to keep its hard
+     * edges.
+     */
+    bool            smooth;
 } ml_font;
 
 /* Look up a font by name. Returns NULL if not registered. */
 const ml_font *ml_font_find(const char *name);
+
+/*
+ * Whether name is a family with at least one registered cut, and not itself
+ * the name of a cut. An exact cut always wins over a family of the same name.
+ */
+bool           ml_font_is_family(const char *name);
 
 /* The font used when a layout names one that does not exist. Never NULL. */
 const ml_font *ml_font_default(void);
@@ -78,22 +97,32 @@ bool           ml_font_has_glyph(const ml_font *f, unsigned char ch);
 bool           ml_font_covers(const ml_font *f, const char *s);
 
 /*
- * Every call below takes a whole-pixel scale, where each glyph pixel becomes a
- * scale by scale block. That is the only way a bitmap font grows: there is
- * nothing between one pixel and the next to interpolate, which is precisely why
- * the panel and the preview can agree on the result. Pass 1 for unscaled text;
- * anything below 1 is treated as 1.
+ * Scale is fixed-point with 8 fractional bits: ML_SCALE_1X draws unscaled,
+ * 2 * ML_SCALE_1X doubles, and anything in between is a fractional scale.
+ * Anything below ML_SCALE_1X is treated as ML_SCALE_1X.
+ *
+ * A whole multiple of ML_SCALE_1X replicates each glyph pixel into a block,
+ * exactly as bitmap fonts have always grown here. A fractional scale instead
+ * anti-aliases: a source pixel straddling destination pixels inks each in
+ * proportion to the area it covers. The coverage math is exact integer
+ * arithmetic, so the panel and the preview still agree pixel for pixel, but
+ * a box-derived scale can now grow text one panel pixel at a time instead of
+ * jumping between whole multiples.
  */
+#define ML_SCALE_1X 256
 
 /* Advance width of a string in pixels, including inter-glyph gaps. */
-int ml_text_width(const ml_font *f, const char *s, int scale);
+int ml_text_width(const ml_font *f, const char *s, int scale_q8);
+
+/* Height of one line in pixels at this scale. */
+int ml_text_height(const ml_font *f, int scale_q8);
 
 /*
  * Draw text with its top-left corner at (x, y). Returns the advance width.
  * Respects the canvas clip, so callers do not need to pre-truncate.
  */
 int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
-                 const char *s, ml_rgb color, int scale);
+                 const char *s, ml_rgb color, int scale_q8);
 
 /*
  * Draw text truncated to max_w pixels, appending a one-pixel ellipsis marker if
@@ -101,7 +130,7 @@ int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
  * overflow a 64px column.
  */
 int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
-                         int max_w, const char *s, ml_rgb color, int scale);
+                         int max_w, const char *s, ml_rgb color, int scale_q8);
 
 #ifdef __cplusplus
 }

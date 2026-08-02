@@ -164,27 +164,53 @@ The LED toggle switches between the emitter view, discrete discs with dead
 space, and the raw engine bitmap. The bitmap is the reference; the emitter
 view is how the panel actually reads.
 
-Resizing a box does not by itself make the text in it bigger, because a bitmap
-font has no intermediate sizes. Turn on **Fit to box** and it will: the engine
-then picks the largest whole-pixel multiple of the font that fits the height, so
-the widget's text tracks the handle as you drag. **Scale** sets that multiple by
-hand instead. Both are engine fields, so the preview and the panel agree on the
+Resizing a box does not by itself make the text in it bigger: an explicit
+**Scale** pins the text to that whole-pixel multiple. The pin only multiplies
+the glyphs; it never changes which cut is in use. The engine picks the cut
+for the box at 1x and the slider scales that face, so every step of the
+slider draws the same style one multiple larger, clipping at the box edge
+when the text outgrows the room. Turn on **Fit to box** and the box drives
+instead: the engine derives the scale from the box, width and height, and
+between whole multiples the glyphs anti-alias, so the text grows one panel
+pixel at a time as you drag instead of jumping when the box crosses the next
+multiple. Both are engine fields, so the preview and the panel agree on the
 result rather than the designer approximating it.
+
+While you drag, the inspector follows what the engine is actually drawing:
+the Scale readout shows the derived figure as "Scale: 2.4 (fit)" instead of
+the parked slider value, and the Font field names the cut in use under the
+dropdown, "Drawing digits16". Both come from the engine on every refresh, so
+the current state of the selected widget is visible without letting go of the
+handle.
 
 ### Choosing a font
 
-The inspector's **Font** dropdown lists what this build actually ships, read
-from the engine through `ml_sim_font_name` rather than from a list in Dart. So
+The inspector's **Font** dropdown lists font *families*, read from the engine
+rather than from a list in Dart: `sans` and `digits` are smooth faces
+rasterized from Open Sans in many sizes, `pixel` and `pixel-bold` are the
+hand-drawn pixel-art faces, deliberately blocky. Choosing a family chooses a
+style; the engine chooses the size cut that fills the widget's box. A layout
+that names an exact cut (`tom5x7`, `digits16`) still pins it, and the dropdown
+shows such a value even though it is not a family.
+
+A box smaller than the named font steps down to a shorter cut of the same
+family and stops at the family's shortest, clipped, so resizing never changes
+the style, only the size. The search only leaves the family when no cut in it
+can draw the string at all.
+
+The catalogue is sourced from the engine through `ml_sim_family_name`, so
 adding a `.font` to the repository's `fonts/`, running `tools/fontgen.py` and
-rebuilding is all it takes for it to appear here. There is a test for that in
-`test/font_catalogue_test.dart`, because a break in that indirection looks like
-a picker quietly missing an entry rather than like an error.
+rebuilding is all it takes for a new cut to join its family here. Smooth
+families come from `tools/fontraster.py`, which renders a TTF into `.font`
+art at each size. There is a test for the indirection in
+`test/font_catalogue_test.dart`, because a break in it looks like a picker
+quietly missing an entry rather than like an error.
 
 The list includes the clock and icon fonts, which cover only digits or only
 icons. Picking one for a body of text is not prevented, and does not need to
 be: the preview is the real renderer, so the text visibly empties out the
 moment you choose it. The **Icon set** dropdown is filtered separately, to
-fonts at least 8px tall, which keeps the body fonts out of it.
+the icon role, which keeps the body fonts out of it.
 
 Widths differ enough between fonts to change a layout. `bold5x7` is about 30
 percent wider than `tom5x7`, so swapping a widget over can push a line into
@@ -192,16 +218,12 @@ truncation that fitted a moment earlier. Thin strokes are the first thing the
 veneer softens away, so a hairline that reads at zero veneer can vanish at full;
 `bold5x7` is the fallback when `tom5x7` stops holding up.
 
-**Auto font** hands that choice to the engine, which picks whichever font fills
-the box best out of those that can render the string. Drag a clock box wider
-with it on and the face changes, not just the size. It is offered on text,
-clock, date and weather, and withheld from icons, agendas and todos, where the
-engine ignores it. A switch that leaves the preview unchanged is worse than no
-switch.
-
-**Min scale** and **Max scale** bound what Fit may choose, with 0 meaning
-unset. Max scale is the one to reach for when a box is temporarily large while
-you lay a design out and you do not want the text following it all the way.
+**Auto font** hands the size *and* style choice to the engine, which picks
+whichever font fills the box best out of those that can render the string.
+Drag a clock box wider with it on and the face changes, not just the size. It
+is offered on text, clock, date and weather, and withheld from icons, agendas
+and todos, where the engine ignores it. A switch that leaves the preview
+unchanged is worse than no switch.
 
 ## Platform support
 

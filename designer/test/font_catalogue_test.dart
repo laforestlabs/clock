@@ -43,10 +43,32 @@ void main() {
           'digits16',
           'digits32',
           'wx16',
+          'sans9',
+          'sans24',
+          'digits48',
         ]),
         reason: 'the picker reads this list straight from the engine, so a '
             'missing name means the .font never reached the build',
       );
+    });
+
+    test('lists the families the picker offers', () {
+      // The picker sells styles, not sizes: a family stands for its whole
+      // ladder of cuts and the engine picks the cut that fills the box.
+      final names = engine!.families.map((f) => f.name).toList();
+
+      expect(
+        names,
+        containsAll(<String>['sans', 'digits', 'pixel', 'pixel-bold', 'wx']),
+      );
+
+      final roleByName = <String, FontRole>{
+        for (final f in engine!.families) f.name: f.role,
+      };
+      expect(roleByName['sans'], FontRole.text);
+      expect(roleByName['digits'], FontRole.digits);
+      expect(roleByName['pixel'], FontRole.text);
+      expect(roleByName['wx'], FontRole.icons);
     });
 
     test('reports the cell height each font was drawn at', () {
@@ -77,25 +99,18 @@ void main() {
     });
 
     test('the font picker leaves the pictograms out', () {
-      // wx16 maps the ten digits onto weather symbols, so choosing it for a
+      // wx maps the ten digits onto weather symbols, so choosing it for a
       // label swaps the text for pictures. It is an icon set that reuses the
       // glyph machinery, not a typeface anybody would pick from a font menu.
-      final fonts = engine!.fonts
+      final families = engine!.families
           .where((f) => f.drawsText)
           .map((f) => f.name)
           .toList();
 
-      expect(fonts, isNot(contains('wx16')));
+      expect(families, isNot(contains('wx')));
       expect(
-        fonts,
-        containsAll(<String>[
-          'tiny4x6',
-          'bold5x7',
-          'tom5x7',
-          'digits10',
-          'digits16',
-          'digits32',
-        ]),
+        families,
+        containsAll(<String>['sans', 'digits', 'pixel', 'pixel-bold']),
         reason: 'a clock face is still a legitimate choice for a clock',
       );
     });
@@ -103,19 +118,16 @@ void main() {
     test('the icon picker offers icon sets and nothing else', () {
       // Both pickers filter on the declared role. Height used to stand in for
       // it, which offered the clock faces as icon sets: an icon is indexed by
-      // digit, so digits32 was accepted and drew the numeral, not the icon.
-      final iconSets = engine!.fonts
+      // digit, so a digits cut was accepted and drew the numeral, not the icon.
+      final iconSets = engine!.families
           .where((f) => f.isIconSet)
           .map((f) => f.name)
           .toList();
 
-      expect(iconSets, contains('wx16'));
-      expect(iconSets, isNot(contains('digits10')));
-      expect(iconSets, isNot(contains('digits16')));
-      expect(iconSets, isNot(contains('digits32')));
-      expect(iconSets, isNot(contains('tom5x7')));
-      expect(iconSets, isNot(contains('bold5x7')));
-      expect(iconSets, isNot(contains('tiny4x6')));
+      expect(iconSets, contains('wx'));
+      expect(iconSets, isNot(contains('digits')));
+      expect(iconSets, isNot(contains('sans')));
+      expect(iconSets, isNot(contains('pixel')));
     });
   }, skip: skip);
 }

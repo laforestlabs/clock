@@ -8,8 +8,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../controller.dart';
+import '../engine/engine.dart';
 import '../model/field_schema.dart';
 import '../model/layout.dart';
+
+/// A glyph scale for display: whole multiples without a decimal point, the
+/// fractions Fit derives with one.
+String _formatScale(double s) =>
+    s == s.roundToDouble() ? '${s.round()}' : s.toStringAsFixed(1);
 
 class InspectorPanel extends StatelessWidget {
   const InspectorPanel({super.key, required this.controller});
@@ -187,6 +193,15 @@ class _Field extends StatelessWidget {
   final LayoutWidget widget;
   final FieldSpec spec;
 
+  /// What the engine resolves for this widget against the current mock data:
+  /// the font cut a family or Auto font lands on, and the scale Fit derives
+  /// from the box. Null when the engine has not placed the widget.
+  WidgetInfo? get _drawn {
+    final i = controller.selected;
+    final infos = controller.widgetInfo;
+    return (i >= 0 && i < infos.length) ? infos[i] : null;
+  }
+
   @override
   Widget build(BuildContext context) {
     switch (spec.kind) {
@@ -217,14 +232,25 @@ class _Field extends StatelessWidget {
         );
 
       case FieldKind.font:
+        final drawn = _drawn?.font ?? '';
         return _Dropdown(
           label: spec.label,
           value: widget.getString(spec.key),
-          // Icon sets are excluded. They are fonts only in the sense that they
-          // reuse the glyph machinery: wx16 maps the digits onto weather
-          // pictograms, so picking it for a label replaces the text with
-          // symbols. Nobody reaches for that on purpose from a font menu.
-          options: controller.engine.fonts
+          // The cut the engine actually draws with, shown when the configured
+          // value leaves the choice to the engine: a family names a style, not
+          // a size, and Auto font shops further. Suppressed when they agree,
+          // where it would only repeat the dropdown.
+          help: drawn.isNotEmpty && drawn != widget.getString(spec.key)
+              ? 'Drawing $drawn'
+              : null,
+          // Families, not cuts: choosing a style is the user's call, choosing
+          // a size is the engine's. Icon sets are excluded. They are fonts
+          // only in the sense that they reuse the glyph machinery: wx maps
+          // the digits onto weather pictograms, so picking it for a label
+          // replaces the text with symbols. Nobody reaches for that on
+          // purpose from a font menu. A layout naming an exact cut still
+          // shows it, via _Dropdown's handling of unlisted values.
+          options: controller.engine.families
               .where((f) => f.drawsText)
               .map((f) => f.name)
               .toList(growable: false),
@@ -233,14 +259,19 @@ class _Field extends StatelessWidget {
         );
 
       case FieldKind.iconSet:
+        final drawnIcon = _drawn?.font ?? '';
         return _Dropdown(
           label: spec.label,
           value: widget.getString(spec.key),
+          help: drawnIcon.isNotEmpty && drawnIcon != widget.getString(spec.key)
+              ? 'Drawing $drawnIcon'
+              : null,
           // Icon sets are fonts, so the same catalogue serves both, filtered by
           // the declared role. Height used to stand in for this, which offered
-          // the clock faces as icon sets: an icon is indexed by digit, so
-          // digits32 was a valid pick that drew the numeral instead of the icon.
-          options: controller.engine.fonts
+          // the clock faces as icon sets: an icon is indexed by digit, so a
+          // digits cut was a valid pick that drew the numeral instead of the
+          // icon.
+          options: controller.engine.families
               .where((f) => f.isIconSet)
               .map((f) => f.name)
               .toList(growable: false),
@@ -280,11 +311,18 @@ class _Field extends StatelessWidget {
         );
 
       case FieldKind.integer:
+        // With Fit on, the pinned scale is parked and the box decides. Show
+        // the figure the engine is actually drawing at, which is what moves
+        // while a resize drag grows or shrinks the box.
+        final fitScale = spec.key == 'scale' && widget.getBool('fit') == true
+            ? _drawn?.scale
+            : null;
         return _IntField(
           label: spec.label,
           value: widget.getInt(spec.key),
           min: spec.min ?? 0,
           max: spec.max ?? 99,
+          effective: fitScale != null && fitScale > 0 ? fitScale : null,
           onChanged: (v) =>
               controller.updateSelected((w) => w.setInt(spec.key, v)),
         );
@@ -355,6 +393,7 @@ class _IntField extends StatelessWidget {
     required this.min,
     required this.max,
     required this.onChanged,
+    this.effective,
   });
 
   final String label;
@@ -363,13 +402,21 @@ class _IntField extends StatelessWidget {
   final int max;
   final ValueChanged<int> onChanged;
 
+  /// What the engine actually draws at when the slider's value is parked:
+  /// Fit derives the scale from the box, so the live figure is what matters.
+  final double? effective;
+
   @override
   Widget build(BuildContext context) {
     final current = (value ?? min).clamp(min, max);
+    final eff = effective;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('$label: $current', style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          eff != null ? '$label: ${_formatScale(eff)} (fit)' : '$label: $current',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         Slider(
           value: current.toDouble(),
           min: min.toDouble(),
@@ -389,12 +436,14 @@ class _Dropdown extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.help,
   });
 
   final String label;
   final String? value;
   final List<String> options;
   final ValueChanged<String?> onChanged;
+  final String? help;
 
   @override
   Widget build(BuildContext context) {
@@ -410,6 +459,7 @@ class _Dropdown extends StatelessWidget {
       isExpanded: true,
       decoration: InputDecoration(
         labelText: label,
+        helperText: help,
         isDense: true,
         border: const OutlineInputBorder(),
       ),

@@ -138,6 +138,24 @@ const char *ml_sim_widget_id(const ml_sim *s, int index)
     return s->layout.widgets[index].id;
 }
 
+static const ml_font *resolve_widget(const ml_sim *s, int index, int *scale_q8)
+{
+    if (!s || index < 0 || index >= s->layout.count) return NULL;
+    return ml_widget_resolve_font(&s->layout.widgets[index], &s->model, scale_q8);
+}
+
+const char *ml_sim_widget_font(const ml_sim *s, int index)
+{
+    const ml_font *f = resolve_widget(s, index, NULL);
+    return f ? f->name : k_empty;
+}
+
+int ml_sim_widget_scale(const ml_sim *s, int index)
+{
+    int sc = 0;
+    return resolve_widget(s, index, &sc) ? sc : 0;
+}
+
 int ml_sim_hit_test(const ml_sim *s, int x, int y)
 {
     if (!s) return -1;
@@ -275,6 +293,44 @@ int ml_sim_font_role(int index)
 {
     const ml_font *f = ml_font_at(index);
     /* A bad index reads as text, the role that grants no special treatment. */
+    return f ? (int)f->role : (int)ML_FONT_TEXT;
+}
+
+/* The first cut of each family, in first-appearance order, or NULL. */
+static const ml_font *family_at(int index)
+{
+    int count = 0;
+    for (int i = 0; i < ml_font_count(); i++) {
+        const ml_font *f = ml_font_at(i);
+        bool seen = false;
+        for (int j = 0; j < i; j++) {
+            if (strcmp(ml_font_at(j)->family, f->family) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (count++ == index) return f;
+    }
+    return NULL;
+}
+
+int ml_sim_family_count(void)
+{
+    int count = 0;
+    while (family_at(count)) count++;
+    return count;
+}
+
+const char *ml_sim_family_name(int index)
+{
+    const ml_font *f = family_at(index);
+    return f ? f->family : k_empty;
+}
+
+int ml_sim_family_role(int index)
+{
+    const ml_font *f = family_at(index);
     return f ? (int)f->role : (int)ML_FONT_TEXT;
 }
 

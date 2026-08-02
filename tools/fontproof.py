@@ -29,19 +29,32 @@ def load(name: str) -> tuple[dict[int, list[str]], int, int]:
 
     glyphs: dict[int, list[str]] = {}
     height = gap = 0
+    pending: int | None = None
     for raw in path.read_text().splitlines():
         line = raw.strip()
+        if line.startswith("|"):
+            if pending is not None:
+                glyphs.setdefault(pending, []).append(line.strip("|"))
+            continue
         if not line or line.startswith("#"):
+            pending = None
             continue
         if line.startswith("@"):
+            pending = None
             key, _, value = line[1:].partition(" ")
             if key == "height":
                 height = int(value)
             elif key == "gap":
                 gap = int(value)
             continue
-        cp, rows = line.split(None, 1)
-        glyphs[int(cp, 0)] = rows.split("/")
+        parts = line.split(None, 1)
+        cp = int(parts[0], 0)
+        if len(parts) == 1:
+            pending = cp
+            glyphs[cp] = []
+        else:
+            pending = None
+            glyphs[cp] = parts[1].split("/")
     return glyphs, height, gap
 
 
