@@ -26,9 +26,17 @@ typedef struct {
 } game_entry;
 
 extern const ml_game_vt ml_game_rally;
+extern const ml_game_vt ml_game_snake;
+extern const ml_game_vt ml_game_tetris;
+extern const ml_game_vt ml_game_breakout;
+extern const ml_game_vt ml_game_invaders;
 
 static const game_entry k_games[] = {
-    { "rally", "Rally", &ml_game_rally },
+    { "rally",    "Rally",    &ml_game_rally },
+    { "snake",    "Snake",    &ml_game_snake },
+    { "tetris",   "Tetris",   &ml_game_tetris },
+    { "breakout", "Breakout", &ml_game_breakout },
+    { "invaders", "Invaders", &ml_game_invaders },
 };
 #define GAME_COUNT ((int)(sizeof(k_games) / sizeof(k_games[0])))
 

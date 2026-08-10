@@ -95,6 +95,10 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_GAMEKIT}/src/runtime.c"
     "${MIRROR_GAMEKIT}/src/net_loopback.c"
     "${MIRROR_GAMEKIT}/examples/rally/game_rally.c"
+    "${MIRROR_GAMEKIT}/examples/snake/game_snake.c"
+    "${MIRROR_GAMEKIT}/examples/tetris/game_tetris.c"
+    "${MIRROR_GAMEKIT}/examples/breakout/game_breakout.c"
+    "${MIRROR_GAMEKIT}/examples/invaders/game_invaders.c"
     "${MIRROR_GAMEKIT}/ffi/game_ffi.c"
 )
 

@@ -18,10 +18,18 @@
 #include "png_write.h"
 
 extern const ml_game_vt ml_game_rally;
+extern const ml_game_vt ml_game_snake;
+extern const ml_game_vt ml_game_tetris;
+extern const ml_game_vt ml_game_breakout;
+extern const ml_game_vt ml_game_invaders;
 
 static const ml_game_vt *find_game(const char *name)
 {
-    if (!strcmp(name, "rally")) return &ml_game_rally;
+    if (!strcmp(name, "rally"))    return &ml_game_rally;
+    if (!strcmp(name, "snake"))    return &ml_game_snake;
+    if (!strcmp(name, "tetris"))   return &ml_game_tetris;
+    if (!strcmp(name, "breakout")) return &ml_game_breakout;
+    if (!strcmp(name, "invaders")) return &ml_game_invaders;
     return NULL;
 }
 
@@ -32,7 +40,7 @@ static void usage(const char *argv0)
         "\n"
         "Usage: %s <game> [options]\n"
         "\n"
-        "Games: rally\n"
+        "Games: rally, snake, tetris, breakout, invaders\n"
         "\n"
         "Options:\n"
         "  --panel WxH       Panel size (default 64x32)\n"
@@ -64,6 +72,46 @@ static const step DEMO[] = {
 };
 #define DEMO_LEN ((int)(sizeof(DEMO) / sizeof(DEMO[0])))
 
+/* Snake demo: a U-shaped tour of a 64x32 board, deterministic from the seed.
+ * The snake starts centre-heading-right; turns land on the step after each
+ * press (one move per w/16 ticks, so ticks 0,4,8,..). Codes: 0 Up, 1 Down,
+ * 2 Left, 3 Right. */
+static const step SNAKE_DEMO[] = {
+    { 2,  1, 1, 1 }, { 3,  1, 1, 0 },   /* down */
+    { 30, 1, 3, 1 }, { 31, 1, 3, 0 },   /* right */
+    { 58, 1, 0, 1 }, { 59, 1, 0, 0 },   /* up */
+    { 74, 1, 2, 1 }, { 75, 1, 2, 0 },   /* left */
+};
+#define SNAKE_DEMO_LEN ((int)(sizeof(SNAKE_DEMO) / sizeof(SNAKE_DEMO[0])))
+
+/* Tetris demo: nudge right, rotate, nudge left, hard-drop. Codes: 0 Up
+ * (rotate), 1 Down (hard drop), 2 Left, 3 Right. */
+static const step TETRIS_DEMO[] = {
+    { 4,  1, 3, 1 }, { 5,  1, 3, 0 },   /* right */
+    { 24, 1, 0, 1 }, { 25, 1, 0, 0 },   /* rotate */
+    { 44, 1, 2, 1 }, { 45, 1, 2, 0 },   /* left */
+    { 64, 1, 1, 1 }, { 65, 1, 1, 0 },   /* hard drop */
+};
+#define TETRIS_DEMO_LEN ((int)(sizeof(TETRIS_DEMO) / sizeof(TETRIS_DEMO[0])))
+
+/* Breakout demo: paddle left, then right, while the ball bounces. Codes:
+ * 0 Left, 1 Right. */
+static const step BREAKOUT_DEMO[] = {
+    { 4,  1, 0, 1 }, { 24, 1, 0, 0 },
+    { 36, 1, 1, 1 }, { 76, 1, 1, 0 },
+};
+#define BREAKOUT_DEMO_LEN ((int)(sizeof(BREAKOUT_DEMO) / sizeof(BREAKOUT_DEMO[0])))
+
+/* Invaders demo: sweep right, shoot, sweep left, shoot. Codes: 0 Left,
+ * 1 Right, 2 Shoot. */
+static const step INVADERS_DEMO[] = {
+    { 2,  1, 1, 1 }, { 10, 1, 2, 1 }, { 11, 1, 2, 0 },
+    { 30, 1, 2, 1 }, { 31, 1, 2, 0 }, { 40, 1, 1, 0 },
+    { 42, 1, 0, 1 }, { 50, 1, 2, 1 }, { 51, 1, 2, 0 },
+    { 70, 1, 2, 1 }, { 71, 1, 2, 0 }, { 80, 1, 0, 0 },
+};
+#define INVADERS_DEMO_LEN ((int)(sizeof(INVADERS_DEMO) / sizeof(INVADERS_DEMO[0])))
+
 static void print_ascii(const uint8_t *rgb, int w, int h)
 {
     for (int y = 0; y < h; y++) {
@@ -84,18 +132,25 @@ static uint32_t fnv1a(const uint8_t *p, size_t n)
     return h;
 }
 
-static void feed_demo(ml_host_session *h, ml_net **ctrl, int players, uint32_t tick)
+static void feed_demo(const ml_game_vt *g, ml_host_session *h, ml_net **ctrl,
+                      int players, uint32_t tick)
 {
+    const step *demo = DEMO;
+    int n = DEMO_LEN;
+    if (!strcmp(g->id, "snake"))    { demo = SNAKE_DEMO;    n = SNAKE_DEMO_LEN; }
+    else if (!strcmp(g->id, "tetris"))   { demo = TETRIS_DEMO;    n = TETRIS_DEMO_LEN; }
+    else if (!strcmp(g->id, "breakout")) { demo = BREAKOUT_DEMO;  n = BREAKOUT_DEMO_LEN; }
+    else if (!strcmp(g->id, "invaders")) { demo = INVADERS_DEMO;  n = INVADERS_DEMO_LEN; }
     uint16_t seq = 0;
-    for (int i = 0; i < DEMO_LEN; i++) {
-        if (DEMO[i].tick != tick) continue;
-        int idx = DEMO[i].pid - 1;
+    for (int i = 0; i < n; i++) {
+        if (demo[i].tick != tick) continue;
+        int idx = demo[i].pid - 1;
         if (idx < 0 || idx >= players) continue;
         ml_input_event e;
         memset(&e, 0, sizeof(e));
-        e.player_id = DEMO[i].pid;
-        e.code = DEMO[i].code;
-        e.value = DEMO[i].value;
+        e.player_id = demo[i].pid;
+        e.code = demo[i].code;
+        e.value = demo[i].value;
         e.type = ML_INPUT_BUTTON;
         e.seq = seq++;
         e.tick = tick;
@@ -131,7 +186,7 @@ static int render_frame(const ml_game_vt *g, int w, int h, int scale, bool led,
 
     uint32_t tick_ms = g->tick_ms ? g->tick_ms : 33;
     for (int t = 0; t < frames; t++) {
-        feed_demo(hs, ctrl, players, (uint32_t)t);
+        feed_demo(g, hs, ctrl, players, (uint32_t)t);
         ml_host_step(hs, tick_ms);
     }
     if (record_path) ml_host_journal_finalize(hs);
@@ -183,7 +238,7 @@ static int run_peer(int w, int h, int scale, bool led, int mirror_pct,
 
     uint32_t tick_ms = g->tick_ms ? g->tick_ms : 33;
     for (int t = 0; t < 90; t++) {
-        feed_demo(hs, ctrl, players, (uint32_t)t);
+        feed_demo(g, hs, ctrl, players, (uint32_t)t);
         ml_host_step(hs, tick_ms);
         ml_peer_step(peer, tick_ms);
     }

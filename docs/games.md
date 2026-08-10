@@ -324,6 +324,10 @@ gamekit/
     game_cli.c    run a game: PNG/ASCII frames, size sweep, replay, N clients
   examples/
     rally/        a two-player paddle game that adapts to any panel size
+    snake/        a one-player snake with a d-pad and a growing body
+    tetris/       falling blocks: rotate and drop, on a capped field
+    breakout/     a paddle, a ball and a wall of bricks, two buttons
+    invaders/     a cannon vs an alien wall that shoots back
 ```
 
 ### `game-cli`

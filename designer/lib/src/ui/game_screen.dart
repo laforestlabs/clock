@@ -9,11 +9,11 @@
 // DesignerController: changing them here changes the layout preview too, and
 // vice versa. They are display-layer settings, not game state.
 //
-// Controls: arrow Up/Down (or W/S) move the left paddle, touch the top or
-// bottom of the panel to move it on a phone.
+// Controls: arrow keys / WASD drive the game's direction controls (Up/Down for
+// rally, a full d-pad for snake and tetris, Left/Right for breakout and
+// invaders), Space fires where a game has a Shoot control and restarts
+// otherwise, touch steers on a phone.
 
-import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -22,6 +22,9 @@ import 'package:flutter/services.dart';
 
 import '../controller.dart';
 import '../engine/game_engine.dart';
+
+/// How a touch on the panel maps to the running game's controls.
+enum _TouchMode { vertical, horizontal, compass }
 
 /// A game running on a simulated panel.
 class GameScreen extends StatefulWidget {
@@ -56,9 +59,10 @@ class _GameScreenState extends State<GameScreen>
   int _players = 1;
   bool _running = false;
 
-  // Held key state for continuous paddle motion.
-  bool _upHeld = false;
-  bool _downHeld = false;
+  // Held key/touch state per control, sized when a game starts. The screen
+  // feeds the full held state every frame, exactly like a controller client
+  // would, so holding a key keeps the game moving.
+  List<bool> _held = const <bool>[];
 
   List<GameInfo> _games = const <GameInfo>[];
   int _gameIndex = 0;
@@ -96,8 +100,7 @@ class _GameScreenState extends State<GameScreen>
       _running = true;
       _image = null;
       _frame = null;
-      _upHeld = false;
-      _downHeld = false;
+      _held = List<bool>.filled(game.controls.length, false);
     });
     _ticker.start();
     // Critical: reclaim focus after the Play button was tapped, so the Focus
@@ -120,13 +123,13 @@ class _GameScreenState extends State<GameScreen>
         : elapsed - _lastTime;
     _lastTime = elapsed;
 
-    // Feed held key state every frame so motion continues while held.
+    // Feed held state every frame so motion continues while held. The full
+    // held state is delivered each frame (every control, pressed or not),
+    // which is the contract the runtime's held-input tests pin down.
     final game = _games[_gameIndex];
     for (var i = 0; i < game.controls.length; i++) {
-      if (i < 2) {
-        final pressed = (i == 0) ? _upHeld : _downHeld;
-        engine.button(playerId: 1, code: i, value: pressed ? 1 : 0);
-      }
+      final held = i < _held.length && _held[i];
+      engine.button(playerId: 1, code: i, value: held ? 1 : 0);
     }
 
     final ms = dt.inMilliseconds.clamp(1, 100);
@@ -159,18 +162,29 @@ class _GameScreenState extends State<GameScreen>
       return KeyEventResult.ignored;
     }
     final pressed = event is! KeyUpEvent;
+
+    // Space fires the game's Shoot control when it has one, and starts the
+    // game otherwise.
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      final shoot = _controlIndexForLabel('Shoot');
+      if (shoot != null) {
+        if (shoot < _held.length) _held[shoot] = pressed;
+      } else if (pressed) {
+        _startGame();
+      }
+      return KeyEventResult.handled;
+    }
+
+    // Direction keys map to the game's controls by label, so rally (Up/Down)
+    // and snake (Up/Down/Left/Right) share one handler and a game that
+    // reorders its controls keeps working.
+    final control = _controlIndexFor(event.logicalKey);
+    if (control != null) {
+      if (control < _held.length) _held[control] = pressed;
+      return KeyEventResult.handled;
+    }
+
     switch (event.logicalKey) {
-      case LogicalKeyboardKey.arrowUp:
-      case LogicalKeyboardKey.keyW:
-        _upHeld = pressed;
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowDown:
-      case LogicalKeyboardKey.keyS:
-        _downHeld = pressed;
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.space:
-        if (pressed) _startGame();
-        return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
         if (pressed) _stopGame();
         return KeyEventResult.handled;
@@ -241,7 +255,15 @@ class _GameScreenState extends State<GameScreen>
                     child: Text(_games[i].name),
                   ),
               ],
-              onChanged: _running ? null : (v) => setState(() => _gameIndex = v!),
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() {
+                        _gameIndex = v!;
+                        // A game may cap players below the previous selection.
+                        if (_players > _games[_gameIndex].maxPlayers) {
+                          _players = _games[_gameIndex].maxPlayers;
+                        }
+                      }),
             ),
           ),
           ExcludeFocus(
@@ -264,7 +286,7 @@ class _GameScreenState extends State<GameScreen>
             child: DropdownButton<int>(
               value: _players,
               items: [
-                for (final p in <int>[1, 2])
+                for (var p = 1; p <= _games[_gameIndex].maxPlayers; p++)
                   DropdownMenuItem(
                     value: p,
                     child: Text('$p player${p > 1 ? "s" : ""}'),
@@ -317,8 +339,8 @@ class _GameScreenState extends State<GameScreen>
             SizedBox(height: 16),
             Text(
               'Press Play or Space to start.\n'
-              'Arrow keys / W,S move the paddle.\n'
-              'Touch the top or bottom on a phone.',
+              'Arrow keys / WASD move or steer, Space fires.\n'
+              'Touch the panel to move on a phone.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
@@ -373,22 +395,96 @@ class _GameScreenState extends State<GameScreen>
 
   void _handleTouch(Offset local, bool pressed, Size renderSize) {
     final midY = renderSize.height / 2;
+    final midX = renderSize.width / 2;
     setState(() {
-      if (local.dy < midY) {
-        _upHeld = pressed;
-        _downHeld = false;
-      } else {
-        _downHeld = pressed;
-        _upHeld = false;
+      switch (_touchMode()) {
+        case _TouchMode.compass:
+          // A d-pad compass on the panel: top-left Up, top-right Right,
+          // bottom-right Down, bottom-left Left.
+          final String label;
+          if (local.dy < midY) {
+            label = local.dx < midX ? 'Up' : 'Right';
+          } else {
+            label = local.dx < midX ? 'Left' : 'Down';
+          }
+          for (final d in const <String>['Up', 'Down', 'Left', 'Right']) {
+            _setHeld(d, d == label ? pressed : false);
+          }
+          break;
+        case _TouchMode.horizontal:
+          // Left and right halves of the panel steer (breakout, invaders).
+          _setHeld('Left', local.dx < midX ? pressed : false);
+          _setHeld('Right', local.dx >= midX ? pressed : false);
+          break;
+        case _TouchMode.vertical:
+          // Top and bottom halves move up and down (rally).
+          _setHeld('Up', local.dy < midY ? pressed : false);
+          _setHeld('Down', local.dy >= midY ? pressed : false);
+          break;
       }
     });
   }
 
   void _releaseAll() {
     setState(() {
-      _upHeld = false;
-      _downHeld = false;
+      for (var i = 0; i < _held.length; i++) {
+        _held[i] = false;
+      }
     });
+  }
+
+  /// How touch on the panel maps to the running game's controls.
+  _TouchMode _touchMode() {
+    final controls = _games[_gameIndex].controls;
+    final hasUp = controls.contains('Up');
+    final hasDown = controls.contains('Down');
+    final hasLeft = controls.contains('Left');
+    final hasRight = controls.contains('Right');
+    if (hasUp && hasDown && hasLeft && hasRight) return _TouchMode.compass;
+    if (hasLeft && hasRight) return _TouchMode.horizontal;
+    return _TouchMode.vertical;
+  }
+
+  /// Set the held state of the control labelled [label], if the game has one.
+  void _setHeld(String label, bool value) {
+    final controls = _games[_gameIndex].controls;
+    for (var i = 0; i < controls.length && i < _held.length; i++) {
+      if (controls[i] == label) {
+        _held[i] = value;
+        return;
+      }
+    }
+  }
+
+  /// Map a key to the index of the control it drives, by control label.
+  /// Not const: LogicalKeyboardKey overrides ==/hashCode, which a const map
+  /// key cannot do.
+  static final Map<LogicalKeyboardKey, String> _keyLabels =
+      <LogicalKeyboardKey, String>{
+    LogicalKeyboardKey.arrowUp: 'Up',
+    LogicalKeyboardKey.keyW: 'Up',
+    LogicalKeyboardKey.arrowDown: 'Down',
+    LogicalKeyboardKey.keyS: 'Down',
+    LogicalKeyboardKey.arrowLeft: 'Left',
+    LogicalKeyboardKey.keyA: 'Left',
+    LogicalKeyboardKey.arrowRight: 'Right',
+    LogicalKeyboardKey.keyD: 'Right',
+  };
+
+  /// Map a control label to its index, or null when the game has no such
+  /// control.
+  int? _controlIndexForLabel(String label) {
+    final controls = _games[_gameIndex].controls;
+    for (var i = 0; i < controls.length; i++) {
+      if (controls[i] == label) return i;
+    }
+    return null;
+  }
+
+  int? _controlIndexFor(LogicalKeyboardKey key) {
+    final label = _keyLabels[key];
+    if (label == null) return null;
+    return _controlIndexForLabel(label);
   }
 }
 

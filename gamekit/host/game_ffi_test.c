@@ -33,6 +33,58 @@ static void ascii(const uint8_t *rgb, int w, int h)
     }
 }
 
+/* One deterministic pass of a single-player game through the exact FFI calls
+ * Dart makes: open, a few button presses per game, step, render. Returns the
+ * frame hash, 0 on failure. Each game gets its own small input script so the
+ * input path is exercised, not just the tick loop. */
+static uint32_t run_game(const char *id, uint32_t seed)
+{
+    ml_game_session *s = ml_game_open(id, 64, 32, seed, 1);
+    if (!s) return 0;
+
+    if (!strcmp(id, "snake")) {
+        ml_game_button(s, 1, 1, 1);  /* Down */
+        for (int t = 0; t < 20; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 1, 0);
+        ml_game_button(s, 1, 3, 1);  /* Right */
+        for (int t = 0; t < 30; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 3, 0);
+        for (int t = 0; t < 40; t++) ml_game_step(s, 33);
+    } else if (!strcmp(id, "tetris")) {
+        ml_game_button(s, 1, 3, 1);  /* Right */
+        for (int t = 0; t < 30; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 3, 0);
+        ml_game_button(s, 1, 0, 1);  /* Up: rotate */
+        for (int t = 0; t < 10; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 0, 0);
+        ml_game_button(s, 1, 1, 1);  /* Down: hard drop */
+        for (int t = 0; t < 50; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 1, 0);
+    } else if (!strcmp(id, "breakout")) {
+        ml_game_button(s, 1, 0, 1);  /* Left */
+        for (int t = 0; t < 40; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 0, 0);
+        ml_game_button(s, 1, 1, 1);  /* Right */
+        for (int t = 0; t < 50; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 1, 0);
+    } else if (!strcmp(id, "invaders")) {
+        ml_game_button(s, 1, 1, 1);  /* Right */
+        for (int t = 0; t < 30; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 1, 0);
+        ml_game_button(s, 1, 2, 1);  /* Shoot */
+        for (int t = 0; t < 5; t++) ml_game_step(s, 33);
+        ml_game_button(s, 1, 2, 0);
+        for (int t = 0; t < 55; t++) ml_game_step(s, 33);
+    } else {
+        for (int t = 0; t < 90; t++) ml_game_step(s, 33);
+    }
+
+    const uint8_t *rgba = ml_game_render_rgba(s);
+    uint32_t h = rgba ? fnv1a(rgba, (size_t)ml_game_rgba_size(s)) : 0;
+    ml_game_close(s);
+    return h;
+}
+
 int main(void)
 {
     int ngames = ml_game_count();
@@ -75,6 +127,19 @@ int main(void)
     ascii(rgba, ml_game_width(s), ml_game_height(s));
 
     ml_game_close(s);
+
+    /* Every single-player game: run the identical seed and input stream into
+     * two sessions and require the same frame hash, the framework's
+     * determinism promise exercised through the same FFI calls Dart makes. */
+    static const char *GAMES[] = { "snake", "tetris", "breakout", "invaders" };
+    for (size_t i = 0; i < sizeof(GAMES) / sizeof(GAMES[0]); i++) {
+        uint32_t a = run_game(GAMES[i], 7);
+        uint32_t b = run_game(GAMES[i], 7);
+        printf("%-9s 64x32 frame hash: %08x (x2 determinism: %s)\n",
+               GAMES[i], a, a == b && a != 0 ? "MATCH" : "MISMATCH");
+        if (a == 0 || a != b) { printf("FAIL\n"); return 1; }
+    }
+
     printf("OK\n");
     return 0;
 }
