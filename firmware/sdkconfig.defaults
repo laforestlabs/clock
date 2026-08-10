@@ -33,8 +33,10 @@ CONFIG_FREERTOS_HZ=1000
 # Linear here means "do not touch what we send you".
 CONFIG_HUB75_GAMMA_LINEAR=y
 
-# The S3 has native USB, so no serial adapter is needed to flash or monitor.
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# The Freenove FNK0085 routes its USB-C through the onboard CH343 to UART0
+# (GPIO43/44), so the console lives there. The stock DevKitC-1 used the native
+# USB-Serial-JTAG instead, which this board does not expose on the connector.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 
 # The render task briefly holds the CPU while blitting a full frame.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
@@ -46,3 +48,10 @@ CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
 
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# The station connects with WPA2-PSK. WPA3 SAE is deliberately disabled: the
+# driver's SAE negotiation is flaky against WPA2/WPA3 transition-mode routers
+# (authentication rejected, reason 2), which are the norm now, while
+# transition-mode networks still connect fine over their WPA2 half. The cost
+# is that WPA3-only networks are unsupported, which is rare in homes.
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n

@@ -34,7 +34,8 @@ idf.py -C firmware menuconfig      # Smart Mirror menu: setup portal, timezone, 
 idf.py -C firmware flash monitor
 ```
 
-The S3 has native USB, so no serial adapter is needed. `sdkconfig` is
+This board's USB-C routes through its onboard CH343 to UART0, so flashing and
+the serial console need no external adapter. `sdkconfig` is
 gitignored; the only things it holds are choices like the timezone and the
 shift-register driver.
 
@@ -59,7 +60,7 @@ What happens when the saved network stops working:
 | Nothing saved yet | Setup access point from the first boot |
 | Wrong password or SSID | The portal opens as soon as the failure reason is known |
 | Network unreachable at boot | The mirror tries for `MIRROR_CONNECT_TIMEOUT_S` (default 30 s), then opens the portal |
-| Network comes back while the portal is open | The mirror rejoins by itself and the portal closes |
+| Network comes back while the portal is open | Nothing happens until the owner submits credentials; the station stays idle so the portal's scans stay clean |
 | Network drops after a successful join | The mirror retries in the background with backoff; the portal does not reopen. Power-cycle the mirror to force re-provisioning |
 
 The page also offers "Forget saved network", for handing the device over or
@@ -67,6 +68,10 @@ moving house.
 
 Two things worth knowing before shipping this:
 
+- The station connects with **WPA2-PSK only**. WPA3 SAE is disabled in
+  `sdkconfig.defaults`: the driver's SAE negotiation is flaky against
+  WPA2/WPA3 transition-mode routers, so transition networks connect over
+  their WPA2 half and WPA3-only networks are unsupported.
 - The setup access point is **open by default** (`MIRROR_AP_PASSWORD` empty)
   and the portal is plain HTTP. For a deployed product, set a WPA2 password
   in menuconfig and print it on the device: on an open setup network, anyone

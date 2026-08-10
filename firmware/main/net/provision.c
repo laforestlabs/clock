@@ -6,9 +6,9 @@
  *   no saved credentials  -> setup access point and portal from the first boot
  *   saved, reachable      -> join the home network, portal never opens
  *   saved, unreachable    -> try for MIRROR_CONNECT_TIMEOUT_S, then open the
- *                            portal; keep retrying the saved network in the
- *                            background so the mirror rejoins by itself when
- *                            the network comes back
+ *                            portal; the station stays idle until the owner
+ *                            submits credentials, so the portal's scans are
+ *                            never fought by a background connect attempt
  *   new credentials saved -> reconnect immediately; a wrong password or a
  *                            missing network is reported on the page
  *
@@ -69,8 +69,21 @@ static esp_timer_handle_t s_watchdog;
 static esp_timer_handle_t s_teardown;
 static SemaphoreHandle_t s_lock;
 
+/* Networks seen by the last scan, strongest first. Guarded by s_lock. */
+#define MAX_SCAN_RESULTS 24
+typedef struct {
+    char   ssid[33];
+    int8_t rssi;
+    bool   open;
+} scan_entry_t;
+static scan_entry_t s_scan_results[MAX_SCAN_RESULTS];
+static int  s_scan_count = 0;
+static bool s_scanning = false;
+static bool s_scan_handler_registered = false;
+
 static void portal_start(void);
 static void dns_stop(void);
+static void scan_start(void);
 
 /* state */
 
@@ -164,6 +177,7 @@ static bool reason_is_terminal(int reason)
     case WIFI_REASON_AUTH_FAIL:              /* 202 */
     case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: /* 15, almost always wrong pass */
     case WIFI_REASON_NO_AP_FOUND:            /* 201 */
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY: /* 210 */
         return true;
     default:
         return false;
@@ -178,8 +192,13 @@ static const char *reason_string(int reason)
         return "wrong password";
     case WIFI_REASON_NO_AP_FOUND:
         return "network not found";
-    default:
-        return "could not connect";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+        return "incompatible network security";
+    default: {
+        static char buf[40];
+        snprintf(buf, sizeof(buf), "could not connect (reason %d)", reason);
+        return buf;
+    }
     }
 }
 
@@ -257,6 +276,7 @@ static void on_teardown(void *arg)
         s_httpd = NULL;
     }
     esp_wifi_set_mode(WIFI_MODE_STA);
+    wifi_set_autoreconnect(true);   /* normal operation: reconnect on drops */
     lock_state();
     s_portal_active = false;
     unlock_state();
@@ -268,62 +288,144 @@ static void on_teardown(void *arg)
 
 static const char PORTAL_PAGE[] =
     "<!doctype html>"
-    "<html><head><meta charset=\"utf-8\">"
+    "<html lang=\"en\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
     "<title>Smart Mirror setup</title>"
     "<style>"
-    "body{font-family:system-ui,-apple-system,sans-serif;max-width:26rem;"
-    "margin:2rem auto;padding:0 1rem;color:#222;line-height:1.5}"
-    "h1{font-size:1.4rem}"
-    "label{display:block;margin:.75rem 0 .25rem;font-weight:600}"
-    "input{width:100%;box-sizing:border-box;padding:.5rem;font-size:1rem;"
-    "border:1px solid #999;border-radius:4px}"
-    "button{margin-top:1rem;padding:.6rem 1.2rem;font-size:1rem;"
-    "background:#1a73e8;color:#fff;border:0;border-radius:4px}"
-    "button.secondary{background:#666;margin-left:.5rem}"
-    "#status{margin-top:1rem;min-height:1.5rem}"
-    "#status.ok{color:#188038}#status.err{color:#c5221f}"
+    ":root{color-scheme:dark}"
+    "*{box-sizing:border-box}"
+    "body{margin:0;min-height:100vh;display:flex;align-items:center;"
+    "justify-content:center;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;"
+    "color:#fff;background:#000 radial-gradient(120% 120% at 50% 0%,#10151c 0%,#000 60%)}"
+    ".card{width:92vw;max-width:26rem;background:#0a0d12;border:1px solid #1c232e;"
+    "border-radius:18px;padding:2rem;box-shadow:0 20px 60px rgba(0,229,255,.06)}"
+    ".brand{display:flex;align-items:center;gap:.9rem}"
+    "h1{font-size:1.3rem;margin:0;letter-spacing:.02em}"
+    ".tagline{color:#8899aa;font-size:.85rem;margin:.2rem 0 1.6rem}"
+    "label{display:block;font-size:.75rem;font-weight:700;letter-spacing:.08em;"
+    "text-transform:uppercase;color:#8899aa;margin:1.1rem 0 .4rem}"
+    "select,input{width:100%;padding:.65rem .8rem;font-size:1rem;color:#fff;"
+    "background:#11161d;border:1px solid #232c38;border-radius:10px;outline:none}"
+    "select:focus,input:focus{border-color:#00e5ff}"
+    "input::placeholder{color:#55606e}"
+    ".pw{position:relative}"
+    ".pw input{padding-right:4.2rem}"
+    "#showpw{position:absolute;right:.5rem;top:50%;transform:translateY(-50%);"
+    "background:none;border:0;color:#00e5ff;font-size:.85rem;cursor:pointer}"
+    "#go{width:100%;padding:.75rem;font-size:1rem;font-weight:700;color:#001014;"
+    "background:#00e5ff;border:0;border-radius:10px;margin-top:1.4rem;cursor:pointer}"
+    "#go:disabled{background:#1a2430;color:#55606e;cursor:default}"
+    ".secondary{background:#11161d;border:1px solid #232c38;color:#b6c2d1;"
+    "border-radius:10px;padding:.5rem .9rem;font-size:.85rem;"
+    "margin-top:.8rem;margin-right:.5rem;cursor:pointer}"
+    "#scanstate{color:#8899aa;font-size:.9rem;padding:.2rem 0}"
+    ".hint{color:#8899aa;font-size:.8rem;margin-top:.4rem}"
+    "#status{margin-top:1.1rem;min-height:1.4rem;font-size:.95rem}"
+    "#status.ok{color:#7ee2a8}#status.err{color:#ff5c5c}"
     "</style></head><body>"
-    "<h1>Smart Mirror setup</h1>"
-    "<p>You are on the mirror's own setup network. Enter your home WiFi "
-    "details to finish setup.</p>"
-    "<form method=\"post\" action=\"/\">"
-    "<label for=\"ssid\">Network name (SSID)</label>"
-    "<input id=\"ssid\" name=\"ssid\" maxlength=\"32\" "
-    "autocomplete=\"off\" required>"
+    "<div class=\"card\">"
+    "<div class=\"brand\">"
+    "<svg width=\"44\" height=\"44\" viewBox=\"0 0 44 44\" fill=\"none\">"
+    "<rect x=\"6\" y=\"4\" width=\"32\" height=\"36\" rx=\"8\" stroke=\"#00E5FF\" stroke-width=\"2.5\"/>"
+    "<circle cx=\"22\" cy=\"19\" r=\"9\" stroke=\"#FFFFFF\" stroke-width=\"2\"/>"
+    "<path d=\"M22 12.5V19l4.5 3\" stroke=\"#00E5FF\" stroke-width=\"2\" stroke-linecap=\"round\"/>"
+    "<path d=\"M13 32h18\" stroke=\"#8899AA\" stroke-width=\"2\" stroke-linecap=\"round\"/>"
+    "</svg>"
+    "<div><h1>Smart Mirror</h1>"
+    "<p class=\"tagline\">Connect your mirror to your home network</p></div>"
+    "</div>"
+    "<form method=\"post\" action=\"/\" id=\"f\" autocomplete=\"off\">"
+    "<label for=\"net\">WiFi network</label>"
+    "<div id=\"scanstate\">Scanning for networks...</div>"
+    "<select id=\"net\" hidden></select>"
+    "<div id=\"manual\" hidden>"
+    "<input id=\"manualssid\" maxlength=\"32\" placeholder=\"Network name\">"
+    "</div>"
+    "<div class=\"hint\" id=\"netinfo\" hidden></div>"
     "<label for=\"pass\">Password</label>"
+    "<div class=\"pw\">"
     "<input id=\"pass\" name=\"pass\" type=\"password\" maxlength=\"63\" "
     "autocomplete=\"off\">"
-    "<button type=\"submit\">Connect</button>"
-    "<button type=\"button\" class=\"secondary\" id=\"forget\" hidden>"
-    "Forget saved network</button>"
+    "<button type=\"button\" id=\"showpw\">Show</button>"
+    "</div>"
+    "<div class=\"hint\" id=\"passhint\" hidden>Open network, no password needed.</div>"
+    "<button type=\"submit\" id=\"go\" disabled>Connect</button>"
+    "<div>"
+    "<button type=\"button\" class=\"secondary\" id=\"rescan\" hidden>Rescan</button>"
+    "<button type=\"button\" class=\"secondary\" id=\"forget\" hidden>Forget saved network</button>"
+    "</div>"
+    "<input type=\"hidden\" name=\"ssid\" id=\"ssid\">"
     "</form>"
     "<div id=\"status\"></div>"
+    "</div>"
     "<script>"
-    "var st=document.getElementById('status');"
-    "var f=document.getElementById('forget');"
-    "var ss=document.getElementById('ssid');"
-    "function esc(s){return s.replace(/[<>&\"]/g,function(c){"
-    "return{'<':'&lt;','>':'&gt;','&':'&amp;','\"':'&quot;'}[c];});}"
-    "function poll(){var x=new XMLHttpRequest();"
-    "x.open('GET','/status');"
-    "x.onload=function(){var s;"
-    "try{s=JSON.parse(x.responseText)}catch(e){return}"
-    "if(!ss.value&&s.ssid)ss.value=s.ssid;"
-    "f.hidden=!s.saved;"
+    "var form=document.getElementById('f'),sel=document.getElementById('net');"
+    "var scanstate=document.getElementById('scanstate');"
+    "var manual=document.getElementById('manual'),mssid=document.getElementById('manualssid');"
+    "var pass=document.getElementById('pass'),passhint=document.getElementById('passhint');"
+    "var showpw=document.getElementById('showpw'),go=document.getElementById('go');"
+    "var rescan=document.getElementById('rescan'),forget=document.getElementById('forget');"
+    "var st=document.getElementById('status'),hssid=document.getElementById('ssid');"
+    "var netinfo=document.getElementById('netinfo');"
+    "var OTHER='__other__',nets=[],saved='',scanTimer=null,retries=0;"
+    "function fill(list){nets=list;sel.innerHTML='';"
+    "var ph=document.createElement('option');ph.value='';"
+    "ph.textContent='Select a network';sel.appendChild(ph);"
+    "list.forEach(function(n){var o=document.createElement('option');"
+    "o.value=n.ssid;o.textContent=n.ssid+(n.open?'  (open)':'');"
+    "sel.appendChild(o);});"
+    "var oth=document.createElement('option');oth.value=OTHER;"
+    "oth.textContent='Other (type the name)';sel.appendChild(oth);"
+    "sel.hidden=false;selectSaved();update();}"
+    "function selectSaved(){if(!saved)return;"
+    "for(var i=0;i<sel.options.length;i++){"
+    "if(sel.options[i].value===saved){sel.selectedIndex=i;update();return;}}"
+    "sel.value=OTHER;manual.hidden=false;mssid.value=saved;update();}"
+    "function update(){var v=sel.value,n=null;"
+    "for(var i=0;i<nets.length;i++){if(nets[i].ssid===v)n=nets[i];}"
+    "var open=n?n.open:false;"
+    "manual.hidden=(v!==OTHER);passhint.hidden=!open;pass.disabled=open;"
+    "if(open)pass.value='';"
+    "if(n){netinfo.hidden=false;"
+    "netinfo.textContent='Signal '+n.rssi+' dBm'+(n.open?', open network':'');}"
+    "else{netinfo.hidden=true;}"
+    "go.disabled=(v===''||(v===OTHER&&mssid.value==='')||"
+    "(n&&!n.open&&pass.value===''));}"
+    "sel.onchange=update;mssid.oninput=update;pass.oninput=update;"
+    "var kick=false;"
+    "function startScan(k){rescan.hidden=true;sel.hidden=true;manual.hidden=true;"
+    "scanstate.hidden=false;scanstate.textContent='Scanning for networks...';"
+    "go.disabled=true;if(scanTimer)clearInterval(scanTimer);kick=k;"
+    "scanTimer=setInterval(function(){var x=new XMLHttpRequest();"
+    "x.open('GET','/scan'+(kick?'?rescan=1':''));kick=false;"
+    "x.onload=function(){var s;try{s=JSON.parse(x.responseText)}catch(e){return}"
+    "if(s.scanning)return;clearInterval(scanTimer);scanTimer=null;"
+    "if(s.networks&&s.networks.length){scanstate.hidden=true;fill(s.networks);}"
+    "else if(retries<2){retries++;startScan(true);return;}"
+    "else{scanstate.textContent='No networks found. Rescan to try again.';}"
+    "rescan.hidden=false;};x.send();},1500);}"
+    "startScan(false);rescan.onclick=function(){retries=0;startScan(true);};"
+    "function poll(){var x=new XMLHttpRequest();x.open('GET','/status');"
+    "x.onload=function(){var s;try{s=JSON.parse(x.responseText)}catch(e){return}"
+    "if(s.saved&&!saved)saved=s.ssid;"
+    "forget.hidden=!s.saved;"
     "if(s.connected){st.className='ok';"
-    "st.textContent='Connected. The mirror has joined '+esc(s.ssid)+'. "
+    "st.textContent='Connected. The mirror has joined '+s.ssid+'. "
     "You can close this page.';return;}"
     "if(s.error){st.className='err';"
-    "st.textContent='Could not connect: '+esc(s.error);return;}"
+    "st.textContent='Could not connect: '+s.error;return;}"
     "if(s.state==='connecting'){st.className='';"
-    "st.textContent='Connecting to '+esc(s.ssid)+'...';return;}"
-    "st.className='';"
-    "st.textContent='Enter your home WiFi details and press Connect.';};"
-    "x.send();}"
+    "st.textContent='Connecting to '+s.ssid+'...';return;}"
+    "st.className='';st.textContent='';};x.send();}"
     "setInterval(poll,1500);poll();"
-    "f.onclick=function(){var x=new XMLHttpRequest();"
-    "x.open('POST','/forget');x.send();};"
+    "form.onsubmit=function(){"
+    "if(sel.value===OTHER){hssid.value=mssid.value;}else{hssid.value=sel.value;}"
+    "if(pass.disabled)pass.value='';};"
+    "showpw.onclick=function(){var t=pass.type;"
+    "pass.type=(t==='password')?'text':'password';"
+    "this.textContent=(t==='password')?'Hide':'Show';};"
+    "forget.onclick=function(){forget.hidden=true;"
+    "var x=new XMLHttpRequest();x.open('POST','/forget');x.send();};"
     "</script></body></html>";
 
 static void json_escape(char *out, size_t outsz, const char *in)
@@ -524,6 +626,58 @@ static esp_err_t handle_redirect(httpd_req_t *req)
     return httpd_resp_send(req, NULL, 0);
 }
 
+static esp_err_t handle_get_scan(httpd_req_t *req)
+{
+    /* A ?rescan=1 query kicks off a fresh scan; plain calls only report the
+     * current state. Polling must never restart the scan, or a poll cadence
+     * faster than the scan duration would keep wiping the results and the
+     * page would never see a completed scan. */
+    char qbuf[16];
+    if (httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf)) == ESP_OK &&
+        strstr(qbuf, "rescan") != NULL) {
+        scan_start();
+    }
+
+    scan_entry_t snapshot[MAX_SCAN_RESULTS];
+    bool scanning;
+    int count;
+
+    lock_state();
+    scanning = s_scanning;
+    count = s_scan_count;
+    memcpy(snapshot, s_scan_results, sizeof(snapshot));
+    unlock_state();
+
+    const size_t cap = 256 + (size_t)count * 160;
+    char *body = malloc(cap);
+    if (body == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "out of memory");
+        return ESP_FAIL;
+    }
+
+    size_t off = (size_t)snprintf(body, cap, "{\"scanning\":%s,\"networks\":[",
+                                  scanning ? "true" : "false");
+    for (int i = 0; i < count && off < cap; i++) {
+        char esc[96];
+        json_escape(esc, sizeof(esc), snapshot[i].ssid);
+        off += (size_t)snprintf(body + off, cap - off,
+                                "%s{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+                                i > 0 ? "," : "", esc, snapshot[i].rssi,
+                                snapshot[i].open ? "true" : "false");
+    }
+    if (off + 2 < cap) {
+        body[off++] = ']';
+        body[off++] = '}';
+        body[off] = '\0';
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    const esp_err_t ret = httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+    free(body);
+    return ret;
+}
+
 static void register_handlers(void)
 {
     /* Specific routes first; the wildcard catch-all registered last swallows
@@ -537,6 +691,9 @@ static void register_handlers(void)
     static const httpd_uri_t get_status = {
         .uri = "/status", .method = HTTP_GET, .handler = handle_get_status,
     };
+    static const httpd_uri_t get_scan = {
+        .uri = "/scan", .method = HTTP_GET, .handler = handle_get_scan,
+    };
     static const httpd_uri_t post_forget = {
         .uri = "/forget", .method = HTTP_POST, .handler = handle_post_forget,
     };
@@ -547,6 +704,7 @@ static void register_handlers(void)
     httpd_register_uri_handler(s_httpd, &get_root);
     httpd_register_uri_handler(s_httpd, &post_root);
     httpd_register_uri_handler(s_httpd, &get_status);
+    httpd_register_uri_handler(s_httpd, &get_scan);
     httpd_register_uri_handler(s_httpd, &post_forget);
     httpd_register_uri_handler(s_httpd, &any);
 }
@@ -558,6 +716,109 @@ static httpd_config_t server_config(void)
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     return cfg;
+}
+
+/* ------------------------------------------------------- wifi scanning */
+
+/* Start a background scan if none is running. The result arrives on
+ * WIFI_EVENT_SCAN_DONE and is copied into s_scan_results. */
+static void scan_start(void)
+{
+    lock_state();
+    if (s_scanning) {
+        unlock_state();
+        return;
+    }
+    s_scanning = true;
+    s_scan_count = 0;
+    unlock_state();
+
+    wifi_scan_config_t cfg = {0};
+    cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    cfg.show_hidden = false;
+
+    const esp_err_t err = esp_wifi_scan_start(&cfg, false);
+    if (err != ESP_OK) {
+        /* Busy or not ready; whatever scan is running will clear the flag on
+         * SCAN_DONE. */
+        ESP_LOGW(TAG, "scan start failed: %s", esp_err_to_name(err));
+        lock_state();
+        s_scanning = false;
+        unlock_state();
+    }
+}
+
+static void on_scan_done(void *arg, esp_event_base_t base,
+                         int32_t id, void *data)
+{
+    (void)arg; (void)base; (void)id; (void)data;
+
+    uint16_t num = 0;
+    esp_wifi_scan_get_ap_num(&num);
+
+    wifi_ap_record_t *recs = NULL;
+    uint16_t got = 0;
+    if (num > 0) {
+        recs = malloc((size_t)num * sizeof(wifi_ap_record_t));
+        if (recs != NULL) {
+            got = num;
+            if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) got = 0;
+        }
+    }
+
+    lock_state();
+    s_scan_count = 0;
+    for (uint16_t i = 0; i < got && s_scan_count < MAX_SCAN_RESULTS; i++) {
+        if (recs[i].ssid[0] == '\0') continue;
+
+        /* One entry per SSID, keeping the strongest signal of its BSSIDs. */
+        bool dup = false;
+        for (int j = 0; j < s_scan_count; j++) {
+            if (memcmp(s_scan_results[j].ssid, recs[i].ssid, 32) == 0) {
+                if (recs[i].rssi > s_scan_results[j].rssi) {
+                    s_scan_results[j].rssi = recs[i].rssi;
+                }
+                dup = true;
+                break;
+            }
+        }
+        if (dup) continue;
+
+        memcpy(s_scan_results[s_scan_count].ssid, recs[i].ssid, 32);
+        s_scan_results[s_scan_count].ssid[32] = '\0';
+        s_scan_results[s_scan_count].rssi = recs[i].rssi;
+        s_scan_results[s_scan_count].open =
+            (recs[i].authmode == WIFI_AUTH_OPEN);
+        s_scan_count++;
+    }
+
+    /* Strongest first. */
+    for (int i = 1; i < s_scan_count; i++) {
+        const scan_entry_t key = s_scan_results[i];
+        int j = i - 1;
+        while (j >= 0 && s_scan_results[j].rssi < key.rssi) {
+            s_scan_results[j + 1] = s_scan_results[j];
+            j--;
+        }
+        s_scan_results[j + 1] = key;
+    }
+
+    s_scanning = false;
+    unlock_state();
+
+    /* Raw records, before dedup: the exact SSID bytes and the advertised
+     * authmode are what decide whether a connect attempt is even allowed. */
+    ESP_LOGI(TAG, "scan found %d networks", s_scan_count);
+    for (uint16_t i = 0; i < got; i++) {
+        char hex[65];
+        for (int b = 0; b < 32; b++) {
+            snprintf(hex + b * 2, 3, "%02x", recs[i].ssid[b]);
+        }
+        ESP_LOGI(TAG, "  \"%.32s\" rssi %d auth %d hex %s",
+                 recs[i].ssid, recs[i].rssi, recs[i].authmode, hex);
+    }
+
+    if (recs != NULL) free(recs);
 }
 
 /* captive-portal dns */
@@ -698,48 +959,24 @@ static void portal_start(void)
         return;
     }
 
-    esp_err_t err = wifi_init();
+    char ap_ssid[32];
+    build_ap_ssid(ap_ssid, sizeof(ap_ssid));
+
+    /* wifi_start_ap brings the radio up whether or not the station is already
+     * running, so this works both on first boot and as a fallback after
+     * failed credentials. */
+    esp_err_t err = wifi_start_ap(ap_ssid, CONFIG_MIRROR_AP_PASSWORD);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "could not bring up the setup access point");
         unlock_state();
         return;
     }
 
-    wifi_config_t ap = {0};
-    build_ap_ssid((char *)ap.ap.ssid, sizeof(ap.ap.ssid));
-    ap.ap.ssid_len = (uint8_t)strlen((const char *)ap.ap.ssid);
-    ap.ap.channel = 1;
-    ap.ap.max_connection = 4;
-    if (CONFIG_MIRROR_AP_PASSWORD[0] != '\0') {
-        strncpy((char *)ap.ap.password, CONFIG_MIRROR_AP_PASSWORD,
-                sizeof(ap.ap.password) - 1);
-        ap.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
-    } else {
-        ap.ap.authmode = WIFI_AUTH_OPEN;
-    }
-
-    wifi_mode_t mode;
-    if (esp_wifi_get_mode(&mode) != ESP_OK) mode = WIFI_MODE_NULL;
-
-    if (mode == WIFI_MODE_NULL) {
-        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK ||
-            esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK ||
-            esp_wifi_start() != ESP_OK) {
-            ESP_LOGE(TAG, "could not bring up the setup access point");
-            unlock_state();
-            return;
-        }
-    } else {
-        /* WiFi is already running as a station whose saved credentials
-         * failed. Switching to APSTA adds the access point alongside it; the
-         * station keeps retrying the saved network on its own. */
-        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK ||
-            esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
-            ESP_LOGE(TAG, "could not add the setup access point");
-            unlock_state();
-            return;
-        }
-    }
+    /* Stop the station's background reconnect loop. While the portal is open
+     * the station only connects when the owner submits credentials; a
+     * retrying station would fight the portal's scans, which come back empty
+     * while an association attempt is in flight. */
+    wifi_set_autoreconnect(false);
 
     httpd_config_t cfg = server_config();
     if (httpd_start(&s_httpd, &cfg) != ESP_OK) {
@@ -751,12 +988,28 @@ static void portal_start(void)
     register_handlers();
     dns_start();
 
+    if (!s_scan_handler_registered) {
+        const esp_err_t err = esp_event_handler_instance_register(
+            WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &on_scan_done, NULL, NULL);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "could not register the scan handler: %s",
+                     esp_err_to_name(err));
+        } else {
+            s_scan_handler_registered = true;
+        }
+    }
+
     s_portal_active = true;
     unlock_state();
 
     ESP_LOGI(TAG, "setup access point \"%s\"%s at http://192.168.4.1",
-             (const char *)ap.ap.ssid,
-             ap.ap.authmode == WIFI_AUTH_OPEN ? " (open)" : " (password protected)");
+             ap_ssid,
+             CONFIG_MIRROR_AP_PASSWORD[0] != '\0' ? " (password protected)"
+                                                  : " (open)");
+
+    /* Kick off the first scan so the dropdown is already populated when the
+     * owner's phone opens the page. */
+    scan_start();
 }
 
 /* entry */
@@ -775,7 +1028,8 @@ esp_err_t provision_init(void)
             err = nvs_get_str(h, NVS_KEY_PASS, s_pass, &len);
             s_has_creds = (err == ESP_OK);
             if (s_has_creds) {
-                ESP_LOGI(TAG, "saved credentials for \"%s\"", s_ssid);
+                ESP_LOGI(TAG, "saved credentials for \"%s\" (%d-char password)",
+                         s_ssid, (int)strlen(s_pass));
             } else {
                 s_ssid[0] = '\0';
             }

@@ -30,6 +30,11 @@ esp_err_t wifi_init(void);
  * rejoins. */
 esp_err_t wifi_connect(const char *ssid, const char *password);
 
+/* Bring up the setup soft-AP, alongside the station if one is running.
+ * An empty password means an open network. Safe to call once, at boot, or
+ * later as a fallback after saved credentials fail. */
+esp_err_t wifi_start_ap(const char *ssid, const char *password);
+
 /* Drop the link, forget the station configuration and stop the retry timer,
  * so nothing reconnects until wifi_connect is called again. Used by the setup
  * portal's "forget network" action. */
@@ -55,6 +60,13 @@ typedef void (*wifi_observer_t)(wifi_obs_evt_t evt, int arg);
 /* Install the observer. It runs on the default event loop task, so keep it
  * short and non-blocking. Pass NULL to uninstall. */
 void wifi_set_observer(wifi_observer_t obs);
+
+/* Enable or disable the automatic reconnect loop. The setup portal turns it
+ * off: a background station that keeps trying to join the old network fights
+ * the portal's own scans (they return empty while an attempt is in flight),
+ * so while the portal is open the station only connects when the owner
+ * submits credentials. Normal operation keeps it enabled. */
+void wifi_set_autoreconnect(bool enabled);
 
 #ifdef __cplusplus
 }

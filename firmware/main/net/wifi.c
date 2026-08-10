@@ -7,6 +7,8 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "wifi";
@@ -19,6 +21,12 @@ static char s_ssid[33] = "";
 static esp_timer_handle_t s_reconnect;
 static wifi_observer_t s_observer = NULL;
 static bool s_init_done = false;
+/* True once esp_wifi_start() has succeeded. This is the only reliable way to
+ * know the interfaces are running: esp_wifi_get_mode() reports WIFI_MODE_STA
+ * immediately after esp_wifi_init(), so a "mode is NULL" test would silently
+ * skip the start and leave the radio silent while every API call returns OK. */
+static bool s_started = false;
+static bool s_autoreconnect = true;
 
 /*
  * Backoff after repeated failures.
@@ -83,7 +91,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
          * backs off to would hold up dispatch of every other event in the
          * system, GOT_IP among them, and can back the event queue up behind us.
          */
-        if (s_reconnect != NULL) {
+        if (s_reconnect != NULL && s_autoreconnect) {
             esp_timer_stop(s_reconnect);   /* no-op when it is not running */
             esp_timer_start_once(s_reconnect, (int64_t)wait * 1000);
         } else {
@@ -156,11 +164,11 @@ esp_err_t wifi_connect(const char *ssid, const char *password)
     strncpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid) - 1);
     strncpy((char *)cfg.sta.password, password, sizeof(cfg.sta.password) - 1);
 
-    /* An empty password means an open network; forcing a WPA2 threshold there
-     * would reject it outright. */
-    cfg.sta.threshold.authmode =
-        (password[0] == '\0') ? WIFI_AUTH_OPEN
-                              : WIFI_AUTH_WPA2_PSK;
+    /* No authmode threshold: the default (accept anything) lets the driver
+     * negotiate with the password we supplied. The old examples set a
+     * WPA2_PSK threshold here, which makes the station report reason 210
+     * ("no AP found with compatible security") against WPA3 and WPA2/WPA3
+     * transition networks, the norm on modern routers. */
 
     strncpy(s_ssid, ssid, sizeof(s_ssid) - 1);
     s_connected = false;
@@ -169,10 +177,7 @@ esp_err_t wifi_connect(const char *ssid, const char *password)
 
     if (s_reconnect != NULL) esp_timer_stop(s_reconnect);   /* no-op when idle */
 
-    wifi_mode_t mode;
-    ESP_ERROR_CHECK(esp_wifi_get_mode(&mode));
-
-    if (mode == WIFI_MODE_NULL) {
+    if (!s_started) {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
 
@@ -182,13 +187,53 @@ esp_err_t wifi_connect(const char *ssid, const char *password)
         ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
         ESP_ERROR_CHECK(esp_wifi_start());
+        s_started = true;
     } else {
         /* Reconfigure and rejoin. esp_wifi_set_config refuses while the
-         * station is mid-association, so settle it first; the error is
-         * expected when the link is already down. */
+         * station is mid-association, so settle it first. The reconnect
+         * timer can fire a connect between our disconnect and this
+         * set_config; back off briefly on ESP_ERR_WIFI_STATE rather than
+         * aborting, which would reboot the whole mirror. */
         esp_wifi_disconnect();
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+        esp_err_t cerr = ESP_ERR_WIFI_STATE;
+        for (int i = 0; i < 20 && cerr == ESP_ERR_WIFI_STATE; i++) {
+            cerr = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+            if (cerr == ESP_ERR_WIFI_STATE) vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (cerr != ESP_OK) return cerr;
         esp_wifi_connect();
+    }
+    return ESP_OK;
+}
+
+esp_err_t wifi_start_ap(const char *ssid, const char *password)
+{
+    esp_err_t err = wifi_init();
+    if (err != ESP_OK) return err;
+
+    wifi_config_t ap = {0};
+    strncpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid) - 1);
+    ap.ap.ssid_len = (uint8_t)strnlen(ssid, sizeof(ap.ap.ssid));
+    ap.ap.channel = 1;
+    ap.ap.max_connection = 4;
+    if (password[0] == '\0') {
+        ap.ap.authmode = WIFI_AUTH_OPEN;
+    } else {
+        strncpy((char *)ap.ap.password, password, sizeof(ap.ap.password) - 1);
+        ap.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+    }
+
+    if (!s_started) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        s_started = true;
+    } else {
+        /* The station is already running (saved credentials failed or were
+         * re-entered). Adding the AP alongside it is a runtime mode change,
+         * which the driver supports while running. */
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     }
     return ESP_OK;
 }
@@ -202,8 +247,7 @@ void wifi_forget(void)
     s_retries = 0;
     snprintf(s_ip, sizeof(s_ip), "0.0.0.0");
 
-    wifi_mode_t mode;
-    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_NULL) return;
+    if (!s_started) return;
 
     wifi_config_t blank = {0};
     esp_wifi_disconnect();
@@ -232,4 +276,12 @@ const char *wifi_ip(void)
 void wifi_set_observer(wifi_observer_t obs)
 {
     s_observer = obs;
+}
+
+void wifi_set_autoreconnect(bool enabled)
+{
+    s_autoreconnect = enabled;
+    if (!enabled && s_reconnect != NULL) {
+        esp_timer_stop(s_reconnect);   /* drop any pending retry */
+    }
 }
