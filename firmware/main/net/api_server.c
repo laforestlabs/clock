@@ -70,7 +70,8 @@ static void json_escape(char *out, size_t outsz, const char *in)
 
 static esp_err_t handle_get_status(httpd_req_t *req)
 {
-    ml_layout layout;
+    /* Static: ml_layout is ~6.6KB and httpd runs handlers on one task. */
+    static ml_layout layout;
     layout_store_snapshot(&layout);
 
     char esc_name[2 * ML_NAME_LEN];
@@ -93,7 +94,8 @@ static esp_err_t handle_get_status(httpd_req_t *req)
 
 static esp_err_t handle_get_layout(httpd_req_t *req)
 {
-    ml_layout layout;
+    /* Static: ml_layout is ~6.6KB and httpd runs handlers on one task. */
+    static ml_layout layout;
     layout_store_snapshot(&layout);
 
     /* PSRAM first: this is a 32KB transient buffer and internal SRAM is the
@@ -241,12 +243,20 @@ static void api_server_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
+    /* The httpd task stack on PSRAM: internal SRAM is the scarce resource
+     * (panel DMA, WiFi and the BT controller all live there). An 8KB stack
+     * for a LAN JSON API is fine outside it. */
+    cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 
-    if (httpd_start(&s_httpd, &cfg) != ESP_OK) {
-        /* The provisioning portal can still hold port 80 for a few seconds
-         * after a first-time join. Retry until it goes away. */
+    const esp_err_t err = httpd_start(&s_httpd, &cfg);
+    if (err != ESP_OK) {
+        /* The provisioning portal may still hold port 80 briefly after a
+         * first-time join, or internal RAM may be tight. Retry until either
+         * the port is free or the link drops. */
         s_httpd = NULL;
-        ESP_LOGW(TAG, "httpd start failed, retrying");
+        ESP_LOGW(TAG, "httpd start failed (%s), internal free %u, retrying",
+                 esp_err_to_name(err),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         esp_timer_start_once(s_retry, RETRY_DELAY_US);
         return;
     }

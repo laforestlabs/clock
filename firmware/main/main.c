@@ -32,7 +32,9 @@
 #include "net/wifi.h"
 #include "net/api_server.h"
 #include "net/ota.h"
+#if CONFIG_BT_ENABLED
 #include "net/ble.h"
+#endif
 #include "panel.h"
 #include "providers/openmeteo.h"
 #include "providers/provider.h"
@@ -119,9 +121,10 @@ static void render_task(void *arg)
          * The layout is owned by the layout store, which may swap it out from
          * under us when a push arrives (HTTP or BLE task). Snapshotting keeps
          * the render path free of locks and makes a push take effect at a
-         * frame boundary instead of mid-draw.
+         * frame boundary instead of mid-draw. Static: ml_layout is ~6.6KB
+         * and only this task reads the buffer.
          */
-        ml_layout layout;
+        static ml_layout layout;
         layout_store_snapshot(&layout);
         ml_render(&layout, &model, &canvas);
 
@@ -191,7 +194,9 @@ void app_main(void)
     ESP_ERROR_CHECK(layout_store_init(layout_json_start,
                                       (size_t)(layout_json_end - layout_json_start)));
 
-    ml_layout boot;
+    /* Static, not stack: ml_layout is ~6.6KB and the main task stack is 3584
+     * bytes. The snapshot exists only to read the brightness off. */
+    static ml_layout boot;
     layout_store_snapshot(&boot);
     panel_set_brightness(boot.brightness);
     /* Render before the network comes up, so the panel shows placeholders
@@ -243,7 +248,9 @@ void app_main(void)
      * service. Both are event-driven from here on; the API server starts
      * when the station gets an IP. */
     ESP_ERROR_CHECK(api_server_init());
+#if CONFIG_BT_ENABLED
     ESP_ERROR_CHECK(ble_init());
+#endif
 
     ESP_LOGI(TAG, "running");
 }

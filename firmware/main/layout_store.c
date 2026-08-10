@@ -98,24 +98,16 @@ static void log_layout(const char *source, const ml_layout *l)
 static esp_err_t mount_spiffs(void)
 {
     esp_vfs_spiffs_conf_t conf = {
-        .base_path            = SPIFFS_PATH,
-        .partition_label      = "storage",
-        .max_files            = 4,
-        .format_if_mount_failed = false,
+        .base_path              = SPIFFS_PATH,
+        .partition_label        = "storage",
+        .max_files              = 4,
+        /* A virgin or corrupt partition gets formatted and remounted once.
+         * The embedded layout is the fallback either way, so losing whatever
+         * was stored is never worse than not booting. */
+        .format_if_mount_failed = true,
     };
 
     esp_err_t err = esp_vfs_spiffs_register(&conf);
-    if (err == ESP_OK) return ESP_OK;
-
-    if (err == ESP_ERR_NOT_FOUND) {
-        /* Virgin partition: no filesystem magic yet. Format once and retry,
-         * which is exactly what format_if_mount_failed would do, kept manual
-         * so the retry path is explicit. */
-        ESP_LOGW(TAG, "storage partition not formatted, formatting");
-        err = esp_spiffs_format("storage");
-        if (err == ESP_OK) err = esp_vfs_spiffs_register(&conf);
-    }
-
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "could not mount SPIFFS: %s", esp_err_to_name(err));
     }
@@ -133,12 +125,24 @@ esp_err_t layout_store_init(const char *embedded_json, size_t embedded_len)
 
     size_t stored_len = 0;
     char *stored = read_stored_layout(&stored_len);
-    ml_layout candidate;
+
+    /* Parse into the heap, never the stack: ml_layout is ~6.6KB and the main
+     * task stack is 3584 bytes. PSRAM first, this is a transient block. */
+    ml_layout *candidate = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_SPIRAM);
+    if (candidate == NULL) {
+        candidate = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_INTERNAL);
+    }
+    if (candidate == NULL) {
+        ESP_LOGE(TAG, "out of memory loading the layout");
+        if (stored != NULL) free(stored);
+        return ESP_ERR_NO_MEM;
+    }
+
     const char *source;
     bool ok = false;
 
     if (stored != NULL) {
-        ok = parse_layout(stored, stored_len, &candidate);
+        ok = parse_layout(stored, stored_len, candidate);
         if (ok) {
             source = "stored in SPIFFS";
         } else {
@@ -151,7 +155,7 @@ esp_err_t layout_store_init(const char *embedded_json, size_t embedded_len)
             free(stored);
             stored = NULL;
         }
-        if (!parse_layout(embedded_json, embedded_len, &candidate)) {
+        if (!parse_layout(embedded_json, embedded_len, candidate)) {
             /*
              * The embedded layout is committed and covered by the host tests,
              * so this should be impossible. Fall back to an empty canvas of
@@ -160,17 +164,18 @@ esp_err_t layout_store_init(const char *embedded_json, size_t embedded_len)
              * not.
              */
             ESP_LOGE(TAG, "the embedded layout did not parse, which should not happen");
-            ml_layout_init(&candidate, panel_width(), panel_height());
+            ml_layout_init(candidate, panel_width(), panel_height());
         }
         source = "embedded";
     }
 
     lock();
-    s_layout = candidate;
+    s_layout = *candidate;
     unlock();
-    log_layout(source, &candidate);
+    log_layout(source, candidate);
 
     if (stored != NULL) free(stored);
+    heap_caps_free(candidate);
     return ESP_OK;
 }
 
@@ -212,22 +217,38 @@ esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)
         return ESP_ERR_INVALID_ARG;
     }
 
-    ml_layout candidate;
-    if (!ml_layout_parse(json, len, &candidate, diag)) {
+    /* Parse into a heap buffer, never the stack: ml_layout is ~6.6KB and the
+     * callers are the httpd task (8KB) and the BLE host task (4KB). PSRAM
+     * first, this is a transient 6.6KB block. */
+    ml_layout *candidate = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_SPIRAM);
+    if (candidate == NULL) {
+        candidate = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_INTERNAL);
+    }
+    if (candidate == NULL) {
+        if (diag != NULL) {
+            ml_diag_reset(diag);
+            ml_diag_add(diag, "out of memory parsing layout");
+        }
+        return ESP_ERR_NO_MEM;
+    }
+
+    if (!ml_layout_parse(json, len, candidate, diag)) {
         /* Hard parse failure: diag carries the message, nothing changes. */
+        heap_caps_free(candidate);
         return ESP_ERR_INVALID_ARG;
     }
 
     lock();
-    s_layout = candidate;
+    s_layout = *candidate;
     unlock();
 
     /* Brightness is a real device setting applied by the driver in hardware;
      * the pushed layout says what it should be. */
-    panel_set_brightness(candidate.brightness);
+    panel_set_brightness(candidate->brightness);
     ESP_LOGI(TAG, "layout \"%s\": %dx%d, %d widgets, brightness %u",
-             candidate.name, candidate.w, candidate.h, candidate.count,
-             (unsigned)candidate.brightness);
+             candidate->name, candidate->w, candidate->h, candidate->count,
+             (unsigned)candidate->brightness);
+    heap_caps_free(candidate);
 
     persist(json, len);
 

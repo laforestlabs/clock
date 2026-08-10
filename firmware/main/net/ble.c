@@ -179,7 +179,9 @@ static void json_escape(char *out, size_t outsz, const char *in)
 
 static void cmd_ping(void)
 {
-    ml_layout layout;
+    /* Static: ml_layout is ~6.6KB and the BLE host task stack is 4KB. Only
+     * the host task touches it, so a static buffer is safe. */
+    static ml_layout layout;
     layout_store_snapshot(&layout);
 
     /* The app uses the pong's IP for the WiFi OTA upload. */
@@ -285,12 +287,19 @@ static void cmd_commit(void)
             heap_caps_free((void *)buf);
             return;
         }
-        /* Re-parse just for the widget count the status line reports. */
-        ml_layout parsed;
-        ml_diag count_diag;
-        ml_diag_reset(&count_diag);
-        const int count = ml_layout_parse(buf, len, &parsed, &count_diag)
-                              ? parsed.count : 0;
+        /* Re-parse just for the widget count the status line reports. The
+         * host task stack is 4KB and ml_layout is ~6.6KB, so this lives on
+         * the heap. */
+        ml_layout *parsed = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_SPIRAM);
+        int count = 0;
+        if (parsed != NULL) {
+            ml_diag count_diag;
+            ml_diag_reset(&count_diag);
+            if (ml_layout_parse(buf, len, parsed, &count_diag)) {
+                count = parsed->count;
+            }
+            heap_caps_free(parsed);
+        }
         send_status("commit ok %d widgets", count);
     } else {   /* TRANSFER_CONFIG */
         char err[96];

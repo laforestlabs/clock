@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -67,6 +68,11 @@ static httpd_handle_t s_httpd = NULL;
 static struct udp_pcb *s_dns_pcb = NULL;
 static esp_timer_handle_t s_watchdog;
 static esp_timer_handle_t s_teardown;
+/* Starts the portal's httpd a beat after the portal opens. See
+ * portal_httpd_start: the API server also listens on port 80 and stops on
+ * the same disconnect event, but after the provisioning code runs, so the
+ * httpd must not bind synchronously inside the event handler. */
+static esp_timer_handle_t s_portal_httpd;
 static SemaphoreHandle_t s_lock;
 
 /* Networks seen by the last scan, strongest first. Guarded by s_lock. */
@@ -248,7 +254,14 @@ static void on_watchdog(void *arg)
 {
     (void)arg;
 
-    if (wifi_is_connected()) return;
+    if (wifi_is_connected()) {
+        /* Connected at the moment; the connect handler stopped the timer. It
+         * is one-shot, so re-arm it: a later permanent drop must still open
+         * the portal instead of leaving the mirror retrying silently. */
+        esp_timer_start_once(s_watchdog,
+                             (int64_t)CONFIG_MIRROR_CONNECT_TIMEOUT_S * 1000000);
+        return;
+    }
 
     /* A failure reason already explains itself; do not overwrite it with the
      * generic timeout. This keeps "wrong password" visible when the portal
@@ -261,6 +274,10 @@ static void on_watchdog(void *arg)
         ESP_LOGW(TAG, "no address after %d s, opening the setup portal",
                  CONFIG_MIRROR_CONNECT_TIMEOUT_S);
         portal_start();
+        /* If the portal failed to come up, try again on the next beat rather
+         * than leaving the device unreachable. */
+        esp_timer_start_once(s_watchdog,
+                             (int64_t)CONFIG_MIRROR_CONNECT_TIMEOUT_S * 1000000);
     }
 }
 
@@ -269,6 +286,9 @@ static void on_teardown(void *arg)
     (void)arg;
 
     if (!portal_is_active()) return;
+
+    /* A deferred httpd start may still be pending; drop it. */
+    esp_timer_stop(s_portal_httpd);
 
     dns_stop();
     if (s_httpd != NULL) {
@@ -715,6 +735,10 @@ static httpd_config_t server_config(void)
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
+    /* Task stack on PSRAM: internal SRAM is scarce (panel DMA, WiFi and the
+     * BT controller all live there), and this server only serves the small
+     * setup page and its JSON pollers. */
+    cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     return cfg;
 }
 
@@ -951,6 +975,43 @@ static void build_ap_ssid(char *out, size_t outsz)
     snprintf(out, outsz, "%s-%02X%02X", CONFIG_MIRROR_AP_SSID, mac[4], mac[5]);
 }
 
+/* Short enough that the current event dispatch (including the API server's
+ * stop handler, which releases port 80) has long finished. */
+#define PORTAL_HTTPD_DELAY_US (200 * 1000)
+
+static void portal_httpd_start(void *arg)
+{
+    (void)arg;
+
+    lock_state();
+    if (!s_portal_active || s_httpd != NULL) {
+        unlock_state();
+        return;
+    }
+
+    httpd_config_t cfg = server_config();
+    const esp_err_t httpd_err = httpd_start(&s_httpd, &cfg);
+    if (httpd_err != ESP_OK) {
+        /* The API server's stop handler runs in the same event dispatch that
+         * opened the portal, so port 80 is free by the time this fires. A
+         * failure here is a real resource problem, not the old race. */
+        ESP_LOGE(TAG, "setup page server failed to start: %s",
+                 esp_err_to_name(httpd_err));
+        s_httpd = NULL;
+        unlock_state();
+        return;
+    }
+    register_handlers();
+    dns_start();
+    unlock_state();
+
+    ESP_LOGI(TAG, "setup portal serving at http://192.168.4.1");
+
+    /* Kick off the first scan so the dropdown is already populated when the
+     * owner's phone opens the page. */
+    scan_start();
+}
+
 static void portal_start(void)
 {
     lock_state();
@@ -978,16 +1039,6 @@ static void portal_start(void)
      * while an association attempt is in flight. */
     wifi_set_autoreconnect(false);
 
-    httpd_config_t cfg = server_config();
-    if (httpd_start(&s_httpd, &cfg) != ESP_OK) {
-        ESP_LOGE(TAG, "setup page server failed to start");
-        s_httpd = NULL;
-        unlock_state();
-        return;
-    }
-    register_handlers();
-    dns_start();
-
     if (!s_scan_handler_registered) {
         const esp_err_t err = esp_event_handler_instance_register(
             WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &on_scan_done, NULL, NULL);
@@ -1002,14 +1053,17 @@ static void portal_start(void)
     s_portal_active = true;
     unlock_state();
 
-    ESP_LOGI(TAG, "setup access point \"%s\"%s at http://192.168.4.1",
+    ESP_LOGI(TAG, "setup access point \"%s\"%s, portal at http://192.168.4.1",
              ap_ssid,
              CONFIG_MIRROR_AP_PASSWORD[0] != '\0' ? " (password protected)"
                                                   : " (open)");
 
-    /* Kick off the first scan so the dropdown is already populated when the
-     * owner's phone opens the page. */
-    scan_start();
+    /* The httpd starts on a timer, not here: this runs inside the
+     * WIFI_EVENT_STA_DISCONNECTED dispatch, and the LAN API server's own
+     * disconnect handler (which releases port 80) only runs after this
+     * function returns. Binding synchronously would race it. */
+    esp_timer_stop(s_portal_httpd);
+    esp_timer_start_once(s_portal_httpd, PORTAL_HTTPD_DELAY_US);
 }
 
 /* entry */
@@ -1048,6 +1102,12 @@ esp_err_t provision_init(void)
         .name     = "prov_teardown",
     };
     ESP_ERROR_CHECK(esp_timer_create(&teardown_args, &s_teardown));
+
+    const esp_timer_create_args_t portal_httpd_args = {
+        .callback = portal_httpd_start,
+        .name     = "prov_httpd",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&portal_httpd_args, &s_portal_httpd));
 
     return ESP_OK;
 }
