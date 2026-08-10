@@ -11,6 +11,7 @@ import '../controller.dart';
 import '../engine/engine.dart';
 import '../services/layout_repository.dart';
 import 'inspector.dart';
+import 'mirror_screen.dart';
 import 'panel_view.dart';
 import 'game_screen.dart';
 import 'widget_list.dart';
@@ -240,6 +241,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => GameScreen(controller: _c),
+              ),
+            );
+          },
+        ),
+        IconButton(
+          tooltip: 'Mirror',
+          icon: const Icon(Icons.bluetooth_searching),
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => MirrorScreen(controller: _c),
               ),
             );
           },

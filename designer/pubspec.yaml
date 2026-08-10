@@ -20,6 +20,8 @@ dependencies:
   file_selector: ^1.0.3
   path_provider: ^2.1.4
   path: ^1.9.0
+  flutter_blue_plus: ^2.3.12
+  multicast_dns: ^0.3.3+1
 
 dev_dependencies:
   flutter_test:
