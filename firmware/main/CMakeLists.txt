@@ -4,6 +4,7 @@ idf_component_register(
         "panel.cpp"
         "model_store.c"
         "net/wifi.c"
+        "net/provision.c"
         "net/sntp_time.c"
         "net/http_get.c"
         "providers/provider.c"
@@ -18,6 +19,8 @@ idf_component_register(
         esp_event
         esp_timer
         lwip
+        # Setup portal web server.
+        esp_http_server
         # HTTPS for the data providers. esp-tls brings in the bundled root
         # certificate store, so no per-service certificate has to be pinned.
         esp_http_client

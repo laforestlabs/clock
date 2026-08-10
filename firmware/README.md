@@ -30,16 +30,50 @@ This project uses 5.5.2, the version upstream tests.
 ```sh
 . $HOME/esp/esp-idf-v5.5/export.sh
 idf.py -C firmware set-target esp32s3
-idf.py -C firmware menuconfig      # Smart Mirror menu: WiFi, timezone, panel
+idf.py -C firmware menuconfig      # Smart Mirror menu: setup portal, timezone, panel
 idf.py -C firmware flash monitor
 ```
 
 The S3 has native USB, so no serial adapter is needed. `sdkconfig` is
-gitignored, so WiFi credentials entered in menuconfig stay out of the
-repository.
+gitignored; the only things it holds are choices like the timezone and the
+shift-register driver.
 
-Everything in the `Smart Mirror` menuconfig section has a working default
-except the WiFi credentials.
+Everything in the `Smart Mirror` menuconfig section has a working default.
+WiFi credentials are deliberately not there: the owner enters them through
+the setup portal and they are stored in NVS, so nothing about a home network
+ever ends up in the repository. See "WiFi setup" below.
+
+## WiFi setup
+
+There are no WiFi credentials in the firmware. On first boot the mirror
+creates its own access point, `Smart Mirror Setup-XXXX` (the suffix is the
+last four hex digits of its MAC), and serves a setup page at
+`http://192.168.4.1`. Connect your phone to that network and the
+captive-portal redirect should open the page by itself. Enter your home WiFi
+details; the mirror saves them to NVS and joins.
+
+What happens when the saved network stops working:
+
+| Situation | What happens |
+|---|---|
+| Nothing saved yet | Setup access point from the first boot |
+| Wrong password or SSID | The portal opens as soon as the failure reason is known |
+| Network unreachable at boot | The mirror tries for `MIRROR_CONNECT_TIMEOUT_S` (default 30 s), then opens the portal |
+| Network comes back while the portal is open | The mirror rejoins by itself and the portal closes |
+| Network drops after a successful join | The mirror retries in the background with backoff; the portal does not reopen. Power-cycle the mirror to force re-provisioning |
+
+The page also offers "Forget saved network", for handing the device over or
+moving house.
+
+Two things worth knowing before shipping this:
+
+- The setup access point is **open by default** (`MIRROR_AP_PASSWORD` empty)
+  and the portal is plain HTTP. For a deployed product, set a WPA2 password
+  in menuconfig and print it on the device: on an open setup network, anyone
+  within radio range could open the page and claim the mirror.
+- Credentials sit in NVS in plaintext. That is a property of the platform:
+  the ESP32 has no secure key storage without extra hardware, and this is the
+  same trade every consumer IoT device at this price point makes.
 
 ## Bring-up, in order
 
@@ -195,4 +229,4 @@ token.
 
 **Todos** are not wired up yet; the widget shows its empty state.
 
-Layout push over the LAN arrives in M4, WiFi provisioning and OTA in M5.
+Layout push over the LAN arrives in M4, OTA in M5.

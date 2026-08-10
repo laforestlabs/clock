@@ -25,6 +25,7 @@
 
 #include "mirror/mirror.h"
 #include "model_store.h"
+#include "net/provision.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "panel.h"
@@ -220,7 +221,14 @@ void app_main(void)
      * like a random crash rather than a stack problem, and RAM is not scarce. */
     xTaskCreate(render_task, "render", 8192, NULL, 5, NULL);
 
-    ESP_ERROR_CHECK(wifi_start());
+    /*
+     * Provisioning owns the WiFi lifecycle: it joins the saved network, or
+     * opens a captive-portal setup access point when nothing is saved or the
+     * saved network does not answer. Either way it returns quickly and the
+     * render task keeps drawing placeholders throughout.
+     */
+    ESP_ERROR_CHECK(provision_init());
+    ESP_ERROR_CHECK(provision_start());
     sntp_time_start();
 
     /*

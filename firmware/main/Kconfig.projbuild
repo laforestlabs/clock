@@ -2,17 +2,39 @@ menu "Smart Mirror"
 
     menu "Network"
 
-        config MIRROR_WIFI_SSID
-            string "WiFi SSID"
-            default "changeme"
+        config MIRROR_CONNECT_TIMEOUT_S
+            int "Seconds to try saved credentials before opening the setup portal"
+            default 30
+            range 5 120
             help
-                Credentials live in sdkconfig, which is gitignored, so they do
-                not end up in the repository. Captive-portal provisioning
-                replaces this in M5.
+                On boot with saved credentials the mirror tries to join the
+                home network for this long. If it has no address by then it
+                opens its own setup access point instead, where the owner can
+                enter new details. Wrong-password and missing-network
+                failures open the portal sooner, as soon as the reason is
+                known.
 
-        config MIRROR_WIFI_PASSWORD
-            string "WiFi password"
+        config MIRROR_AP_SSID
+            string "Setup access point name"
+            default "Smart Mirror Setup"
+            help
+                The network the mirror creates when it has no working
+                credentials. The last four hex digits of the MAC are appended,
+                so several mirrors in one house do not collide. The setup page
+                is served at http://192.168.4.1.
+
+        config MIRROR_AP_PASSWORD
+            string "Setup access point password (empty = open)"
             default ""
+            help
+                Leave empty for an open setup network. For a deployed product
+                set a WPA2 password here (8 to 63 characters) and print it on
+                the device: on an open network, anyone within radio range can
+                open the setup page and claim the mirror.
+
+                Home WiFi credentials are never compiled in. The owner enters
+                them through the setup portal and they are stored in the
+                device's NVS.
 
         config MIRROR_WIFI_MAX_RETRY
             int "Reconnect attempts before backing off"

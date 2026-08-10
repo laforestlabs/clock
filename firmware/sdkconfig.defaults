@@ -1,7 +1,8 @@
 # Defaults for the ESP32-S3-DevKitC-1 N16R8.
 #
-# sdkconfig itself is gitignored, so WiFi credentials set through menuconfig
-# stay out of the repository.
+# sdkconfig itself is gitignored. Home WiFi credentials are never compiled
+# in: the owner enters them through the setup portal on first boot and they
+# are stored in the device's NVS.
 
 CONFIG_IDF_TARGET="esp32s3"
 
