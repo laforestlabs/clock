@@ -1,3 +1,4 @@
+#include "config.h"
 #include "sntp_time.h"
 
 #include <string.h>
@@ -34,10 +35,11 @@ static void on_sync(struct timeval *tv)
 void sntp_time_start(void)
 {
     /* Set the zone before the first sync so the very first rendered frame is
-     * already local rather than briefly UTC. */
-    setenv("TZ", CONFIG_MIRROR_TIMEZONE, 1);
+     * already local rather than briefly UTC. The value comes from NVS, set by
+     * the phone app; the Kconfig default is just the factory seed. */
+    setenv("TZ", mirror_config_timezone(), 1);
     tzset();
-    ESP_LOGI(TAG, "timezone %s", CONFIG_MIRROR_TIMEZONE);
+    ESP_LOGI(TAG, "timezone %s", mirror_config_timezone());
 
     esp_sntp_config_t config =
         ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_MIRROR_SNTP_SERVER);

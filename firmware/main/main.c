@@ -24,10 +24,15 @@
 #include "sdkconfig.h"
 
 #include "mirror/mirror.h"
+#include "config.h"
+#include "layout_store.h"
 #include "model_store.h"
 #include "net/provision.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
+#include "net/api_server.h"
+#include "net/ota.h"
+#include "net/ble.h"
 #include "panel.h"
 #include "providers/openmeteo.h"
 #include "providers/provider.h"
@@ -38,8 +43,6 @@ static const char *TAG = "mirror";
  * the golden-image tests use. */
 extern const char layout_json_start[] asm("_binary_mini_json_start");
 extern const char layout_json_end[] asm("_binary_mini_json_end");
-
-static ml_layout s_layout;
 
 /* Two frames a second. The clock only changes once a minute, but a cheap
  * redraw keeps the path warm and makes a hang obvious rather than looking like
@@ -112,7 +115,15 @@ static void render_task(void *arg)
             was_synced = true;
         }
 
-        ml_render(&s_layout, &model, &canvas);
+        /*
+         * The layout is owned by the layout store, which may swap it out from
+         * under us when a push arrives (HTTP or BLE task). Snapshotting keeps
+         * the render path free of locks and makes a push take effect at a
+         * frame boundary instead of mid-draw.
+         */
+        ml_layout layout;
+        layout_store_snapshot(&layout);
+        ml_render(&layout, &model, &canvas);
 
         /*
          * Export at full scale. Dimming is the driver's job, done by
@@ -139,41 +150,6 @@ static void render_task(void *arg)
         frames++;
 
         vTaskDelay(pdMS_TO_TICKS(RENDER_PERIOD_MS));
-    }
-}
-
-static void load_embedded_layout(void)
-{
-    const size_t len = (size_t)(layout_json_end - layout_json_start);
-
-    ml_diag diag;
-    if (!ml_layout_parse(layout_json_start, len, &s_layout, &diag)) {
-        /*
-         * The embedded layout is committed and covered by the host tests, so
-         * this should be impossible. Fall back to an empty canvas of the right
-         * size rather than leaving s_layout uninitialised: a blank panel is
-         * recoverable over the network in M4, a crash loop is not.
-         */
-        ESP_LOGE(TAG, "the embedded layout did not parse, which should not happen");
-        for (int i = 0; i < diag.count; i++) ESP_LOGE(TAG, "  %s", diag.msg[i]);
-        ml_layout_init(&s_layout, panel_width(), panel_height());
-        return;
-    }
-
-    ESP_LOGI(TAG, "layout \"%s\": %dx%d, %d widgets, brightness %u",
-             s_layout.name, s_layout.w, s_layout.h, s_layout.count,
-             (unsigned)s_layout.brightness);
-
-    for (int i = 0; i < diag.count; i++) ESP_LOGW(TAG, "  %s", diag.msg[i]);
-
-    /*
-     * A layout authored for a different panel geometry still renders, clipped,
-     * because the canvas is the hardware's size. Worth a loud warning though:
-     * silently cropping is confusing when half the widgets simply vanish.
-     */
-    if (s_layout.w != panel_width() || s_layout.h != panel_height()) {
-        ESP_LOGW(TAG, "layout is %dx%d but the panel is %dx%d, content will be clipped",
-                 s_layout.w, s_layout.h, panel_width(), panel_height());
     }
 }
 
@@ -210,9 +186,14 @@ void app_main(void)
     panel_test_pattern();
 #endif
 
-    load_embedded_layout();
-    panel_set_brightness(s_layout.brightness);
+    /* The layout store loads the pushed layout from SPIFFS when there is one
+     * and falls back to the embedded layout otherwise. */
+    ESP_ERROR_CHECK(layout_store_init(layout_json_start,
+                                      (size_t)(layout_json_end - layout_json_start)));
 
+    ml_layout boot;
+    layout_store_snapshot(&boot);
+    panel_set_brightness(boot.brightness);
     /* Render before the network comes up, so the panel shows placeholders
      * within a second of power-on instead of staying dark while WiFi
      * associates. */
@@ -221,12 +202,21 @@ void app_main(void)
      * like a random crash rather than a stack problem, and RAM is not scarce. */
     xTaskCreate(render_task, "render", 8192, NULL, 5, NULL);
 
+    /* The render task running means this app demonstrably boots. Cancel the
+     * rollback pending state; a crash before this point reverts to the
+     * previous image automatically. */
+    ota_mark_valid();
+
     /*
      * Provisioning owns the WiFi lifecycle: it joins the saved network, or
      * opens a captive-portal setup access point when nothing is saved or the
      * saved network does not answer. Either way it returns quickly and the
      * render task keeps drawing placeholders throughout.
      */
+    /* Owner config (timezone, coordinates, place) from NVS, seeded from
+     * Kconfig on first boot. Must precede sntp_time_start() so the first
+     * synced frame is already in the right zone. */
+    ESP_ERROR_CHECK(mirror_config_init());
     ESP_ERROR_CHECK(provision_init());
     ESP_ERROR_CHECK(provision_start());
     sntp_time_start();
@@ -248,6 +238,12 @@ void app_main(void)
     if (provider_count > 0) {
         ESP_ERROR_CHECK(providers_start(providers, provider_count));
     }
+
+    /* The LAN API (status/layout/OTA) and the Bluetooth config+layout
+     * service. Both are event-driven from here on; the API server starts
+     * when the station gets an IP. */
+    ESP_ERROR_CHECK(api_server_init());
+    ESP_ERROR_CHECK(ble_init());
 
     ESP_LOGI(TAG, "running");
 }

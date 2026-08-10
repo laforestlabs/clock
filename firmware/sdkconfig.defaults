@@ -55,3 +55,23 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # transition-mode networks still connect fine over their WPA2 half. The cost
 # is that WPA3-only networks are unsupported, which is rare in homes.
 CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n
+
+# SPIFFS on the storage partition (layouts pushed from the designer). The
+# magic markers let a virgin partition be detected and formatted on first
+# boot instead of mounting garbage.
+CONFIG_SPIFFS_USE_MAGIC=y
+CONFIG_SPIFFS_USE_MAGIC_LENGTH=y
+
+# OTA with automatic rollback: a new app that crashes before marking itself
+# valid is reverted by the boot loader on the next boot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Bluetooth: NimBLE in peripheral-only mode for the phone's config + layout
+# push. One connection, no pairing. Explicit chunking on the client means
+# data writes are always within the negotiated MTU; the preferred MTU just
+# sets how big a chunk can be.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512

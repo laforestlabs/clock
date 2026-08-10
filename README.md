@@ -41,8 +41,8 @@ is needed to run any of it today.
 | M1 Flutter layout designer (desktop and mobile) | Done, builds and runs on Linux |
 | M2 Panel bring-up on ESP32-S3 | Firmware written, awaiting hardware |
 | M3 Data providers | Weather done; todos pending, calendar deferred |
-| M4 Hot-reload layout push | Not started |
-| M5 Provisioning, brightness, OTA | Not started |
+| M4 Hot-reload layout push | Done: LAN API (status/layout) and BLE push from the designer, layout survives reboot in SPIFFS |
+| M5 Provisioning, brightness, OTA | Provisioning and brightness done in M2/M4; OTA done: POST /api/ota with automatic rollback |
 
 There is no companion service. Weather comes straight from Open-Meteo, which
 needs no API key. Calendar was deferred rather than solved with a helper box,

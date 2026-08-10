@@ -60,6 +60,9 @@ menu "Smart Mirror"
                 US Eastern:  EST5EDT,M3.2.0,M11.1.0
                 UTC:         UTC0
 
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
+
     endmenu
 
     menu "Weather"
@@ -74,11 +77,17 @@ menu "Smart Mirror"
                 Open-Meteo needs no API key and no signup, which means the
                 mirror has no weather credential to expire or leak.
 
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
+
         config MIRROR_LONGITUDE
             string "Longitude"
             default "-0.1278"
             help
                 Decimal degrees, negative for west.
+
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
 
         config MIRROR_PLACE_NAME
             string "Place label"
@@ -86,6 +95,9 @@ menu "Smart Mirror"
             help
                 Shown by anything bound to weather.place. Purely cosmetic;
                 the forecast comes from the coordinates above.
+
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
 
         config MIRROR_WEATHER_INTERVAL_S
             int "Refresh interval (seconds)"

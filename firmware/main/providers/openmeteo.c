@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "mirror/json.h"
@@ -72,7 +73,7 @@ static esp_err_t openmeteo_refresh(void)
              "weather_code,is_day,wind_speed_10m"
              "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
              "&forecast_days=1&timezone=auto",
-             CONFIG_MIRROR_LATITUDE, CONFIG_MIRROR_LONGITUDE);
+             mirror_config_latitude(), mirror_config_longitude());
 
     size_t len = 0;
     esp_err_t err = http_get(url, NULL, s_body, RESPONSE_CAP, &len, 10000);
@@ -92,7 +93,7 @@ static esp_err_t openmeteo_refresh(void)
      */
     ml_weather w;
     memset(&w, 0, sizeof(w));
-    snprintf(w.place, sizeof(w.place), "%s", CONFIG_MIRROR_PLACE_NAME);
+    snprintf(w.place, sizeof(w.place), "%s", mirror_config_place());
 
     const int current = ml_json_member(&j, 0, "current");
     if (current < 0) {

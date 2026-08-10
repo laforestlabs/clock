@@ -15,3 +15,9 @@ dependencies:
   ## has 0.3.x and the API documented there is the newer one.
   esphome/esp-hub75:
     version: "^0.3.0"
+
+  ## mDNS so the mirror advertises smart-mirror.local and the designer can
+  ## discover it without typing an IP. Split out of IDF into the component
+  ## registry in IDF 5.x.
+  espressif/mdns:
+    version: "^1.0.0"
