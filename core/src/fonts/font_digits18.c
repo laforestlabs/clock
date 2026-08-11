@@ -300,4 +300,5 @@ const ml_font ml_font_digits18 = {
     .bitmap   = s_digits18_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

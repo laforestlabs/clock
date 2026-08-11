@@ -44,6 +44,7 @@ void main() {
           'digits32',
           'wx16',
           'digits48',
+          'display24',
         ]),
         reason: 'the picker reads this list straight from the engine, so a '
             'missing name means the .font never reached the build',
@@ -55,12 +56,13 @@ void main() {
       // ladder of cuts and the engine picks the cut that fills the box.
       final names = engine!.families.map((f) => f.name).toList();
 
-      expect(names, containsAll(<String>['sans', 'digits', 'wx']));
+      expect(names, containsAll(<String>['display', 'sans', 'digits', 'wx']));
 
       final roleByName = <String, FontRole>{
         for (final f in engine!.families) f.name: f.role,
       };
       expect(roleByName['sans'], FontRole.text);
+      expect(roleByName['display'], FontRole.text);
       expect(roleByName['digits'], FontRole.digits);
       expect(roleByName['wx'], FontRole.icons);
     });
@@ -76,6 +78,7 @@ void main() {
       expect(byName['digits10'], 10);
       expect(byName['digits16'], 16);
       expect(byName['digits32'], 32);
+      expect(byName['display24'], 24);
     });
 
     test('reports the role each font declared', () {
@@ -90,6 +93,7 @@ void main() {
       expect(byName['digits16'], FontRole.digits);
       expect(byName['digits32'], FontRole.digits);
       expect(byName['wx16'], FontRole.icons);
+      expect(byName['display24'], FontRole.text);
     });
 
     test('the font picker leaves the pictograms out', () {

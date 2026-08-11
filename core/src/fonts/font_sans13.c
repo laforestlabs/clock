@@ -1389,4 +1389,5 @@ const ml_font ml_font_sans13 = {
     .bitmap   = s_sans13_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

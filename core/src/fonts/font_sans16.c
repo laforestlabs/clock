@@ -1677,4 +1677,5 @@ const ml_font ml_font_sans16 = {
     .bitmap   = s_sans16_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

@@ -18,11 +18,11 @@ import 'package:mirror_designer/src/controller.dart';
 import 'package:mirror_designer/src/engine/engine.dart';
 import 'package:mirror_designer/src/ui/inspector.dart';
 
-/// A clock naming the digits family with Fit on, so the box decides both the
-/// cut and the scale. The mock time is 09:41.
+/// A clock naming the single display family with Fit on. The mock time is
+/// 09:41; resizing changes scale continuously without changing font cuts.
 const String _doc = '{"canvas":{"width":64,"height":64},'
     '"background":"#000000","widgets":['
-    '{"type":"clock","rect":[0,0,64,32],"font":"digits",'
+    '{"type":"clock","rect":[0,0,64,32],"font":"display",'
     '"format":"%H:%M","color":"#FFFFFF","fit":true}]}';
 
 MirrorEngine? _tryOpen() {
@@ -56,18 +56,18 @@ void main() {
     engine.dispose();
   }, skip: skip);
 
-  test('shrinking the box re-resolves a fitted family', () {
+  test('shrinking the box continuously rescales the same font', () {
     final engine = MirrorEngine.open();
     engine.load(_doc);
     final wide = engine.widgets().single;
-    expect(wide.font, 'digits16');
+    expect(wide.font, 'display24');
     expect(wide.scale, greaterThan(1.0));
 
     // The same edit a resize drag makes: reload with a shorter box.
     engine.load(_doc.replaceAll('[0,0,64,32]', '[0,0,64,12]'));
     final short = engine.widgets().single;
-    expect(short.font, 'digits12');
-    expect(short.scale, 1.0);
+    expect(short.font, 'display24');
+    expect(short.scale, closeTo(0.5, 0.01));
     engine.dispose();
   }, skip: skip);
 

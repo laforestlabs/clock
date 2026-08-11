@@ -7,7 +7,7 @@
   "widgets": [
     { "type": "clock", "id": "clock",
       "rect": [0, 0, 64, 16],
-      "font": "digits16",
+      "font": "display", "fit": true,
       "color": "#00E5FF", "align": "center" },
 
     { "type": "icon", "id": "wx-icon",
@@ -17,12 +17,12 @@
 
     { "type": "text", "id": "temp",
       "rect": [18, 16, 46, 8],
-      "font": "sans", "bind": "weather.temp",
+      "font": "display", "fit": true, "bind": "weather.temp",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "conditions",
       "rect": [18, 24, 46, 8],
-      "font": "sans", "bind": "weather.label",
+      "font": "display", "fit": true, "bind": "weather.label",
       "color": "#8899AA" }
   ]
 }

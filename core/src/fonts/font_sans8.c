@@ -909,4 +909,5 @@ const ml_font ml_font_sans8 = {
     .bitmap   = s_sans8_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

@@ -53,8 +53,12 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *      whole multiple, and fractional scales anti-alias. Explicit whole-pixel
  *      "scale" output is unchanged, but a version 3 device floors a fitted
  *      widget to a whole multiple and disagrees with the preview.
+ *   5  fitted display text uses one high-resolution master that supports
+ *      continuous downscaling, with gamma-compensated area coverage.
+ *   6  weather symbols use the same continuous scaling path above and below
+ *      their 16px master instead of flooring fitted sizes to integer steps.
  */
-#define ML_RENDER_VERSION 4
+#define ML_RENDER_VERSION 6
 
 #ifdef __cplusplus
 }

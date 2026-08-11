@@ -128,28 +128,33 @@ are set from the phone app over Bluetooth. A layout that pins its own clock
 `format` or binds the raw `weather.temp_c` paths opts out of those settings
 deliberately.
 
-### Fonts: a few styles, many sizes
+### Fonts: one continuously scalable display face
 
-The catalogue is one typeface, Open Sans, in two *families* with a ladder of
-size *cuts* each, plus a weather icon set:
+New and stock layouts use one `display` family. It is stored once at 24px and
+area-resampled at render time, so dragging a box changes its scale continuously
+instead of switching cuts or jumping between integer multiples. Its figures
+are tabular, keeping clocks stable as digits change.
+
+Older font names remain registered so saved layouts continue to open:
 
 | family | role | cuts | source |
 |---|---|---|---|
+| `display` | all text and digits | one 24px scaling master | Open Sans Bold |
 | `sans` | text | 8 to 24px | Open Sans Regular |
 | `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
-| `wx` | icons | wx16 weather pictograms | hand-drawn |
+| `wx` | icons | one 16px scaling master | hand-drawn |
 
-Every text and clock cut is smooth: under `fit` it grows a fraction of a
-pixel at a time, anti-aliasing between whole-pixel steps, so dragging a box
-corner in the designer never jumps. Only the icon set keeps hard pixels, and
-any widget can overrule its font either way with `"smooth": true` or
-`"smooth": false`.
+The display master scales both below and above its source size. Area coverage
+preserves counters and stroke proportions while gamma compensation prevents
+partially covered LED pixels from becoming too dim after panel correction.
+The weather symbols use the same continuous area-resampling and
+gamma-compensated coverage, including boxes smaller than their 16px master.
 
 Naming a family leaves the size to the engine, which picks the cut that fills
 the widget's box and scales it the rest of the way:
 
 ```json
-{ "type": "clock", "rect": [0, 0, 64, 32], "font": "digits", "fit": true }
+{ "type": "clock", "rect": [0, 0, 64, 32], "font": "display", "fit": true }
 ```
 
 Naming an exact cut, `"font": "digits16"`, still pins that cut, so every
@@ -173,10 +178,9 @@ at one size until the box reaches the next multiple. `fit` overrides `scale`
 when both are set.
 
 `"smooth"` controls that anti-aliasing per widget, as a tri-state. Unset, the
-font decides: every text and clock cut smooths, the `wx` icon set floors the
-derived scale to a whole multiple to keep its hard pixels. `"smooth": true`
-anti-aliases any font on upscale, icons included; `"smooth": false` forces
-whole-pixel steps for hard edges on any font.
+font decides: the display and weather masters scale continuously, while legacy
+fonts retain their declared behavior. `"smooth": false` remains supported in
+hand-authored layouts for deliberate whole-pixel rendering.
 
 Width counts as much as height. Fitting on height alone was fine while every
 `fit` widget held one short string, and wrong the moment one did not: a 64x32
@@ -272,7 +276,7 @@ label with weather symbols.
 |---|---|---|
 | `sans8` to `sans24` | 8 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
 | `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
-| `wx16` | 16x16 | Ten weather icons, indexed by category. An icon set, not a typeface |
+| `wx16` | 16x16 master | Ten continuously scalable weather icons, indexed by category |
 
 Drop a font you do not use and it stops being compiled in: the build discovers
 `core/src/fonts/*.c` rather than listing them.

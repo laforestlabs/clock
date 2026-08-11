@@ -720,4 +720,5 @@ const ml_font ml_font_digits48 = {
     .bitmap   = s_digits48_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

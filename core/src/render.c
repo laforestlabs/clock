@@ -134,9 +134,9 @@ static const ml_font *fit_font(const ml_font *want, const char *sample, int box_
  * empty sample means the caller has no single string to fit, and only the
  * height is used.
  *
- * Never below 1x: a box too short for even one unscaled row still draws its
- * text clipped, which is visible and fixable, rather than silently shrinking
- * a 5x7 face into mush.
+ * Smooth fonts may scale below 1x, which is how a single high-resolution
+ * source face covers the full useful size range. Blocky fonts are still
+ * floored to whole multiples by widget_scale().
  */
 static int fit_scale(const ml_font *f, const char *sample, int box_w, int box_h)
 {
@@ -152,7 +152,8 @@ static int fit_scale(const ml_font *f, const char *sample, int box_w, int box_h)
         }
     }
 
-    if (s < ML_SCALE_1X)            s = ML_SCALE_1X;
+    const int minimum = f->downscale ? ML_SCALE_MIN : ML_SCALE_1X;
+    if (s < minimum)                s = minimum;
     if (s > ML_MAX_SCALE * ML_SCALE_1X) s = ML_MAX_SCALE * ML_SCALE_1X;
     return s;
 }
@@ -160,7 +161,7 @@ static int fit_scale(const ml_font *f, const char *sample, int box_w, int box_h)
 /* Hold a q8 scale inside the global range. */
 static int clamp_scale(int s)
 {
-    if (s < ML_SCALE_1X)                s = ML_SCALE_1X;
+    if (s < ML_SCALE_MIN)               s = ML_SCALE_MIN;
     if (s > ML_MAX_SCALE * ML_SCALE_1X) s = ML_MAX_SCALE * ML_SCALE_1X;
     return s;
 }
@@ -183,7 +184,10 @@ static int widget_scale(const ml_widget *w, const ml_font *f, const char *sample
      * overrules the font's own flag in both directions.
      */
     const bool smooth = w->has_smooth ? w->smooth : (f && f->smooth);
-    if (w->fit && !smooth) s &= ~255;
+    if (w->fit && !smooth) {
+        s &= ~255;
+        if (s < ML_SCALE_1X) s = ML_SCALE_1X;
+    }
     return clamp_scale(s);
 }
 
@@ -385,6 +389,21 @@ static const ml_font *choose_font(const ml_widget *w, const char *fallback,
 
     if (w->auto_font && sample && *sample) return best_font(w, f, sample, scale_out);
     return f;
+}
+
+/* Lists fit one row, not the entire list rectangle. The row count is part of
+ * the widget's layout contract; using the full height would make a three-row
+ * agenda render each title three rows tall when a scalable master is used. */
+static const ml_font *choose_list_font(const ml_widget *w, int *scale_out)
+{
+    ml_widget row = *w;
+    const int rows = w->max_items > 0 ? w->max_items : 4;
+    const int gaps = rows > 1 && w->line_gap > 0
+                         ? (rows - 1) * w->line_gap
+                         : 0;
+    row.rect.h = (w->rect.h - gaps) / rows;
+    if (row.rect.h < 1) row.rect.h = 1;
+    return choose_font(&row, "display24", NULL, scale_out);
 }
 
 /* Dimmed variant used for secondary rows and for missing-data placeholders. */
@@ -753,7 +772,7 @@ static void draw_text_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
     /* Font after the text, because the text is what has to fit. */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "sans9", buf, &sc);
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
@@ -767,7 +786,7 @@ static void draw_clock_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         sample_clock(w, m, buf, sizeof(buf)) ? dim(w->color) : w->color;
 
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "digits16", buf, &sc);
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
@@ -781,7 +800,7 @@ static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         sample_date(w, m, buf, sizeof(buf)) ? dim(w->color) : w->color;
 
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "sans9", buf, &sc);
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
     int tw = ml_text_width(f, buf, sc);
     int x  = align_x(w->align, w->rect, tw);
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
@@ -826,7 +845,7 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     sample_temp(m, buf, sizeof(buf));
 
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "sans9", buf, &sc);
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -867,7 +886,7 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
      * would shrink every row because one meeting has a long title.
      */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "sans9", NULL, &sc);
+    const ml_font *f = choose_list_font(w, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -916,7 +935,7 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     /* Height decides, for the same reason as the agenda. */
     int sc = ML_SCALE_1X;
-    const ml_font *f = choose_font(w, "sans9", NULL, &sc);
+    const ml_font *f = choose_list_font(w, &sc);
     const int fh     = ml_text_height(f, sc);
     int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
 
@@ -990,19 +1009,19 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
     switch (w->type) {
     case ML_W_TEXT:
         sample_text(w, m, buf, sizeof(buf));
-        f = choose_font(w, "sans9", buf, &sc);
+        f = choose_font(w, "display24", buf, &sc);
         break;
     case ML_W_CLOCK:
         sample_clock(w, m, buf, sizeof(buf));
-        f = choose_font(w, "digits16", buf, &sc);
+        f = choose_font(w, "display24", buf, &sc);
         break;
     case ML_W_DATE:
         sample_date(w, m, buf, sizeof(buf));
-        f = choose_font(w, "sans9", buf, &sc);
+        f = choose_font(w, "display24", buf, &sc);
         break;
     case ML_W_WEATHER:
         sample_temp(m, buf, sizeof(buf));
-        f = choose_font(w, "sans9", buf, &sc);
+        f = choose_font(w, "display24", buf, &sc);
         break;
     case ML_W_ICON: {
         char glyph[2];
@@ -1013,7 +1032,7 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
     }
     case ML_W_AGENDA:
     case ML_W_TODO:
-        f = choose_font(w, "sans9", NULL, &sc);
+        f = choose_list_font(w, &sc);
         break;
     default:
         return NULL;

@@ -440,4 +440,5 @@ const ml_font ml_font_digits28 = {
     .bitmap   = s_digits28_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

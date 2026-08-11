@@ -2061,4 +2061,5 @@ const ml_font ml_font_sans20 = {
     .bitmap   = s_sans20_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

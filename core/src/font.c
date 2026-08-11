@@ -81,10 +81,20 @@ bool ml_font_covers(const ml_font *f, const char *s)
     return true;
 }
 
+static int normalized_scale(const ml_font *f, int scale_q8)
+{
+    /* Early callers used 1 for the unscaled case before the public API exposed
+     * q8 values. Keep that shorthand compatible while reserving 32 and above
+     * for genuine fractional scales. */
+    if (scale_q8 > 0 && scale_q8 < ML_SCALE_MIN) return scale_q8 * ML_SCALE_1X;
+    const int minimum = f && f->downscale ? ML_SCALE_MIN : ML_SCALE_1X;
+    return scale_q8 < minimum ? minimum : scale_q8;
+}
+
 int ml_text_width(const ml_font *f, const char *s, int scale_q8)
 {
     if (!f || !s) return 0;
-    if (scale_q8 < ML_SCALE_1X) scale_q8 = ML_SCALE_1X;
+    scale_q8 = normalized_scale(f, scale_q8);
 
     int total = 0;
     bool first = true;
@@ -105,7 +115,7 @@ int ml_text_width(const ml_font *f, const char *s, int scale_q8)
 int ml_text_height(const ml_font *f, int scale_q8)
 {
     if (!f) return 0;
-    if (scale_q8 < ML_SCALE_1X) scale_q8 = ML_SCALE_1X;
+    scale_q8 = normalized_scale(f, scale_q8);
     return (f->height * scale_q8 + 128) / 256;
 }
 
@@ -144,6 +154,25 @@ static int draw_glyph_whole(ml_canvas *c, const ml_font *f, int idx,
     return width * scale;
 }
 
+/* Coverage is a fraction of emitted light, but canvas values are passed
+ * through the panel's gamma curve at export. Feeding raw coverage to blend
+ * applies gamma twice and makes anti-aliased stems nearly disappear. Map the
+ * desired luminous coverage back through the inverse gamma curve first. */
+static uint8_t coverage_alpha(int cover)
+{
+    int target = (cover * 255 + 32768) / 65536;
+    if (target <= 0) return 0;
+    if (target >= 255) return 255;
+
+    int lo = 0, hi = 255;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (ml_gamma8((uint8_t)mid) < target) lo = mid + 1;
+        else                                  hi = mid;
+    }
+    return (uint8_t)lo;
+}
+
 /*
  * Splat one isolated source pixel at a fractional position and size, inking
  * each destination pixel it touches by covered area. Only exact for a source
@@ -164,7 +193,7 @@ static void splat(ml_canvas *c, int fx, int fy, int scale_q8, ml_rgb color)
             const int cover = ox * oy;
             if (cover >= 65536)  ml_canvas_set(c, px, py, color);
             else if (cover > 0)  ml_canvas_blend(c, px, py, color,
-                                                 (uint8_t)((cover * 255) / 65536));
+                                                 coverage_alpha(cover));
         }
     }
 }
@@ -174,12 +203,11 @@ static void splat(ml_canvas *c, int fx, int fy, int scale_q8, ml_rgb color)
  * integer row the text starts on. Returns the q8 advance.
  *
  * Iterates destination pixels rather than source pixels. Each destination
- * pixel is overlapped by at most a 2x2 neighbourhood of source pixels (the
- * scale never goes below 1x, so a source pixel is always at least one
- * destination pixel wide), and the pixel's ink is the summed overlap of the
- * source pixels that are set, anti-aliasing the glyph by covered area. That
- * is what lets a fitted string grow one panel pixel at a time instead of
- * jumping between whole multiples.
+ * pixel receives the summed area of every source pixel that overlaps it. At
+ * scales below 1x this naturally averages several source pixels into one
+ * destination pixel; above 1x it distributes a source pixel across several.
+ * The same path therefore supports continuous shrinking and growth without a
+ * ladder of visually different bitmap cuts.
  *
  * Summing before blending matters: a destination pixel straddling the seam
  * between two inked source pixels is fully covered, and blending each
@@ -236,7 +264,7 @@ static int draw_glyph_frac(ml_canvas *c, const ml_font *f, int idx,
              * through set rather than blend at 255, keeping full ink exact. */
             if (cover >= 65536)  ml_canvas_set(c, px, py, color);
             else if (cover > 0)  ml_canvas_blend(c, px, py, color,
-                                                 (uint8_t)((cover * 255) / 65536));
+                                                 coverage_alpha(cover));
         }
     }
     return width * scale_q8;
@@ -246,7 +274,7 @@ int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
                  const char *s, ml_rgb color, int scale_q8)
 {
     if (!c || !f || !s) return 0;
-    if (scale_q8 < ML_SCALE_1X) scale_q8 = ML_SCALE_1X;
+    scale_q8 = normalized_scale(f, scale_q8);
 
     /* Whole multiples keep the exact block replication they have always had,
      * so unscaled and integrally scaled output stays bit-identical. */
@@ -282,7 +310,7 @@ int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
                          int max_w, const char *s, ml_rgb color, int scale_q8)
 {
     if (!c || !f || !s || max_w <= 0) return 0;
-    if (scale_q8 < ML_SCALE_1X) scale_q8 = ML_SCALE_1X;
+    scale_q8 = normalized_scale(f, scale_q8);
 
     /* Fast path: it fits, so draw it whole and skip the truncation logic. */
     if (ml_text_width(f, s, scale_q8) <= max_w) {

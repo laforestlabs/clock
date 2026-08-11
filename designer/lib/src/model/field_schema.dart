@@ -55,23 +55,9 @@ const List<FieldSpec> commonFields = <FieldSpec>[
 
 const FieldSpec _font = FieldSpec('font', 'Font', FieldKind.font);
 const FieldSpec _scale = FieldSpec('scale', 'Scale', FieldKind.integer,
-    min: 1,
-    max: 8,
-    help: 'Whole-pixel glyph scale. Ignored while Fit is on');
+    min: 1, max: 8, help: 'Whole-pixel glyph scale. Ignored while Fit is on');
 const FieldSpec _fit = FieldSpec('fit', 'Fit to box', FieldKind.boolean,
-    help: 'Grow the text with the box, width and height, anti-aliasing between whole-pixel steps');
-// Subpixel anti-aliasing on upscale, as a tri-state. Auto leaves it to the
-// font: every text and clock face smooths, the icon set stays blocky. The
-// other two overrule the font in either direction.
-const FieldSpec _smooth = FieldSpec('smooth', 'Smoothing', FieldKind.triState);
-// Offered on text, clock, date and weather only, because those are the widgets
-// the engine honours it for. An icon is indexed by digit and every body font
-// has digits, so substituting there would put a numeral where the weather icon
-// belongs; agenda and todo clip each row by design and are sized on height
-// alone. Showing the switch where it does nothing would be worse than omitting
-// it, since the preview would not move.
-const FieldSpec _autoFont = FieldSpec('auto_font', 'Auto font', FieldKind.boolean,
-    help: 'Let the engine pick whichever font fills the box best');
+    help: 'Continuously resize the display font to fill the box on both axes');
 const FieldSpec _align = FieldSpec('align', 'Align', FieldKind.align);
 const FieldSpec _valign = FieldSpec('valign', 'Vertical', FieldKind.valign);
 const FieldSpec _accent = FieldSpec('accent', 'Accent', FieldKind.color,
@@ -94,8 +80,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
-    _autoFont,
     _align,
     _valign,
   ],
@@ -105,8 +89,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
-    _autoFont,
     _align,
     _valign,
   ],
@@ -116,8 +98,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
-    _autoFont,
     _align,
     _valign,
   ],
@@ -125,8 +105,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
-    _autoFont,
     _accent,
     _lineGap,
     _align,
@@ -135,9 +113,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     FieldSpec('icon_set', 'Icon set', FieldKind.iconSet),
     _scale,
     _fit,
-    _smooth,
-    FieldSpec('bind', 'Binding', FieldKind.bind,
-        help: 'Usually weather.code'),
+    FieldSpec('bind', 'Binding', FieldKind.bind, help: 'Usually weather.code'),
     _align,
     _valign,
   ],
@@ -145,7 +121,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
     _accent,
     _maxItems,
     _lineGap,
@@ -155,7 +130,6 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _font,
     _scale,
     _fit,
-    _smooth,
     _accent,
     _maxItems,
     _lineGap,
@@ -163,8 +137,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
   ],
 };
 
-List<FieldSpec> fieldsFor(String type) =>
-    _byType[type] ?? const <FieldSpec>[];
+List<FieldSpec> fieldsFor(String type) => _byType[type] ?? const <FieldSpec>[];
 
 /// True when the engine knows this type. An unknown type still renders in the
 /// list so the user can see and fix it, but it draws nothing on the panel.

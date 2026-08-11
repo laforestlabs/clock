@@ -27,13 +27,14 @@ extern const ml_font ml_font_sans18;
 extern const ml_font ml_font_digits20;
 extern const ml_font ml_font_sans20;
 extern const ml_font ml_font_digits24;
+extern const ml_font ml_font_display24;
 extern const ml_font ml_font_sans24;
 extern const ml_font ml_font_digits28;
 extern const ml_font ml_font_digits32;
 extern const ml_font ml_font_digits40;
 extern const ml_font ml_font_digits48;
 
-const ml_font *const ml_font_registry[23] = {
+const ml_font *const ml_font_registry[24] = {
     &ml_font_sans8,
     &ml_font_sans9,
     &ml_font_digits10,
@@ -52,6 +53,7 @@ const ml_font *const ml_font_registry[23] = {
     &ml_font_digits20,
     &ml_font_sans20,
     &ml_font_digits24,
+    &ml_font_display24,
     &ml_font_sans24,
     &ml_font_digits28,
     &ml_font_digits32,
@@ -59,4 +61,4 @@ const ml_font *const ml_font_registry[23] = {
     &ml_font_digits48,
 };
 
-const int ml_font_registry_count = 23;
+const int ml_font_registry_count = 24;

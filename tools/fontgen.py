@@ -122,6 +122,7 @@ class Font:
         self.gap = 1
         self.family = ""
         self.smooth = True
+        self.downscale = False
         self.glyphs: dict[int, Glyph] = {}
         self._parse()
         self._validate()
@@ -172,6 +173,12 @@ class Font:
                             f"{self.path}:{lineno}: @smooth expects yes or no"
                         )
                     self.smooth = value == "yes"
+                elif key == "downscale":
+                    if value not in ("yes", "no"):
+                        raise FontError(
+                            f"{self.path}:{lineno}: @downscale expects yes or no"
+                        )
+                    self.downscale = value == "yes"
                 elif key == "role":
                     if value not in ROLES:
                         raise FontError(
@@ -331,6 +338,7 @@ class Font:
         out.append(f"    .bitmap   = s_{ident}_bitmap,")
         out.append(f'    .family   = "{self.family}",')
         out.append(f"    .smooth   = {'true' if self.smooth else 'false'},")
+        out.append(f"    .downscale = {'true' if self.downscale else 'false'},")
         out.append("};")
         out.append("")
         del widths
@@ -391,10 +399,11 @@ def main(argv: list[str]) -> int:
     by_family: dict[str, Font] = {}
     for font in fonts:
         first = by_family.setdefault(font.family, font)
-        if first.role != font.role or first.smooth != font.smooth:
+        if (first.role != font.role or first.smooth != font.smooth or
+                first.downscale != font.downscale):
             print(
                 f"fontgen: {font.path.name}: family {font.family!r} splits on "
-                f"role or @smooth between {first.path.name} and it",
+                f"role, @smooth or @downscale between {first.path.name} and it",
                 file=sys.stderr,
             )
             return 1

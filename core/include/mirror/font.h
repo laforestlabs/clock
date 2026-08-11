@@ -61,6 +61,8 @@ typedef struct {
      * edges.
      */
     bool            smooth;
+    /* This cut is a high-resolution master intended to render below 1x. */
+    bool            downscale;
 } ml_font;
 
 /* Look up a font by name. Returns NULL if not registered. */
@@ -99,7 +101,9 @@ bool           ml_font_covers(const ml_font *f, const char *s);
 /*
  * Scale is fixed-point with 8 fractional bits: ML_SCALE_1X draws unscaled,
  * 2 * ML_SCALE_1X doubles, and anything in between is a fractional scale.
- * Anything below ML_SCALE_1X is treated as ML_SCALE_1X.
+ * ML_SCALE_MIN is the smallest supported render. Allowing fitted text below
+ * 1x lets one high-resolution source face scale down cleanly instead of
+ * switching among unrelated bitmap cuts as a box is dragged.
  *
  * A whole multiple of ML_SCALE_1X replicates each glyph pixel into a block,
  * exactly as bitmap fonts have always grown here. A fractional scale instead
@@ -110,6 +114,7 @@ bool           ml_font_covers(const ml_font *f, const char *s);
  * jumping between whole multiples.
  */
 #define ML_SCALE_1X 256
+#define ML_SCALE_MIN 32
 
 /* Advance width of a string in pixels, including inter-glyph gaps. */
 int ml_text_width(const ml_font *f, const char *s, int scale_q8);

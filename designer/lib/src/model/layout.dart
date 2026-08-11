@@ -63,9 +63,8 @@ class LayoutDoc {
   String get name => (_raw['name'] as String?) ?? 'untitled';
   set name(String value) => _raw['name'] = value;
 
-  String get background => (_raw['background'] as String?) ??
-      (_raw['bg'] as String?) ??
-      '#000000';
+  String get background =>
+      (_raw['background'] as String?) ?? (_raw['bg'] as String?) ?? '#000000';
   set background(String value) => _raw['background'] = value;
 
   int get brightness => _asInt(_raw['brightness']) ?? 255;
@@ -110,7 +109,7 @@ class LayoutDoc {
 
   LayoutWidget addWidget(String type, {Rect? rect}) {
     final placed = rect ?? _findFreeSpot();
-    final widget = LayoutWidget(<String, dynamic>{
+    final raw = <String, dynamic>{
       'type': type,
       'rect': <int>[
         placed.left.round(),
@@ -119,7 +118,20 @@ class LayoutDoc {
         placed.height.round(),
       ],
       'color': '#FFFFFF',
-    });
+    };
+    const textTypes = <String>{
+      'text',
+      'clock',
+      'date',
+      'weather',
+      'agenda',
+      'todo'
+    };
+    if (textTypes.contains(type)) {
+      raw['font'] = 'display';
+      raw['fit'] = true;
+    }
+    final widget = LayoutWidget(raw);
     _widgetList.add(widget.raw);
     return widget;
   }
@@ -166,7 +178,8 @@ class LayoutDoc {
     const h = 8.0;
     for (var y = 0; y + h <= height; y += 9) {
       final candidate = Rect.fromLTWH(1, y.toDouble(), w, h);
-      final clash = widgets.any((existing) => existing.rect.overlaps(candidate));
+      final clash =
+          widgets.any((existing) => existing.rect.overlaps(candidate));
       if (!clash) return candidate;
     }
     return const Rect.fromLTWH(1, 1, w, h);

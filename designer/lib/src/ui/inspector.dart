@@ -105,12 +105,14 @@ class _RectEditor extends StatelessWidget {
       children: <Widget>[
         Row(
           children: <Widget>[
-            Expanded(child: _num(context, 'X', r.left.toInt(), (v) {
+            Expanded(
+                child: _num(context, 'X', r.left.toInt(), (v) {
               controller.setSelectedRect(
                   Rect.fromLTWH(v.toDouble(), r.top, r.width, r.height));
             })),
             const SizedBox(width: 8),
-            Expanded(child: _num(context, 'Y', r.top.toInt(), (v) {
+            Expanded(
+                child: _num(context, 'Y', r.top.toInt(), (v) {
               controller.setSelectedRect(
                   Rect.fromLTWH(r.left, v.toDouble(), r.width, r.height));
             })),
@@ -119,12 +121,14 @@ class _RectEditor extends StatelessWidget {
         const SizedBox(height: 8),
         Row(
           children: <Widget>[
-            Expanded(child: _num(context, 'W', r.width.toInt(), (v) {
+            Expanded(
+                child: _num(context, 'W', r.width.toInt(), (v) {
               controller.setSelectedRect(
                   Rect.fromLTWH(r.left, r.top, v.toDouble(), r.height));
             })),
             const SizedBox(width: 8),
-            Expanded(child: _num(context, 'H', r.height.toInt(), (v) {
+            Expanded(
+                child: _num(context, 'H', r.height.toInt(), (v) {
               controller.setSelectedRect(
                   Rect.fromLTWH(r.left, r.top, r.width, v.toDouble()));
             })),
@@ -134,14 +138,18 @@ class _RectEditor extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            _nudge(Icons.keyboard_arrow_left, () => controller.nudgeSelected(-1, 0)),
+            _nudge(Icons.keyboard_arrow_left,
+                () => controller.nudgeSelected(-1, 0)),
             Column(
               children: <Widget>[
-                _nudge(Icons.keyboard_arrow_up, () => controller.nudgeSelected(0, -1)),
-                _nudge(Icons.keyboard_arrow_down, () => controller.nudgeSelected(0, 1)),
+                _nudge(Icons.keyboard_arrow_up,
+                    () => controller.nudgeSelected(0, -1)),
+                _nudge(Icons.keyboard_arrow_down,
+                    () => controller.nudgeSelected(0, 1)),
               ],
             ),
-            _nudge(Icons.keyboard_arrow_right, () => controller.nudgeSelected(1, 0)),
+            _nudge(Icons.keyboard_arrow_right,
+                () => controller.nudgeSelected(1, 0)),
           ],
         ),
       ],
@@ -251,7 +259,7 @@ class _Field extends StatelessWidget {
           // purpose from a font menu. A layout naming an exact cut still
           // shows it, via _Dropdown's handling of unlisted values.
           options: controller.engine.families
-              .where((f) => f.drawsText)
+              .where((f) => f.drawsText && f.name == 'display')
               .map((f) => f.name)
               .toList(growable: false),
           onChanged: (v) =>
@@ -301,7 +309,8 @@ class _Field extends StatelessWidget {
 
       case FieldKind.align:
       case FieldKind.valign:
-        final options = spec.kind == FieldKind.align ? alignOptions : valignOptions;
+        final options =
+            spec.kind == FieldKind.align ? alignOptions : valignOptions;
         return _Segmented(
           label: spec.label,
           value: widget.getString(spec.key) ?? options.first,
@@ -320,8 +329,8 @@ class _Field extends StatelessWidget {
           label: spec.label,
           value: smooth == null ? 'Auto' : (smooth ? 'Smooth' : 'Blocky'),
           options: const <String>['Auto', 'Smooth', 'Blocky'],
-          onChanged: (v) => controller.updateSelected((w) => w.setBool(
-              spec.key, v == 'Auto' ? null : v == 'Smooth')),
+          onChanged: (v) => controller.updateSelected(
+              (w) => w.setBool(spec.key, v == 'Auto' ? null : v == 'Smooth')),
         );
 
       case FieldKind.integer:
@@ -428,7 +437,9 @@ class _IntField extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          eff != null ? '$label: ${_formatScale(eff)} (fit)' : '$label: $current',
+          eff != null
+              ? '$label: ${_formatScale(eff)} (fit)'
+              : '$label: $current',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         Slider(
@@ -464,7 +475,8 @@ class _Dropdown extends StatelessWidget {
     // A value not in the list (hand-edited, or a font this build lacks) must
     // still display rather than throwing.
     final items = <String>[
-      if (value != null && value!.isNotEmpty && !options.contains(value)) value!,
+      if (value != null && value!.isNotEmpty && !options.contains(value))
+        value!,
       ...options,
     ];
 
@@ -537,8 +549,16 @@ class _ColorField extends StatelessWidget {
   /// Palette chosen to stay legible through a two-way mirror: saturated and
   /// bright, with no mid greys, which vanish at 20 percent transmission.
   static const List<String> _swatches = <String>[
-    '#FFFFFF', '#00E5FF', '#66D9EF', '#FF9F43', '#FFC24D',
-    '#E06C5A', '#5AA0E0', '#A0E060', '#8899AA', '#1E2A33',
+    '#FFFFFF',
+    '#00E5FF',
+    '#66D9EF',
+    '#FF9F43',
+    '#FFC24D',
+    '#E06C5A',
+    '#5AA0E0',
+    '#A0E060',
+    '#8899AA',
+    '#1E2A33',
   ];
 
   Color? get _parsed {
@@ -597,7 +617,8 @@ class _ColorField extends StatelessWidget {
                     width: 20,
                     height: 20,
                     decoration: BoxDecoration(
-                      color: Color(0xFF000000 | int.parse(hex.substring(1), radix: 16)),
+                      color: Color(
+                          0xFF000000 | int.parse(hex.substring(1), radix: 16)),
                       border: Border.all(color: Colors.white24),
                       borderRadius: BorderRadius.circular(3),
                     ),
@@ -714,7 +735,8 @@ class _LayoutProperties extends StatelessWidget {
 
   final DesignerController controller;
 
-  static const List<({String label, int w, int h})> _presets = <({String label, int w, int h})>[
+  static const List<({String label, int w, int h})> _presets =
+      <({String label, int w, int h})>[
     (label: '64x64 (1 panel)', w: 64, h: 64),
     (label: '128x64 (2 panels)', w: 128, h: 64),
     (label: '128x128 (4 panels)', w: 128, h: 128),

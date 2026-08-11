@@ -2445,4 +2445,5 @@ const ml_font ml_font_sans24 = {
     .bitmap   = s_sans24_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

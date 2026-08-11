@@ -244,4 +244,5 @@ const ml_font ml_font_digits14 = {
     .bitmap   = s_digits14_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

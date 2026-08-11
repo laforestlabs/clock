@@ -496,4 +496,5 @@ const ml_font ml_font_digits32 = {
     .bitmap   = s_digits32_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

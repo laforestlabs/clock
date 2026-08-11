@@ -1293,4 +1293,5 @@ const ml_font ml_font_sans12 = {
     .bitmap   = s_sans12_bitmap,
     .family   = "sans",
     .smooth   = true,
+    .downscale = false,
 };

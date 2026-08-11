@@ -437,7 +437,10 @@ static void test_fonts(void)
     CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
     CHECK(ml_font_find("sans24") != NULL, "sans24 registered");
     CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
-    CHECK(ml_font_count() == 23, "23 font cuts in the registry");
+    CHECK(ml_font_find("display24") != NULL, "scalable display master registered");
+    CHECK(ml_font_count() == 24, "24 font cuts in the registry");
+    CHECK(ml_font_find("display24")->downscale,
+          "the display master supports continuous downscaling");
 
     /*
      * Families and smoothness. A layout naming a family gets the cut that
@@ -456,7 +459,8 @@ static void test_fonts(void)
     CHECK(body->smooth == true, "sans anti-aliases");
     CHECK(ml_font_find("sans8")->smooth == true, "even the smallest cut anti-aliases");
     CHECK(clock->smooth == true, "the digits face anti-aliases");
-    CHECK(icons->smooth == false, "wx16 keeps hard pixels");
+    CHECK(icons->smooth == true, "wx16 scales smoothly");
+    CHECK(icons->downscale == true, "wx16 supports boxes below its master size");
 
     /*
      * Roles. Coverage cannot separate a clock face from an icon set, because the
@@ -845,6 +849,29 @@ static void test_fit_continuous(void)
         CHECK(bottom < box_h, "fitted text never spills below its box");
         ml_canvas_free(&c);
     }
+
+    /* The display family is one 24px master, including below 1x. Resizing the
+     * box changes only its scale; it never jumps to a different optical cut. */
+    int previous_scale = 0;
+    for (int box_h = 6; box_h <= 24; box_h++) {
+        char doc[256];
+        snprintf(doc, sizeof(doc),
+                 "{\"canvas\":{\"width\":64,\"height\":64},\"widgets\":["
+                 "{\"type\":\"text\",\"rect\":[0,0,64,%d],\"text\":\"Ag\","
+                 "\"font\":\"display\",\"fit\":true}]}", box_h);
+        ml_layout l;
+        ml_diag d;
+        CHECK(ml_layout_parse(doc, strlen(doc), &l, &d),
+              "scalable display doc parses");
+        int scale = 0;
+        const ml_font *f = ml_widget_resolve_font(&l.widgets[0], &(ml_model){0},
+                                                  &scale);
+        CHECK(f && strcmp(f->name, "display24") == 0,
+              "every box size keeps the same display master");
+        CHECK(scale > previous_scale,
+              "each added box row increases the display scale");
+        previous_scale = scale;
+    }
 }
 
 /* Whether two canvases of the same size hold identical pixels. */
@@ -905,7 +932,7 @@ static void test_family_pick(void)
     static const char agenda_default[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,32],"
-        "\"font\":\"sans9\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
+        "\"font\":\"display24\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
     if (!render_doc(agenda, 64, 64, &a) || !render_doc(agenda_default, 64, 64, &b)) {
         CHECK(false, "agenda docs parse");
         return;
@@ -943,27 +970,23 @@ static void test_fit_blocky(void)
         ml_canvas_free(&c);
     }
 
-    /* The toggle overrules the font in the other direction too: wx16 is a
-     * blocky icon set, yet a widget that asks for smooth gets the fractional
-     * 1.5x this 24px box derives, anti-aliased edges and all. */
+    /* Weather symbols use one master continuously above and below 1x. Every
+     * one-pixel square-box change must produce a new fractional scale. */
     ml_sim *s = ml_sim_create();
     if (!s) { CHECK(false, "sim created"); return; }
-    static const char icon_blocky[] =
-        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
-        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,24,24],"
-        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
-        "\"fit\":true}]}";
-    static const char icon_smooth[] =
-        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
-        "\"widgets\":[{\"type\":\"icon\",\"rect\":[0,0,24,24],"
-        "\"icon_set\":\"wx16\",\"bind\":\"weather.code\",\"color\":\"#FFFFFF\","
-        "\"fit\":true,\"smooth\":true}]}";
-    CHECK(ml_sim_load(s, icon_blocky) == 1, "icon doc loads");
-    CHECK(ml_sim_widget_scale(s, 0) == ML_SCALE_1X,
-          "an icon set floors its fitted scale by default");
-    CHECK(ml_sim_load(s, icon_smooth) == 1, "smooth icon doc loads");
-    CHECK(ml_sim_widget_scale(s, 0) == 384,
-          "smooth on anti-aliases even a blocky icon set");
+    int previous = 0;
+    for (int size = 8; size <= 32; size++) {
+        char doc[256];
+        snprintf(doc, sizeof(doc),
+                 "{\"canvas\":{\"width\":64,\"height\":64},\"widgets\":["
+                 "{\"type\":\"icon\",\"rect\":[0,0,%d,%d],"
+                 "\"icon_set\":\"wx16\",\"bind\":\"weather.code\","
+                 "\"fit\":true}]}", size, size);
+        CHECK(ml_sim_load(s, doc) == 1, "scalable weather icon doc loads");
+        const int scale = ml_sim_widget_scale(s, 0);
+        CHECK(scale > previous, "each box pixel increases weather icon scale");
+        previous = scale;
+    }
     ml_sim_destroy(s);
 }
 
@@ -1320,14 +1343,14 @@ static void test_scale_floor(void)
     static const char list_face[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
-        "\"font\":\"digits10\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
+        "\"font\":\"sans8\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
     if (!render_doc(list_named, 64, 64, &a) || !render_doc(list_face, 64, 64, &b)) {
         CHECK(false, "list docs parse");
         return;
     }
     CHECK(ink_total(&a, 64, 64) > 0, "an agenda in a 14px box draws");
-    CHECK(!same_canvas(&a, &b, 64, 64),
-          "a list falls back to a text font rather than to a clock face");
+    CHECK(same_canvas(&a, &b, 64, 64),
+          "a list falls back to the shortest compatible text face");
     ml_canvas_free(&a);
     ml_canvas_free(&b);
 }

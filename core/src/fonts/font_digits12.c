@@ -216,4 +216,5 @@ const ml_font ml_font_digits12 = {
     .bitmap   = s_digits12_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };

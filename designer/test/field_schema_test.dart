@@ -25,26 +25,22 @@ void main() {
       }
     });
 
-    test('auto font is offered where the engine acts on it', () {
-      for (final type in <String>['text', 'clock', 'date', 'weather']) {
-        expect(keysFor(type), contains('auto_font'), reason: type);
-      }
-    });
-
-    test('and withheld where it would do nothing or do harm', () {
-      // icon: indexed by digit, and every body font has digits, so substituting
-      // would draw a numeral instead of the weather glyph. agenda and todo are
-      // sized on height alone because they clip each row by design, so the
-      // engine never reaches the auto_font branch for them.
-      for (final type in <String>['icon', 'agenda', 'todo']) {
+    test('automatic substitution is hidden in the single-font designer', () {
+      for (final type in <String>[
+        'text',
+        'clock',
+        'date',
+        'weather',
+        'icon',
+        'agenda',
+        'todo'
+      ]) {
         expect(
           keysFor(type),
           isNot(contains('auto_font')),
-          reason: '$type does not honour auto_font, so offering it would put a '
-              'switch in the inspector that leaves the preview unchanged',
+          reason: '$type should keep the display face while its box resizes',
         );
       }
     });
-
   });
 }

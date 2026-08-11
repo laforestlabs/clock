@@ -188,4 +188,5 @@ const ml_font ml_font_digits10 = {
     .bitmap   = s_digits10_bitmap,
     .family   = "digits",
     .smooth   = true,
+    .downscale = false,
 };
