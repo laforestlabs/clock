@@ -36,8 +36,10 @@ idf.py -C firmware flash monitor
 
 This board's USB-C routes through its onboard CH343 to UART0, so flashing and
 the serial console need no external adapter. `sdkconfig` is
-gitignored; the only things it holds are choices like the timezone and the
-shift-register driver.
+gitignored and generated from `sdkconfig.defaults`; the defaults are the
+source of truth, and after changing one, delete the local `sdkconfig` so it
+regenerates. Nothing in it holds anything private: only choices like the
+timezone and the shift-register driver.
 
 Everything in the `Smart Mirror` menuconfig section has a working default.
 WiFi credentials are deliberately not there: the owner enters them through

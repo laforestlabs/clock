@@ -13,6 +13,13 @@
  * Trust model: one connection, no pairing or security, same as the open
  * setup portal. It is a home device on a home network.
  *
+ * Commits (the actual NVS/SPIFFS writes, tzset, provider refreshes) run on a
+ * dedicated "ble_commit" task with its own 8KB stack, not on the BLE host
+ * task: those paths together need more stack than the host task has, and
+ * blocking the host task on a flash write would stall the link. cmd_commit
+ * detaches the staging buffer and queues it; the commit task owns it from
+ * there and sends the commit's status line itself.
+ *
  * UUIDs are 128-bit, base 5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01, with the
  * characteristic suffixes ...02 (cmd), ...03 (data), ...04 (status). NimBLE
  * stores 128-bit UUIDs with the canonical string reversed, so the value
@@ -32,6 +39,7 @@
 #include "esp_mac.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "host/ble_gap.h"
@@ -92,12 +100,36 @@ typedef struct {
 
 static transfer_t      s_xfer;
 static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_status_lock;
 static char            s_dev_name[MAX_DEV_NAME];
 static char            s_last_status[MAX_STATUS_LEN];
 static size_t          s_last_status_len;
 static uint16_t        s_status_handle;
 static uint16_t        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint8_t         s_adv_addr_type;
+
+/*
+ * Commit processing (NVS/SPIFFS writes, tzset, provider refresh) runs on a
+ * dedicated task, not on the BLE host task: those paths together need more
+ * stack than the host task has, and holding the host task on a flash write
+ * delays the link. cmd_commit detaches the staging buffer and hands it over
+ * through this queue; the commit task owns it from there and sends the
+ * commit's status line itself. The phone pushes one transfer at a time, so
+ * the queue only ever has a single job in practice; the depth is defensive
+ * and a full queue is rejected rather than blocking the host task.
+ */
+#define COMMIT_Q_DEPTH      2
+#define COMMIT_STACK_BYTES  8192
+
+typedef struct {
+    transfer_kind_t kind;
+    char           *buf;
+    size_t          len;
+} commit_job_t;
+
+static QueueHandle_t   s_commit_q;
+static StackType_t     s_commit_stack[COMMIT_STACK_BYTES / sizeof(StackType_t)];
+static StaticTask_t    s_commit_tcb;
 
 static int gap_event_cb(struct ble_gap_event *event, void *arg);
 
@@ -138,11 +170,21 @@ static void *alloc_payload_buffer(void)
 
 static void send_status(const char *fmt, ...)
 {
+    /*
+     * Serialized: the host task and the commit task both write the shared
+     * status buffer and notify from it. The lock is never held by a caller
+     * (no send_status call runs under s_lock), so taking it here cannot
+     * deadlock.
+     */
+    xSemaphoreTake(s_status_lock, portMAX_DELAY);
     va_list ap;
     va_start(ap, fmt);
     const int len = vsnprintf(s_last_status, sizeof(s_last_status), fmt, ap);
     va_end(ap);
-    if (len < 0) return;
+    if (len < 0) {
+        xSemaphoreGive(s_status_lock);
+        return;
+    }
     s_last_status_len = (size_t)len;
     if (s_last_status_len >= sizeof(s_last_status)) {
         s_last_status_len = sizeof(s_last_status) - 1;
@@ -158,6 +200,7 @@ static void send_status(const char *fmt, ...)
             ble_gatts_notify_custom(s_conn_handle, s_status_handle, om);
         }
     }
+    xSemaphoreGive(s_status_lock);
 }
 
 static void json_escape(char *out, size_t outsz, const char *in)
@@ -183,8 +226,8 @@ static void json_escape(char *out, size_t outsz, const char *in)
 
 static void cmd_ping(void)
 {
-    /* Static: ml_layout is ~6.6KB and the BLE host task stack is 4KB. Only
-     * the host task touches it, so a static buffer is safe. */
+    /* Static: ml_layout is ~6.6KB, too big for a stack buffer on either the
+     * host task or this one, and only the host task touches it. */
     static ml_layout layout;
     layout_store_snapshot(&layout);
 
@@ -283,46 +326,79 @@ static void cmd_commit(void)
     s_xfer.received = 0;
     unlock();
 
-    /* Work on the copied-out payload: the transfer state is free and the
-     * store/config modules are themselves locked, so a concurrent push can
-     * start cleanly. */
-    if (kind == TRANSFER_LAYOUT) {
-        ml_diag diag;
-        ml_diag_reset(&diag);
-        if (layout_store_apply(buf, len, &diag) == ESP_ERR_INVALID_ARG) {
-            const char *msg = diag.count > 0 ? diag.msg[0] : "layout rejected";
-            ESP_LOGW(TAG, "layout commit rejected: %s", msg);
-            send_status("commit error %s", msg);
-            heap_caps_free((void *)buf);
-            return;
-        }
-        /* Re-parse just for the widget count the status line reports. The
-         * host task stack is 4KB and ml_layout is ~6.6KB, so this lives on
-         * the heap. */
-        ml_layout *parsed = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_SPIRAM);
-        int count = 0;
-        if (parsed != NULL) {
-            ml_diag count_diag;
-            ml_diag_reset(&count_diag);
-            if (ml_layout_parse(buf, len, parsed, &count_diag)) {
-                count = parsed->count;
-            }
-            heap_caps_free(parsed);
-        }
-        send_status("commit ok %d widgets", count);
-    } else {   /* TRANSFER_CONFIG */
-        char err[96];
-        if (mirror_config_apply_json(buf, len, err, sizeof(err)) != ESP_OK) {
-            ESP_LOGW(TAG, "config commit rejected: %s", err);
-            send_status("commit error %s", err);
-            heap_caps_free((void *)buf);
-            return;
-        }
-        send_status("commit ok");
+    /* Hand the payload to the commit task: the transfer state is free and
+     * the store/config modules are themselves locked, so a concurrent push
+     * can start cleanly while the commit work runs off the host task. */
+    const commit_job_t job = { .kind = kind, .buf = buf, .len = len };
+    if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
+        /* The phone pushes one transfer at a time, so a full queue means a
+         * commit is already in flight. Reject rather than block the host
+         * task on a queue send. */
+        ESP_LOGW(TAG, "commit queue full, rejecting");
+        send_status("commit error busy");
+        heap_caps_free((void *)buf);
+        return;
     }
+    ESP_LOGI(TAG, "commit queued, %u bytes", (unsigned)len);
+}
 
-    ESP_LOGI(TAG, "committed %u bytes", (unsigned)len);
-    heap_caps_free((void *)buf);
+/*
+ * The commit worker. NVS/SPIFFS writes, tzset, provider refreshes and the
+ * layout re-parse together need more stack than the BLE host task has, and
+ * blocking the host task on a flash write would stall the link, so commits
+ * arrive detached here through s_commit_q and the task owns them. Status
+ * lines go back over the same notification as always, so the phone sees no
+ * difference from a synchronous commit. A disconnect while a commit is
+ * queued does not cancel it: the payload is already detached, and send_status
+ * simply no-ops once there is no connection.
+ */
+static void commit_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        commit_job_t job;
+        if (xQueueReceive(s_commit_q, &job, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        if (job.kind == TRANSFER_LAYOUT) {
+            ml_diag diag;
+            ml_diag_reset(&diag);
+            if (layout_store_apply(job.buf, job.len, &diag) == ESP_ERR_INVALID_ARG) {
+                const char *msg = diag.count > 0 ? diag.msg[0] : "layout rejected";
+                ESP_LOGW(TAG, "layout commit rejected: %s", msg);
+                send_status("commit error %s", msg);
+                heap_caps_free((void *)job.buf);
+                continue;
+            }
+            /* Re-parse just for the widget count the status line reports.
+             * ml_layout is ~6.6KB, so this lives on the heap. */
+            ml_layout *parsed = heap_caps_malloc(sizeof(ml_layout),
+                                                 MALLOC_CAP_SPIRAM);
+            int count = 0;
+            if (parsed != NULL) {
+                ml_diag count_diag;
+                ml_diag_reset(&count_diag);
+                if (ml_layout_parse(job.buf, job.len, parsed, &count_diag)) {
+                    count = parsed->count;
+                }
+                heap_caps_free(parsed);
+            }
+            send_status("commit ok %d widgets", count);
+        } else {   /* TRANSFER_CONFIG */
+            char err[96];
+            if (mirror_config_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
+                ESP_LOGW(TAG, "config commit rejected: %s", err);
+                send_status("commit error %s", err);
+                heap_caps_free((void *)job.buf);
+                continue;
+            }
+            send_status("commit ok");
+        }
+
+        ESP_LOGI(TAG, "committed %u bytes", (unsigned)job.len);
+        heap_caps_free((void *)job.buf);
+    }
 }
 
 static void cmd_abort(void)
@@ -614,6 +690,23 @@ esp_err_t ble_init(void)
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) return ESP_ERR_NO_MEM;
 
+    s_status_lock = xSemaphoreCreateMutex();
+    if (s_status_lock == NULL) return ESP_ERR_NO_MEM;
+
+    s_commit_q = xQueueCreate(COMMIT_Q_DEPTH, sizeof(commit_job_t));
+    if (s_commit_q == NULL) {
+        ESP_LOGE(TAG, "commit queue allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Commit work (flash writes, tzset, provider refresh) lives here, not on
+     * the BLE host task. The stack is static internal SRAM on purpose: the
+     * task runs NVS/SPIFFS writes, which are performed with the flash cache
+     * disabled, and a PSRAM-backed stack would be unreachable mid-write. */
+    xTaskCreateStatic(commit_task, "ble_commit",
+                      COMMIT_STACK_BYTES / sizeof(StackType_t), NULL, 5,
+                      s_commit_stack, &s_commit_tcb);
+
     /* Same naming convention as the setup access point (build_ap_ssid):
      * last four hex digits of the STA MAC, so several mirrors in one house
      * do not collide. */
@@ -656,7 +749,7 @@ esp_err_t ble_init(void)
 
     /* The host task is created by the ESP-IDF port at
      * configMAX_PRIORITIES - 4 with CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE
-     * (4096) bytes. */
+     * bytes. */
     nimble_port_freertos_init(host_task);
 
     ESP_LOGI(TAG, "advertising as \"%s\"", s_dev_name);

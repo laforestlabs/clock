@@ -1,8 +1,11 @@
 # Defaults for the ESP32-S3-DevKitC-1 N16R8.
 #
-# sdkconfig itself is gitignored. Home WiFi credentials are never compiled
-# in: the owner enters them through the setup portal on first boot and they
-# are stored in the device's NVS.
+# sdkconfig itself is gitignored and generated from these defaults on a fresh
+# checkout. Note that confgen only seeds sdkconfig from defaults when the file
+# does not exist yet: after changing a default, delete firmware/sdkconfig (or
+# regenerate it) for the new value to take effect. Home WiFi credentials are
+# never compiled in: the owner enters them through the setup portal on first
+# boot and they are stored in the device's NVS.
 
 CONFIG_IDF_TARGET="esp32s3"
 
@@ -75,3 +78,8 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
+# The host task processes the phone's commands, and 4KB is tight once NimBLE's
+# own ATT/L2CAP frames are on the stack with the command handler. Commits run
+# on their own task (see net/ble.c), but the command path itself still wants
+# headroom; RAM is not scarce on the N16R8.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192

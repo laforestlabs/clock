@@ -162,6 +162,72 @@ static void fail(char *err, size_t errsz, const char *msg)
     if (err != NULL && errsz > 0) snprintf(err, errsz, "%s", msg);
 }
 
+/*
+ * True when s has the shape newlib's tzset understands: a standard name of
+ * three or more ASCII letters, then a numeric UTC offset, then only the
+ * POSIX TZ alphabet (letters, digits, + - . , : /) for the DST name and the
+ * transition rules.
+ *
+ * This is deliberately a shape check, not a full grammar parse. Its job is
+ * to reject values tzset silently ignores, and the failure mode that
+ * matters is an IANA name like "Europe/Berlin": it has no offset, so it
+ * fails below, and instead of the clock quietly falling back to UTC the
+ * push is rejected with a message. The rule ranges (M1..12, w1..5, ...) are
+ * not validated here; a wrong range still degrades to UTC, but only for a
+ * hand-typed rule that no preset emits. Mirrored exactly in the Dart
+ * MirrorConfig.validate().
+ */
+static bool tz_is_posix(const char *s)
+{
+    size_t i = 0;
+
+    size_t letters = 0;
+    while ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+        letters++;
+        i++;
+    }
+    if (letters < 3) return false;
+
+    if (s[i] == '+' || s[i] == '-') i++;
+
+    size_t digits = 0;
+    while (s[i] >= '0' && s[i] <= '9') {
+        digits++;
+        i++;
+    }
+    if (digits < 1 || digits > 2) return false;
+
+    /* Optional :mm[:ss] after the hours. */
+    if (s[i] == ':') {
+        i++;
+        digits = 0;
+        while (s[i] >= '0' && s[i] <= '9') {
+            digits++;
+            i++;
+        }
+        if (digits != 2) return false;
+        if (s[i] == ':') {
+            i++;
+            digits = 0;
+            while (s[i] >= '0' && s[i] <= '9') {
+                digits++;
+                i++;
+            }
+            if (digits != 2) return false;
+        }
+    }
+
+    /* The remainder (dst name and rules) uses only the POSIX TZ alphabet. */
+    for (; s[i] != '\0'; i++) {
+        const char c = s[i];
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                        (c >= '0' && c <= '9') || c == '+' || c == '-' ||
+                        c == '.' || c == ',' || c == ':' || c == '/';
+        if (!ok) return false;
+    }
+    return true;
+}
+
 esp_err_t mirror_config_apply_json(const char *json, size_t len,
                                    char *err, size_t errsz)
 {
@@ -200,6 +266,12 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         }
         if (strlen(new_tz) > TZ_MAX_LEN) {
             fail(err, errsz, "timezone is too long (max 63)");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (!tz_is_posix(new_tz)) {
+            /* newlib only parses POSIX TZ strings; an IANA name would be
+             * accepted here and silently degrade the clock to UTC. */
+            fail(err, errsz, "timezone must be a POSIX TZ string");
             return ESP_ERR_INVALID_ARG;
         }
         have_tz = true;

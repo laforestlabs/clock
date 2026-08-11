@@ -22,8 +22,44 @@ void main() {
     });
 
     test('rejects a timezone longer than 63 chars', () {
-      expect(MirrorConfig(timezone: 'A' * 64).validate(), isNotNull);
-      expect(MirrorConfig(timezone: 'A' * 63).validate(), isNull);
+      // EST5 plus a long DST name keeps the 63-char string POSIX-shaped, so
+      // only the length is being tested.
+      final at63 = 'EST5${'A' * 59}';
+      expect(at63.length, 63);
+      expect(MirrorConfig(timezone: at63).validate(), isNull);
+      expect(MirrorConfig(timezone: 'EST5${'A' * 60}').validate(), isNotNull);
+    });
+
+    test('rejects an IANA timezone name', () {
+      // newlib only parses POSIX TZ strings; an IANA name would be accepted
+      // by the length check and silently degrade the clock to UTC.
+      expect(
+          const MirrorConfig(timezone: 'America/New_York').validate(),
+          contains('POSIX TZ'));
+      expect(
+          const MirrorConfig(timezone: 'Europe/Berlin').validate(),
+          contains('POSIX TZ'));
+    });
+
+    test('rejects a timezone with no UTC offset', () {
+      expect(const MirrorConfig(timezone: 'UTC').validate(), contains('POSIX'));
+      expect(const MirrorConfig(timezone: 'GMT').validate(), contains('POSIX'));
+    });
+
+    test('rejects a timezone with junk characters', () {
+      expect(const MirrorConfig(timezone: 'UTC0!').validate(), contains('POSIX'));
+      expect(
+          const MirrorConfig(timezone: 'EST5EDT,M3.2.0@M11.1.0').validate(),
+          contains('POSIX'));
+    });
+
+    test('accepts POSIX-shaped custom timezones', () {
+      expect(const MirrorConfig(timezone: 'UTC0').validate(), isNull);
+      expect(const MirrorConfig(timezone: 'MST7').validate(), isNull);
+      expect(const MirrorConfig(timezone: 'EST5:30EDT').validate(), isNull);
+      expect(
+          const MirrorConfig(timezone: 'GMT0BST,M3.5.0/1:30,M10.5.0').validate(),
+          isNull);
     });
 
     test('rejects latitudes outside [-90, 90]', () {
@@ -155,6 +191,10 @@ void main() {
       for (final p in kTimezonePresets) {
         expect(p.label, isNotEmpty);
         expect(p.tz, isNotEmpty);
+        // Every preset must survive the POSIX TZ check or the firmware would
+        // reject it on push.
+        expect(MirrorConfig(timezone: p.tz).validate(), isNull,
+            reason: 'preset ${p.label} fails validation');
       }
     });
 

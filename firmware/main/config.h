@@ -57,10 +57,12 @@ void mirror_config_clear_brightness(void);
  * Apply a partial JSON object: {"timezone","latitude","longitude","place",
  * "brightness"}. Every present field is validated, and nothing is persisted
  * or applied unless all of them pass; missing fields are left unchanged.
- * "brightness" is a manual override: an integer 0..255, applied to the panel
- * immediately. On success the changed fields are written to NVS and applied:
- * timezone re-points TZ via setenv/tzset, coordinate or place changes kick a
- * provider refresh so the weather relocates promptly.
+ * "timezone" must be a POSIX TZ string (the only form newlib's tzset
+ * parses; IANA names are rejected rather than silently degrading the clock
+ * to UTC). "brightness" is a manual override: an integer 0..255, applied to
+ * the panel immediately. On success the changed fields are written to NVS
+ * and applied: timezone re-points TZ via setenv/tzset, coordinate or place
+ * changes kick a provider refresh so the weather relocates promptly.
  *
  * On failure returns ESP_ERR_INVALID_ARG and err holds a human message.
  */

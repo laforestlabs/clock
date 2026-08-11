@@ -219,7 +219,7 @@ esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)
     }
 
     /* Parse into a heap buffer, never the stack: ml_layout is ~6.6KB and the
-     * callers are the httpd task (8KB) and the BLE host task (4KB). PSRAM
+     * callers are the httpd task (8KB) and the BLE commit task (8KB). PSRAM
      * first, this is a transient 6.6KB block. */
     ml_layout *candidate = heap_caps_malloc(sizeof(ml_layout), MALLOC_CAP_SPIRAM);
     if (candidate == NULL) {

@@ -67,15 +67,17 @@ class MirrorConfig {
   }
 
   /// Null when valid, otherwise a human message naming the first offending
-  /// field. Mirrors the firmware rules: timezone non-empty and at most 63
-  /// chars, latitude a number in [-90, 90], longitude a number in [-180,
-  /// 180], place at most 23 chars (fits the firmware's weather.place[24]),
-  /// brightness an integer in [0, 255].
+  /// field. Mirrors the firmware rules: timezone non-empty, at most 63 chars
+  /// and shaped like a POSIX TZ string (the only form the firmware's newlib
+  /// tzset parses), latitude a number in [-90, 90], longitude a number in
+  /// [-180, 180], place at most 23 chars (fits the firmware's
+  /// weather.place[24]), brightness an integer in [0, 255].
   String? validate() {
     if (timezone != null) {
       final tz = timezone!;
       if (tz.isEmpty) return 'Timezone must not be empty';
       if (tz.length > 63) return 'Timezone is too long (max 63)';
+      if (!_isPosixTz(tz)) return 'Timezone must be a POSIX TZ string';
     }
     if (latitude != null) {
       final lat = double.tryParse(latitude!);
@@ -121,3 +123,70 @@ const List<TzPreset> kTimezonePresets = <TzPreset>[
   TzPreset('Tokyo', 'JST-9'),
   TzPreset('Sydney', 'AEST-10AEDT,M10.1.0,M4.1.0/3'),
 ];
+
+/// True when [tz] has the shape newlib's tzset understands: a standard name
+/// of three or more ASCII letters, then a numeric UTC offset, then only the
+/// POSIX TZ alphabet (letters, digits, + - . , : /) for the DST name and the
+/// transition rules. Mirrors tz_is_posix in firmware config.c loop for loop;
+/// keep the two in step.
+bool _isPosixTz(String tz) {
+  var i = 0;
+
+  var letters = 0;
+  while (i < tz.length && _isAsciiLetter(tz.codeUnitAt(i))) {
+    letters++;
+    i++;
+  }
+  if (letters < 3) return false;
+
+  if (i < tz.length && (tz[i] == '+' || tz[i] == '-')) i++;
+
+  var digits = 0;
+  while (i < tz.length && _isDigit(tz.codeUnitAt(i))) {
+    digits++;
+    i++;
+  }
+  if (digits < 1 || digits > 2) return false;
+
+  // Optional :mm[:ss] after the hours.
+  if (i < tz.length && tz[i] == ':') {
+    i++;
+    digits = 0;
+    while (i < tz.length && _isDigit(tz.codeUnitAt(i))) {
+      digits++;
+      i++;
+    }
+    if (digits != 2) return false;
+    if (i < tz.length && tz[i] == ':') {
+      i++;
+      digits = 0;
+      while (i < tz.length && _isDigit(tz.codeUnitAt(i))) {
+        digits++;
+        i++;
+      }
+      if (digits != 2) return false;
+    }
+  }
+
+  // The remainder (dst name and rules) uses only the POSIX TZ alphabet.
+  for (; i < tz.length; i++) {
+    final c = tz.codeUnitAt(i);
+    if (!_isAsciiLetter(c) &&
+        !_isDigit(c) &&
+        c != 0x2b && // '+'
+        c != 0x2d && // '-'
+        c != 0x2e && // '.'
+        c != 0x2c && // ','
+        c != 0x3a && // ':'
+        c != 0x2f) {
+      // '/'
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _isAsciiLetter(int c) =>
+    (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a); // A-Z, a-z
+
+bool _isDigit(int c) => c >= 0x30 && c <= 0x39; // 0-9
