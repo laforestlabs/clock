@@ -21,9 +21,10 @@
  * there and sends the commit's status line itself.
  *
  * UUIDs are 128-bit, base 5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01, with the
- * characteristic suffixes ...02 (cmd), ...03 (data), ...04 (status). NimBLE
- * stores 128-bit UUIDs with the canonical string reversed, so the value
- * arrays below are that reversed form.
+ * characteristic suffixes ...02 (cmd), ...03 (data), ...04 (status), ...05
+ * (game_in, the gamepad input channel). NimBLE stores 128-bit UUIDs with
+ * the canonical string reversed, so the value arrays below are that
+ * reversed form.
  */
 #include "ble.h"
 
@@ -42,12 +43,15 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "game_registry.h"
+#include "games/game_runner.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_adv.h"
 #include "host/util/util.h"
 #include "layout_store.h"
+#include "mirror/game.h"
 #include "mirror/json.h"
 #include "mirror/mirror.h"
 #include "net/wifi.h"
@@ -63,7 +67,7 @@ static const char *TAG = "ble";
 
 /* ------------------------------------------------------------- UUIDs */
 
-/* Tail shared by all four UUIDs: base 5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01
+/* Tail shared by all five UUIDs: base 5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01
  * with the first byte (value[0], the last canonical octet) varying per
  * characteristic. */
 #define UUID_TAIL \
@@ -74,6 +78,7 @@ static const ble_uuid128_t s_svc_uuid    = BLE_UUID128_INIT(0x01, UUID_TAIL);
 static const ble_uuid128_t s_chr_cmd     = BLE_UUID128_INIT(0x02, UUID_TAIL);
 static const ble_uuid128_t s_chr_data    = BLE_UUID128_INIT(0x03, UUID_TAIL);
 static const ble_uuid128_t s_chr_status  = BLE_UUID128_INIT(0x04, UUID_TAIL);
+static const ble_uuid128_t s_chr_game_in = BLE_UUID128_INIT(0x05, UUID_TAIL);
 
 /* ------------------------------------------------------------ limits */
 
@@ -199,6 +204,14 @@ static void send_status(const char *fmt, ...)
         }
     }
     xSemaphoreGive(s_status_lock);
+}
+
+/* Public one-line wrapper for send_status: the game runner replies through
+ * this from the render task. The %s keeps the line verbatim (a label could
+ * contain a %). */
+void ble_send_status_line(const char *line)
+{
+    send_status("%s", line);
 }
 
 static void json_escape(char *out, size_t outsz, const char *in)
@@ -485,6 +498,32 @@ static void handle_cmd(char *line)
         cmd_commit();
     } else if (strcmp(line, "abort") == 0) {
         cmd_abort();
+    } else if (strcmp(line, "game list") == 0) {
+        /* Answered synchronously: the registry is static and the render task
+         * is not involved. Format "games <id>[,<id>...]", empty list
+         * "games". Ids are short (<= 16 chars) and there are five, so the
+         * status buffer is plenty. */
+        char buf[MAX_STATUS_LEN];
+        int n = snprintf(buf, sizeof(buf), "games");
+        for (int i = 0; i < ml_fw_game_count(); i++) {
+            const ml_game_vt *g = ml_fw_game_at(i);
+            if (g == NULL) break;
+            const int need = snprintf(NULL, 0, "%s%s", i == 0 ? " " : ",",
+                                      g->id);
+            if (n + need >= (int)sizeof(buf)) break;
+            n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%s%s",
+                          i == 0 ? " " : ",", g->id);
+        }
+        send_status("%s", buf);
+    } else if (strncmp(line, "game start ", 11) == 0) {
+        /* Queued, not run here: opening a session allocates and must not run
+         * on the NimBLE host task. The render task answers "game ok ..." or
+         * "game error ...". */
+        game_runner_request_start(line + 11);
+    } else if (strcmp(line, "game stop") == 0) {
+        /* Queued like start; the render task answers "game stopped" or
+         * "game error no game". */
+        game_runner_request_stop();
     } else {
         send_status("unknown command");
     }
@@ -548,6 +587,54 @@ static int status_read_cb(uint16_t conn_handle, uint16_t attr_handle,
     return os_mbuf_append(ctxt->om, s_last_status, s_last_status_len);
 }
 
+/*
+ * game_in: one write per frame carrying the phone's full held state,
+ * little-endian. byte 0 is the control count (1..16, 0 = all released),
+ * then per control u8 code + i16 value (0/1). Max packet 49 bytes. Any
+ * other shape is a protocol violation and is dropped, matching the Dart
+ * writer in mirror_ble_game.dart.
+ */
+static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
+                            struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    (void)conn_handle; (void)attr_handle; (void)arg;
+
+    const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+    if (len < 1) return 0;
+
+    /* Copy first so count can be validated regardless of how the packet is
+     * segmented in the mbuf chain. len is bounded by the count<=16 check
+     * below and the buffer is 49 bytes. */
+    uint8_t p[1 + 3 * 16];
+    os_mbuf_copydata(ctxt->om, 0, len, p);
+
+    const uint8_t count = p[0];
+    if (count > 16 || len != 1 + 3 * (uint16_t)count) {
+        ESP_LOGW(TAG, "game input: protocol violation (%u controls, %u bytes)",
+                 (unsigned)count, (unsigned)len);
+        return 0;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        const uint16_t code = p[1 + 3 * i];
+        const int16_t raw =
+            (int16_t)(p[2 + 3 * i] | ((int16_t)p[3 + 3 * i] << 8));
+        const int16_t value = raw ? 1 : 0;
+        /* seq/tick left 0: the runtime stamps the host tick and games never
+         * read seq. */
+        ml_input_event e = {
+            .player_id = 1,
+            .seq = 0,
+            .code = code,
+            .value = value,
+            .tick = 0,
+            .type = ML_INPUT_BUTTON,
+        };
+        game_runner_request_input(&e);
+    }
+    return 0;
+}
+
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -562,6 +649,11 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .uuid = &s_chr_data.u,
                 .access_cb = data_write_cb,
                 .flags = BLE_GATT_CHR_F_WRITE,
+            },
+            {
+                .uuid = &s_chr_game_in.u,
+                .access_cb = game_in_write_cb,
+                .flags = BLE_GATT_CHR_F_WRITE_NO_RSP,
             },
             {
                 .uuid = &s_chr_status.u,
@@ -649,6 +741,10 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "disconnected");
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         transfer_reset();
+        /* A game only ever runs for the one connected phone; drop it. The
+         * queued stop is answered by the render task, whose status line
+         * no-ops here because s_conn_handle is already NONE. */
+        game_runner_request_stop();
         advertise();
         return 0;
 

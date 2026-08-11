@@ -26,6 +26,13 @@ esp_err_t ble_commit_init(void);
  */
 esp_err_t ble_init(void);
 
+/*
+ * Send one status line from any task (locks internally; no-ops with no
+ * connection). The game runner sends its replies through this, from the
+ * render task, so it must be safe off the BLE host task.
+ */
+void ble_send_status_line(const char *line);
+
 #ifdef __cplusplus
 }
 #endif

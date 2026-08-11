@@ -26,6 +26,7 @@
 
 #include "mirror/mirror.h"
 #include "config.h"
+#include "games/game_runner.h"
 #include "layout_store.h"
 #include "model_store.h"
 #include "net/provision.h"
@@ -131,6 +132,20 @@ static void render_task(void *arg)
          */
         static ml_layout layout;
         layout_store_snapshot(&layout);
+
+        /* While a BLE-driven game runs, the panel shows the game instead of
+         * the layout. The game draws into the same PSRAM canvas and blits
+         * through the same frame buffer at roughly 60 fps; the layout path
+         * (and its 500 ms cadence) is untouched for idle frames, so the
+         * periodic log stays tied to layout frames. */
+        if (game_runner_service()) {
+            game_runner_render(&canvas);
+            ml_canvas_export_rgb888(&canvas, 255, rgb);
+            panel_blit_rgb888(rgb);
+            vTaskDelay(pdMS_TO_TICKS(16));
+            continue;
+        }
+
         ml_render(&layout, &model, &canvas);
 
         /*
@@ -213,6 +228,10 @@ void app_main(void)
      * clock sync below: the brightness override must win from the first
      * frame, and sntp_time_start() needs the zone set. */
     ESP_ERROR_CHECK(mirror_config_init());
+
+    /* The game runner's queues, before the render task starts: it drains
+     * them every frame. */
+    ESP_ERROR_CHECK(game_runner_init());
 
     /* Static, not stack: ml_layout is ~6.6KB and the main task stack is 3584
      * bytes. The snapshot exists only to read the brightness off. */

@@ -16,6 +16,7 @@ import 'dart:math' as math;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'mirror_ble_protocol.dart';
+import 'mirror_ble_game.dart';
 import 'mirror_ble_status.dart';
 
 /// The BLE stack or adapter is not available (e.g. a desktop without
@@ -105,18 +106,28 @@ Future<List<BleScanEntry>> scanForMirrors({
 /// queue, so chunk order is preserved and the device's ATT backpressure is
 /// respected.
 class BleSession {
-  BleSession._(this._device, this._cmd, this._data);
+  BleSession._(this._device, this._cmd, this._data, this._gameIn);
 
   // Base 5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01, suffixes ...02 cmd, ...03
-  // data, ...04 status. Same UUIDs as firmware/main/net/ble.c.
+  // data, ...04 status, ...05 game_in. Same UUIDs as
+  // firmware/main/net/ble.c.
   static const String serviceUuid = '5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01';
   static const String cmdUuid = '5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a02';
   static const String dataUuid = '5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a03';
   static const String statusUuid = '5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a04';
+  static const String gameInUuid = '5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a05';
 
   final BluetoothDevice _device;
   final BluetoothCharacteristic _cmd;
   final BluetoothCharacteristic _data;
+
+  /// The gamepad input characteristic, or null on firmware that predates
+  /// game support. Without it the app shows the "update the firmware"
+  /// message instead of a gamepad.
+  final BluetoothCharacteristic? _gameIn;
+
+  /// Whether the connected firmware exposes the gamepad input channel.
+  BluetoothCharacteristic? get gameIn => _gameIn;
 
   final StreamController<String> _statusController =
       StreamController<String>.broadcast();
@@ -136,7 +147,7 @@ class BleSession {
     await device.connect(mtu: 512, license: License.nonprofit, timeout: timeout);
     try {
       final services = await device.discoverServices();
-      BluetoothCharacteristic? cmd, data, status;
+      BluetoothCharacteristic? cmd, data, status, gameIn;
       for (final s in services) {
         for (final c in s.characteristics) {
           final u = c.uuid.str128;
@@ -146,6 +157,8 @@ class BleSession {
             data = c;
           } else if (u == statusUuid) {
             status = c;
+          } else if (u == gameInUuid) {
+            gameIn = c;
           }
         }
       }
@@ -154,7 +167,9 @@ class BleSession {
             'this device does not expose the mirror service');
       }
 
-      final session = BleSession._(device, cmd, data);
+      // gameIn may be absent: older firmware predates game support and the
+      // app degrades to the "update the firmware" message.
+      final session = BleSession._(device, cmd, data, gameIn);
       await status.setNotifyValue(true);
       session._notifySub = status.onValueReceived.listen((bytes) {
         final line = utf8.decode(bytes, allowMalformed: true).trim();
@@ -247,6 +262,49 @@ class BleSession {
   /// Ask the mirror to restart. The device answers "reboot ok" first, then
   /// drops the connection; the caller should not expect more traffic.
   Future<String> reboot() => _sendAndWait('reboot');
+
+  /// The mirror's game ids, or null when the firmware does not support
+  /// games (it answers "unknown command" to "game list").
+  Future<List<String>?> listGames() async =>
+      parseGameList(await _sendAndWait('game list'));
+
+  /// Start a game on the mirror and return its control labels for the
+  /// gamepad. Throws [BlePushException] with the device's reason when the
+  /// mirror rejects the start.
+  Future<MirrorGame> startGame(String id) async {
+    final line = await _sendAndWait('game start $id');
+    final g = parseGameOk(line);
+    if (g == null) {
+      if (line.startsWith('game error')) {
+        throw BlePushException(line.substring('game error'.length).trim());
+      }
+      throw BlePushException('unexpected reply: $line');
+    }
+    return g;
+  }
+
+  /// Stop the running game. The reply ("game stopped" or an error) is
+  /// consumed and its value ignored; a stop on a mirror with no game running
+  /// is harmless.
+  Future<void> stopGame() async {
+    await _sendAndWait('game stop');
+  }
+
+  /// Stream the full held state to the mirror, one packet per frame.
+  ///
+  /// Deliberately bypasses the with-response write queue: gamepad input must
+  /// never queue behind a layout push. A dead link is surfaced by
+  /// MirrorConnection's connection-state listener, so write failures are
+  /// swallowed here.
+  Future<void> sendGameInput(List<bool> held) async {
+    final w = _gameIn;
+    if (w == null) return;
+    try {
+      await w.write(encodeGameInput(held), withoutResponse: true);
+    } catch (_) {
+      // Link died; MirrorConnection's listener surfaces it.
+    }
+  }
 
   Future<String> _push(String kind, List<int> payload) async {
     final writer = BlePayloadWriter(chunkSize: _chunkSize);

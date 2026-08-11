@@ -12,12 +12,14 @@ idf_component_register(
         "net/api_server.c"
         "net/ota.c"
         "net/ble.c"
+        "games/game_runner.c"
         "providers/provider.c"
         "providers/openmeteo.c"
     INCLUDE_DIRS
         "."
     REQUIRES
         mirror_core
+        gamekit
         nvs_flash
         esp_wifi
         esp_netif

@@ -331,7 +331,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           onPressed: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
-                builder: (_) => GameScreen(controller: _c),
+                builder: (_) =>
+                    GameScreen(controller: _c, connection: _connection),
               ),
             );
           },

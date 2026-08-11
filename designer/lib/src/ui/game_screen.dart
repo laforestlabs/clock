@@ -14,6 +14,7 @@
 // invaders), Space fires where a game has a Shoot control and restarts
 // otherwise, touch steers on a phone.
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -22,16 +23,28 @@ import 'package:flutter/services.dart';
 
 import '../controller.dart';
 import '../engine/game_engine.dart';
+import '../services/mirror_ble.dart';
+import '../services/mirror_ble_game.dart';
+import '../services/mirror_connection.dart';
 
 /// How a touch on the panel maps to the running game's controls.
 enum _TouchMode { vertical, horizontal, compass }
 
 /// A game running on a simulated panel.
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, required this.controller});
+  const GameScreen({
+    super.key,
+    required this.controller,
+    required this.connection,
+  });
 
   /// Shares veneer and LED settings with the layout designer.
   final DesignerController controller;
+
+  /// The app-scoped BLE link. While connected, this screen becomes a gamepad
+  /// for the game the mirror runs on its panel; the simulation below is only
+  /// for the not-connected case.
+  final MirrorConnection connection;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -68,6 +81,18 @@ class _GameScreenState extends State<GameScreen>
   int _gameIndex = 0;
 
   DesignerController get _c => widget.controller;
+  MirrorConnection get _connection => widget.connection;
+
+  // Controller mode: the mirror runs the game, this phone streams buttons.
+  List<String>? _mirrorGameIds;
+  int _mirrorGameIndex = 0;
+  MirrorGame? _mirrorGame;
+  bool _mirrorUnsupported = false;
+  bool _mirrorLoading = false;
+  int _lastMirrorSendMs = 0;
+
+  /// Whether this screen is a gamepad for a connected mirror.
+  bool get _isControllerMode => _connection.session != null;
 
   @override
   void initState() {
@@ -75,10 +100,20 @@ class _GameScreenState extends State<GameScreen>
     _games = GameEngine.games;
     _ticker = Ticker(_onTick);
     _keyboardFocus = FocusNode();
+    _connection.addListener(_onConnectionChanged);
+    // First evaluation after the first build: the connection may already be
+    // up when the screen opens, and a listener that setStates during build
+    // would assert.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onConnectionChanged());
   }
 
   @override
   void dispose() {
+    _connection.removeListener(_onConnectionChanged);
+    if (_mirrorGame != null) {
+      // Leaving the screen stops the mirror's game.
+      unawaited(_connection.session?.stopGame());
+    }
     _ticker.stop();
     _keyboardFocus.dispose();
     _engine?.dispose();
@@ -114,7 +149,107 @@ class _GameScreenState extends State<GameScreen>
     setState(() => _running = false);
   }
 
+  /// The connection changed (connected, disconnected, failed). Keeps the
+  /// controller-mode state in sync with the link.
+  void _onConnectionChanged() {
+    if (!mounted) return;
+    setState(() {
+      if (_connection.status == MirrorConnectionStatus.connected) {
+        final session = _connection.session;
+        if (session?.gameIn == null) {
+          // Firmware predates the gamepad channel.
+          _mirrorUnsupported = true;
+        } else {
+          _mirrorUnsupported = false;
+          unawaited(_loadMirrorGames());
+        }
+      } else {
+        // Disconnected: the firmware stops the game on its own (its
+        // disconnect handler), so this is purely local cleanup.
+        _mirrorGameIds = null;
+        _mirrorGame = null;
+        _mirrorGameIndex = 0;
+        _mirrorUnsupported = false;
+        _ticker.stop();
+      }
+    });
+  }
+
+  /// Fetch the mirror's game list once. A null reply (old firmware answering
+  /// "unknown command") marks the mirror unsupported.
+  Future<void> _loadMirrorGames() async {
+    if (_mirrorLoading || _mirrorGameIds != null) return;
+    _mirrorLoading = true;
+    try {
+      final session = _connection.session;
+      if (session == null) return;
+      final ids = await session.listGames();
+      if (!mounted) return;
+      setState(() {
+        if (ids == null) {
+          _mirrorUnsupported = true;
+        } else {
+          _mirrorGameIds = ids;
+          _mirrorUnsupported = false;
+        }
+      });
+    } finally {
+      _mirrorLoading = false;
+    }
+  }
+
+  Future<void> _startMirrorGame() async {
+    final session = _connection.session;
+    final ids = _mirrorGameIds;
+    if (session == null || ids == null || ids.isEmpty) return;
+    final id = ids[_mirrorGameIndex < ids.length ? _mirrorGameIndex : 0];
+    try {
+      final g = await session.startGame(id);
+      if (!mounted) return;
+      setState(() {
+        _mirrorGame = g;
+        _held = List<bool>.filled(g.controls.length, false);
+      });
+      // Ticker.start returns a TickerFuture; the tick's completion is
+      // irrelevant here.
+      unawaited(_ticker.start());
+    } on BlePushException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start the game: ${e.message}')),
+      );
+    }
+  }
+
+  Future<void> _stopMirrorGame() async {
+    final session = _connection.session;
+    _ticker.stop();
+    setState(() => _mirrorGame = null);
+    await session?.stopGame();
+  }
+
+  /// Display name for a mirror game id: the local simulation's name when the
+  /// app knows the id, otherwise the raw id.
+  String _mirrorGameLabel(String id) {
+    for (final g in _games) {
+      if (g.id == id) return g.name;
+    }
+    return id;
+  }
+
   void _onTick(Duration elapsed) {
+    final mirrorGame = _mirrorGame;
+    if (mirrorGame != null) {
+      // Controller mode: stream the full held state, throttled to one
+      // packet per 30 ms so a 60 fps ticker does not flood the link.
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - _lastMirrorSendMs >= 30) {
+        _lastMirrorSendMs = now;
+        unawaited(_connection.session?.sendGameInput(_held));
+      }
+      return;
+    }
+
     final engine = _engine;
     if (engine == null || !_running) return;
 
@@ -202,22 +337,31 @@ class _GameScreenState extends State<GameScreen>
           IconButton(
             icon: const Icon(Icons.sports_esports),
             tooltip: 'Play',
-            onPressed: _running ? null : _startGame,
+            onPressed: _isControllerMode
+                ? (_mirrorGame == null &&
+                        !_mirrorUnsupported &&
+                        (_mirrorGameIds?.isNotEmpty ?? false)
+                    ? _startMirrorGame
+                    : null)
+                : (_running ? null : _startGame),
           ),
           IconButton(
             icon: const Icon(Icons.stop),
             tooltip: 'Stop',
-            onPressed: _running ? _stopGame : null,
+            onPressed: _isControllerMode
+                ? (_mirrorGame != null ? _stopMirrorGame : null)
+                : (_running ? _stopGame : null),
           ),
         ],
       ),
-      // The Focus wraps the ENTIRE body, not just the canvas. This is the only
-      // way arrow keys reach the game before Flutter's directional focus
-      // traversal moves focus to the dropdowns and sliders. Returning
-      // KeyEventResult.handled consumes the event so traversal never sees it.
-      body: _games.isEmpty
-          ? const Center(child: Text('No games compiled into this build.'))
-          : Focus(
+      // While connected to a mirror, the body is the gamepad; the Focus
+      // wrapper (and its keyboard handling) is for the local simulation
+      // only.
+      body: _isControllerMode
+          ? _buildControllerBody()
+          : _games.isEmpty
+              ? const Center(child: Text('No games compiled into this build.'))
+              : Focus(
               focusNode: _keyboardFocus,
               onKeyEvent: _onKey,
               autofocus: true,
@@ -321,6 +465,203 @@ class _GameScreenState extends State<GameScreen>
           Text('tick: ${_engine?.tick ?? 0}',
               style: const TextStyle(fontSize: 12, color: Colors.grey)),
         ],
+      ),
+    );
+  }
+
+  /// The controller-mode body: a gamepad for the game the mirror runs. The
+  /// mirror is the display, so there is no simulated panel here.
+  Widget _buildControllerBody() {
+    if (_mirrorUnsupported) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            "This mirror's firmware does not support games over Bluetooth. "
+            'Update the firmware to enable the gamepad.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    final game = _mirrorGame;
+    if (game == null) {
+      final ids = _mirrorGameIds;
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Playing on ${_connection.deviceName ?? 'the mirror'}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 16),
+            if (ids == null || ids.isEmpty)
+              const Text('Loading games...')
+            else
+              DropdownButton<int>(
+                value: _mirrorGameIndex < ids.length ? _mirrorGameIndex : 0,
+                items: <DropdownMenuItem<int>>[
+                  for (var i = 0; i < ids.length; i++)
+                    DropdownMenuItem(
+                      value: i,
+                      child: Text(_mirrorGameLabel(ids[i])),
+                    ),
+                ],
+                onChanged: (v) =>
+                    setState(() => _mirrorGameIndex = v ?? 0),
+              ),
+            const SizedBox(height: 24),
+            const Text(
+              'The mirror shows the game on its panel; this phone is the '
+              'gamepad.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _buildGamepad(game);
+  }
+
+  /// The gamepad: a d-pad built from the game's declared control labels,
+  /// plus a row of round fire buttons for anything left over (e.g. Shoot).
+  Widget _buildGamepad(MirrorGame game) {
+    final controls = game.controls;
+
+    int indexOf(String label) {
+      for (var i = 0; i < controls.length; i++) {
+        if (controls[i] == label) return i;
+      }
+      return -1;
+    }
+
+    final up = indexOf('Up');
+    final down = indexOf('Down');
+    final left = indexOf('Left');
+    final right = indexOf('Right');
+
+    final Widget pad;
+    if (up >= 0 && down >= 0 && left >= 0 && right >= 0) {
+      // 2x2 d-pad cluster: Up | Right over Left | Down.
+      pad = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _padButton(game, up),
+              const SizedBox(width: 16),
+              _padButton(game, right),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _padButton(game, left),
+              const SizedBox(width: 16),
+              _padButton(game, down),
+            ],
+          ),
+        ],
+      );
+    } else if (up >= 0 && down >= 0) {
+      pad = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _padButton(game, up),
+          const SizedBox(height: 16),
+          _padButton(game, down),
+        ],
+      );
+    } else if (left >= 0 && right >= 0) {
+      pad = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _padButton(game, left),
+          const SizedBox(width: 16),
+          _padButton(game, right),
+        ],
+      );
+    } else {
+      pad = const SizedBox.shrink();
+    }
+
+    // Anything that is not a direction renders as a fire button.
+    const directions = <String>{'Up', 'Down', 'Left', 'Right'};
+    final extras = <int>[
+      for (var i = 0; i < controls.length; i++)
+        if (!directions.contains(controls[i])) i,
+    ];
+
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            _mirrorGameLabel(game.id),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 32),
+          pad,
+          if (extras.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 32),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                for (var i = 0; i < extras.length; i++) ...<Widget>[
+                  if (i > 0) const SizedBox(width: 24),
+                  _padButton(game, extras[i]),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// One gamepad button: tap down presses, tap up/cancel releases. The
+  /// pressed visual follows the held state.
+  Widget _padButton(MirrorGame game, int controlIndex) {
+    final pressed = controlIndex < _held.length && _held[controlIndex];
+    final label = game.controls[controlIndex];
+    final Widget child = switch (label) {
+      'Up' => const Icon(Icons.keyboard_arrow_up, size: 40),
+      'Down' => const Icon(Icons.keyboard_arrow_down, size: 40),
+      'Left' => const Icon(Icons.keyboard_arrow_left, size: 40),
+      'Right' => const Icon(Icons.keyboard_arrow_right, size: 40),
+      _ => Text(
+          label,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+    };
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() {
+        if (controlIndex < _held.length) _held[controlIndex] = true;
+      }),
+      onTapUp: (_) => setState(() {
+        if (controlIndex < _held.length) _held[controlIndex] = false;
+      }),
+      onTapCancel: () => setState(() {
+        if (controlIndex < _held.length) _held[controlIndex] = false;
+      }),
+      child: Container(
+        width: 88,
+        height: 88,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: pressed
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.surfaceContainerHighest,
+        ),
+        child: child,
       ),
     );
   }
