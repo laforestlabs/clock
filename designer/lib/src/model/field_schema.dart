@@ -50,7 +50,6 @@ const List<FieldSpec> commonFields = <FieldSpec>[
   FieldSpec('color', 'Colour', FieldKind.color),
   FieldSpec('bg', 'Background', FieldKind.color,
       help: 'Leave empty for transparent'),
-  FieldSpec('visible', 'Visible', FieldKind.boolean),
 ];
 
 const FieldSpec _font = FieldSpec('font', 'Font', FieldKind.font);

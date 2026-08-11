@@ -207,17 +207,6 @@ class LayoutWidget {
 
   String get label => id.isNotEmpty ? id : type;
 
-  bool get visible => raw['visible'] as bool? ?? true;
-  set visible(bool value) {
-    // Only write the key when it differs from the default, to keep hand-edited
-    // layouts tidy.
-    if (value) {
-      raw.remove('visible');
-    } else {
-      raw['visible'] = false;
-    }
-  }
-
   Rect get rect {
     final value = raw['rect'];
     if (value is List && value.length >= 4) {

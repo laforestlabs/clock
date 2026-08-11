@@ -68,16 +68,11 @@ class WidgetListPanel extends StatelessWidget {
               leading: Icon(
                 _icons[w.type] ?? Icons.help_outline,
                 size: 20,
-                color: known
-                    ? (w.visible ? null : theme.disabledColor)
-                    : theme.colorScheme.error,
+                color: known ? null : theme.colorScheme.error,
               ),
               title: Text(
                 w.label,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  decoration: w.visible ? null : TextDecoration.lineThrough,
-                ),
               ),
               subtitle: Text(
                 known

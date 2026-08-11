@@ -218,16 +218,9 @@ class _Field extends StatelessWidget {
           contentPadding: EdgeInsets.zero,
           dense: true,
           title: Text(spec.label),
-          value: spec.key == 'visible'
-              ? widget.visible
-              : (widget.getBool(spec.key) ?? _booleanDefault(spec.key)),
-          onChanged: (v) => controller.updateSelected((w) {
-            if (spec.key == 'visible') {
-              w.visible = v;
-            } else {
-              w.setBool(spec.key, v);
-            }
-          }),
+          value: widget.getBool(spec.key) ?? _booleanDefault(spec.key),
+          onChanged: (v) =>
+              controller.updateSelected((w) => w.setBool(spec.key, v)),
         );
 
       case FieldKind.color:
@@ -372,7 +365,6 @@ class _Field extends StatelessWidget {
     switch (key) {
       case 'show_time':
       case 'hide_done':
-      case 'visible':
         return true;
       default:
         return false;
