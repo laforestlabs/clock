@@ -16,6 +16,7 @@ import 'dart:math' as math;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'mirror_ble_protocol.dart';
+import 'mirror_ble_status.dart';
 
 /// The BLE stack or adapter is not available (e.g. a desktop without
 /// Bluetooth). The UI shows this as "unavailable" rather than crashing.
@@ -68,6 +69,12 @@ Future<List<BleScanEntry>> scanForMirrors({
 
   final found = <BleScanEntry>[];
   final sub = FlutterBluePlus.scanResults.listen((results) {
+    if (results.isEmpty) {
+      // fbp pushes an empty list when a scan starts, and replays the last
+      // scan's list to new subscribers; either way start from a clean slate.
+      found.clear();
+      return;
+    }
     for (final r in results) {
       final name = r.device.advName;
       if (!name.startsWith('Smart Mirror')) continue;
@@ -78,10 +85,18 @@ Future<List<BleScanEntry>> scanForMirrors({
 
   try {
     await FlutterBluePlus.startScan(timeout: timeout);
+    // startScan returns once the platform scan is running, not when it
+    // finishes: results arrive asynchronously until the timeout timer stops
+    // the scan. Block until the scan has actually stopped so every
+    // advertisement is collected.
+    await FlutterBluePlus.isScanning
+        .firstWhere((scanning) => !scanning)
+        .timeout(timeout + const Duration(seconds: 1));
   } on Exception catch (e) {
     throw BleUnavailableException('Bluetooth scan failed: $e');
   } finally {
     await sub.cancel();
+    await FlutterBluePlus.stopScan();
   }
   return found;
 }
@@ -166,22 +181,34 @@ class BleSession {
     return _serialized(() => _cmd.write(ascii.encode(line)));
   }
 
-  /// The next status line, or throw after [timeout].
-  Future<String> _nextStatus({Duration timeout = const Duration(seconds: 10)}) {
-    return _statusController.stream.first.timeout(timeout);
+  /// The next [n] status lines, or throw after [timeout]. The caller must
+  /// subscribe BEFORE the writes that trigger them: Android delivers a
+  /// notification (e.g. the pong) before the write-response callback, so
+  /// subscribing after the write misses the line on a broadcast stream.
+  Future<List<String>> _takeStatuses(int n,
+      {Duration timeout = const Duration(seconds: 10)}) {
+    final lines = <String>[];
+    return _statusController.stream
+        .take(n)
+        .forEach(lines.add)
+        .timeout(timeout)
+        .then((_) => lines);
   }
 
-  /// Raw pong payload, e.g. "pong 0.1.0 192.168.1.5 mini 64 32".
-  Future<String> ping() async {
-    await _writeCmd('ping');
-    return _nextStatus();
+  /// Write a command and wait for its one status line, subscribing first so
+  /// the response can never be missed.
+  Future<String> _sendAndWait(String line,
+      {Duration timeout = const Duration(seconds: 10)}) async {
+    final status = _takeStatuses(1, timeout: timeout);
+    await _writeCmd(line);
+    return (await status).single;
   }
+
+  /// Raw pong payload, e.g. "pong 0.2.0 192.168.1.5 mini 64 32".
+  Future<String> ping() => _sendAndWait('ping');
 
   /// The raw "config {...}" line, or null when the mirror has none.
-  Future<String?> getConfigRaw() async {
-    await _writeCmd('get config');
-    return _nextStatus();
-  }
+  Future<String?> getConfigRaw() => _sendAndWait('get config');
 
   /// Push a layout and return the device's commit status text.
   /// Throws [BlePushException] with the device's reason on rejection.
@@ -194,8 +221,35 @@ class BleSession {
     return _push('config', utf8.encode(jsonEncode(json)));
   }
 
+  /// The live panel brightness and whether a manual override is set, or null
+  /// when the mirror does not answer a brightness line (an older firmware
+  /// that does not know the command).
+  Future<BleBrightness?> getBrightness() async {
+    return parseBrightnessStatus(await _sendAndWait('get brightness'));
+  }
+
+  /// Set a manual brightness override, or clear it (back to following the
+  /// layout) when [value] is null. Returns the device's status line; throws
+  /// [BlePushException] with the device's reason on rejection.
+  Future<String> setBrightness(int? value) async {
+    final status = await _sendAndWait(
+        value == null ? 'set brightness auto' : 'set brightness $value');
+    if (status.startsWith('brightness error')) {
+      throw BlePushException(status.substring('brightness error'.length).trim());
+    }
+    return status;
+  }
+
+  /// Ask the mirror to restart. The device answers "reboot ok" first, then
+  /// drops the connection; the caller should not expect more traffic.
+  Future<String> reboot() => _sendAndWait('reboot');
+
   Future<String> _push(String kind, List<int> payload) async {
     final writer = BlePayloadWriter(chunkSize: _chunkSize);
+    // The mirror answers "begin ok" to the begin write and the commit status
+    // to the commit write; subscribe for both before writing anything so
+    // neither can arrive into a stream with no listener.
+    final statuses = _takeStatuses(2);
     for (final frame in writer.frames(kind, payload)) {
       if (frame.kind == BleFrameKind.cmd) {
         await _writeCmd(ascii.decode(frame.bytes));
@@ -204,11 +258,12 @@ class BleSession {
       }
     }
 
-    final status = await _nextStatus();
-    if (status.startsWith('commit error')) {
-      throw BlePushException(status.substring('commit error'.length).trim());
+    final lines = await statuses;
+    final commit = lines.length > 1 ? lines[1] : lines.single;
+    if (commit.startsWith('commit error')) {
+      throw BlePushException(commit.substring('commit error'.length).trim());
     }
-    return status;
+    return commit;
   }
 
   Future<void> close() async {

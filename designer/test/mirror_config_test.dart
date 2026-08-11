@@ -51,6 +51,13 @@ void main() {
       expect(MirrorConfig(place: 'X' * 23).validate(), isNull);
     });
 
+    test('rejects brightness outside [0, 255]', () {
+      expect(const MirrorConfig(brightness: -1).validate(), isNotNull);
+      expect(const MirrorConfig(brightness: 256).validate(), isNotNull);
+      expect(const MirrorConfig(brightness: 0).validate(), isNull);
+      expect(const MirrorConfig(brightness: 255).validate(), isNull);
+    });
+
     test('only the offending field is reported', () {
       const cfg = MirrorConfig(timezone: 'UTC0', longitude: '999');
       expect(cfg.validate(), contains('Longitude'));
@@ -101,6 +108,44 @@ void main() {
       expect(cfg, isNotNull);
       expect(cfg!.timezone, isNull);
       expect(cfg.latitude, '51.5');
+    });
+
+    test('fromJson reads a manual brightness', () {
+      final cfg = MirrorConfig.fromJson(<String, dynamic>{'brightness': 200});
+      expect(cfg, isNotNull);
+      expect(cfg!.brightness, 200);
+    });
+
+    test('fromJson maps the device auto value (-1) to null', () {
+      // A mirror reporting "auto" has no override to push back; sending -1
+      // back would be rejected by the firmware, so it reads as absent.
+      expect(MirrorConfig.fromJson(<String, dynamic>{'brightness': -1}), isNull);
+      final mixed = MirrorConfig.fromJson(<String, dynamic>{
+        'timezone': 'UTC0',
+        'brightness': -1,
+      });
+      expect(mixed, isNotNull);
+      expect(mixed!.timezone, 'UTC0');
+      expect(mixed.brightness, isNull);
+    });
+
+    test('fromJson ignores non-integer brightness', () {
+      expect(MirrorConfig.fromJson(<String, dynamic>{'brightness': 200.5}),
+          isNull);
+      expect(MirrorConfig.fromJson(<String, dynamic>{'brightness': '200'}),
+          isNull);
+    });
+
+    test('toJson omits brightness when null (unchanged on push)', () {
+      final json = const MirrorConfig().toJson();
+      expect(json.containsKey('brightness'), isFalse);
+    });
+
+    test('fromJson round-trips brightness', () {
+      const cfg = MirrorConfig(brightness: 100);
+      final back = MirrorConfig.fromJson(cfg.toJson());
+      expect(back, isNotNull);
+      expect(back!.brightness, 100);
     });
   });
 

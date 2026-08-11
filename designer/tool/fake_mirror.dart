@@ -23,6 +23,9 @@ Future<void> main(List<String> args) async {
   final port = args.isNotEmpty ? (int.tryParse(args.first) ?? 8080) : 8080;
 
   String storedLayout = _miniJson;
+  // Mutable panel brightness, mirroring panel_set_brightness on the device:
+  // set at boot from the layout, updated when a layout push arrives.
+  int brightness = 120;
   for (final candidate in <String>[
     'assets/layouts/mini.json', // run from the designer directory
     'layouts/mini.json',        // run from the repository root
@@ -47,9 +50,9 @@ Future<void> main(List<String> args) async {
         case 'GET /api/status':
           req.response.headers.contentType = ContentType('application', 'json');
           req.response.write(
-            '{"version":"fake","ip":"127.0.0.1","online":true,"rssi":-40,'
-            '"uptime_s":123,"layout":"mini","width":64,"height":32,'
-            '"brightness":120}',
+            '{"version":"fake","core":"fake-core","ip":"127.0.0.1",'
+            '"online":true,"rssi":-40,"uptime_s":123,"layout":"mini",'
+            '"width":64,"height":32,"brightness":$brightness}',
           );
           break;
 
@@ -60,9 +63,23 @@ Future<void> main(List<String> args) async {
 
         case 'PUT /api/layout':
           final body = await utf8.decoder.bind(req).join();
+          bool bad = false;
           try {
-            jsonDecode(body);
+            final decoded = jsonDecode(body);
+            if (decoded is! Map<String, dynamic>) {
+              bad = true;
+            } else {
+              // Like the firmware: the layout's canvas brightness is applied
+              // to the panel (the fake has no manual override, so the layout
+              // always wins).
+              final canvas = decoded['canvas'];
+              final b = canvas is Map<String, dynamic> ? canvas['brightness'] : null;
+              if (b is int) brightness = b;
+            }
           } on FormatException {
+            bad = true;
+          }
+          if (bad) {
             req.response.statusCode = 400;
             req.response.headers.contentType =
                 ContentType('application', 'json');

@@ -176,6 +176,17 @@ menu "Smart Mirror"
 
                 Start low. These panels are rated 4A each at full white.
 
+        config MIRROR_BRIGHTNESS_DEFAULT
+            int "Config brightness default (-1 = follow the layout)"
+            range -1 255
+            default -1
+            help
+                Seeded into NVS as the owner config's brightness key on first
+                boot. -1 means the pushed layout's brightness wins; 0..255 is
+                a manual override the phone sets over Bluetooth. This is
+                separate from MIRROR_BRIGHTNESS, which is only the panel's
+                power-on brightness before any layout or override is applied.
+
         config MIRROR_MIN_REFRESH_HZ
             int "Minimum refresh rate (Hz)"
             default 60

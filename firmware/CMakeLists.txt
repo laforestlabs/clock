@@ -15,4 +15,7 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-project(smart_mirror)
+# The version is baked into the app image descriptor (esp_app_get_description)
+# and is what /api/status, the BLE pong and the OTA filename report. Bump it
+# for every release so an OTA update is observable end to end.
+project(smart_mirror VERSION 0.2.0)

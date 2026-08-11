@@ -13,6 +13,7 @@ class MirrorConfig {
     this.latitude,
     this.longitude,
     this.place,
+    this.brightness,
   });
 
   final String? timezone;
@@ -20,16 +21,23 @@ class MirrorConfig {
   final String? longitude;
   final String? place;
 
+  /// Manual brightness override 0..255, or null to leave the device's current
+  /// setting unchanged (which includes "auto"). The device's own "auto" value
+  /// (-1) is read as null: there is no way to push "auto" through the config
+  /// object, only through the BLE "set brightness auto" command.
+  final int? brightness;
+
   /// Only the non-null fields, which is exactly what the firmware accepts.
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (timezone != null) 'timezone': timezone,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
         if (place != null) 'place': place,
+        if (brightness != null) 'brightness': brightness,
       };
 
   /// Parse a decoded JSON object. Returns null when the object carries none
-  /// of the four known fields.
+  /// of the five known fields.
   static MirrorConfig? fromJson(Map<String, dynamic> json) {
     String? str(String key) => json[key] is String ? json[key] as String : null;
 
@@ -37,10 +45,16 @@ class MirrorConfig {
     final latitude = str('latitude');
     final longitude = str('longitude');
     final place = str('place');
+    final brightness = json['brightness'] is int
+        ? (json['brightness'] as int == -1
+            ? null /* device auto; see the field comment */
+            : json['brightness'] as int)
+        : null;
     if (timezone == null &&
         latitude == null &&
         longitude == null &&
-        place == null) {
+        place == null &&
+        brightness == null) {
       return null;
     }
     return MirrorConfig(
@@ -48,13 +62,15 @@ class MirrorConfig {
       latitude: latitude,
       longitude: longitude,
       place: place,
+      brightness: brightness,
     );
   }
 
   /// Null when valid, otherwise a human message naming the first offending
   /// field. Mirrors the firmware rules: timezone non-empty and at most 63
   /// chars, latitude a number in [-90, 90], longitude a number in [-180,
-  /// 180], place at most 23 chars (fits the firmware's weather.place[24]).
+  /// 180], place at most 23 chars (fits the firmware's weather.place[24]),
+  /// brightness an integer in [0, 255].
   String? validate() {
     if (timezone != null) {
       final tz = timezone!;
@@ -75,6 +91,9 @@ class MirrorConfig {
     }
     if (place != null && place!.length > 23) {
       return 'Place is too long (max 23)';
+    }
+    if (brightness != null && (brightness! < 0 || brightness! > 255)) {
+      return 'Brightness must be an integer in [0, 255]';
     }
     return null;
   }

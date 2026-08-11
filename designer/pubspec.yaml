@@ -22,6 +22,14 @@ dependencies:
   path: ^1.9.0
   flutter_blue_plus: ^2.3.12
   multicast_dns: ^0.3.3+1
+  # Android 12+ runtime BLE permissions (BLUETOOTH_SCAN/CONNECT) and the
+  # remembered OTA download URL.
+  permission_handler: ^11.4.0
+  shared_preferences: ^2.5.4
+  # The Android SDK int for the permission gate: Platform.operatingSystemVersion
+  # is explicitly documented as not parseable, and getting it wrong sends the
+  # app down the Android-11 permission path on Android 14.
+  device_info_plus: ^13.2.0
 
 dev_dependencies:
   flutter_test:

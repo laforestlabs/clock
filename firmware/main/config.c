@@ -22,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "mirror/json.h"
 #include "nvs.h"
+#include "panel.h"
 #include "providers/provider.h"
 #include "sdkconfig.h"
 
@@ -32,6 +33,7 @@ static const char *TAG = "config";
 #define NVS_KEY_LAT   "lat"
 #define NVS_KEY_LON   "lon"
 #define NVS_KEY_PLACE "place"
+#define NVS_KEY_BRIGHTNESS "brightness"
 
 /* Validation limits, mirrored exactly in the Dart MirrorConfig.validate(). */
 #define TZ_MAX_LEN    63   /* POSIX TZ strings are short; 63 keeps snprintf
@@ -49,6 +51,8 @@ static char        s_tz[TZ_BUF_LEN];
 static char        s_lat[COORD_BUF_LEN];
 static char        s_lon[COORD_BUF_LEN];
 static char        s_place[PLACE_BUF_LEN];
+/* -1 means "follow the layout"; 0..255 is a manual override. */
+static int         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
 static SemaphoreHandle_t s_lock;
 
 static void lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -77,6 +81,27 @@ static void load_key(nvs_handle_t h, const char *key,
     }
 }
 
+/* Same seeding contract as load_key, for the i32 brightness key. */
+static void load_brightness(nvs_handle_t h)
+{
+    int32_t v;
+    esp_err_t err = nvs_get_i32(h, NVS_KEY_BRIGHTNESS, &v);
+    if (err == ESP_OK) {
+        s_brightness = v;
+        return;
+    }
+
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "brightness unreadable (%s), reseeding",
+                 esp_err_to_name(err));
+    }
+
+    s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
+    if (nvs_set_i32(h, NVS_KEY_BRIGHTNESS, s_brightness) == ESP_OK) {
+        nvs_commit(h);
+    }
+}
+
 esp_err_t mirror_config_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -93,11 +118,12 @@ esp_err_t mirror_config_init(void)
     load_key(h, NVS_KEY_LAT,   s_lat,   sizeof(s_lat),   CONFIG_MIRROR_LATITUDE);
     load_key(h, NVS_KEY_LON,   s_lon,   sizeof(s_lon),   CONFIG_MIRROR_LONGITUDE);
     load_key(h, NVS_KEY_PLACE, s_place, sizeof(s_place), CONFIG_MIRROR_PLACE_NAME);
+    load_brightness(h);
 
     nvs_close(h);
 
-    ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\"",
-             s_tz, s_lat, s_lon, s_place);
+    ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d",
+             s_tz, s_lat, s_lon, s_place, s_brightness);
     return ESP_OK;
 }
 
@@ -105,6 +131,31 @@ const char *mirror_config_timezone(void)  { return s_tz; }
 const char *mirror_config_latitude(void)  { return s_lat; }
 const char *mirror_config_longitude(void) { return s_lon; }
 const char *mirror_config_place(void)     { return s_place; }
+
+int mirror_config_brightness(void) { return s_brightness; }
+
+uint8_t mirror_config_effective_brightness(uint8_t layout_brightness)
+{
+    lock();
+    const int b = s_brightness;
+    unlock();
+    return b >= 0 ? (uint8_t)b : layout_brightness;
+}
+
+void mirror_config_clear_brightness(void)
+{
+    lock();
+    s_brightness = -1;
+    unlock();
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, NVS_KEY_BRIGHTNESS, -1);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "brightness override cleared (follows the layout again)");
+}
 
 static void fail(char *err, size_t errsz, const char *msg)
 {
@@ -133,7 +184,9 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     char   new_lat[COORD_BUF_LEN] = "";
     char   new_lon[COORD_BUF_LEN] = "";
     char   new_place[PLACE_BUF_LEN] = "";
+    int    new_brightness = -1;
     bool   have_tz = false, have_lat = false, have_lon = false, have_place = false;
+    bool   have_brightness = false;
 
     int t = ml_json_member(&j, 0, "timezone");
     if (t >= 0) {
@@ -187,8 +240,22 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         have_place = true;
     }
 
+    t = ml_json_member(&j, 0, "brightness");
+    if (t >= 0) {
+        /* Strictly an integer: ml_json_int rounds, and a 200.5 that quietly
+         * became 201 would fight the Dart validation that mirrors this. */
+        double d;
+        if (!ml_json_double(&j, t, &d) || d != (int)d || d < 0 || d > 255) {
+            fail(err, errsz, "brightness must be an integer in [0, 255]");
+            return ESP_ERR_INVALID_ARG;
+        }
+        new_brightness = (int)d;
+        have_brightness = true;
+    }
+
     /* Nothing named: a no-op, not an error. */
-    if (!have_tz && !have_lat && !have_lon && !have_place) {
+    if (!have_tz && !have_lat && !have_lon && !have_place &&
+        !have_brightness) {
         fail(err, errsz, "no known fields");
         return ESP_ERR_INVALID_ARG;
     }
@@ -198,8 +265,11 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     const bool lat_changed  = have_lat  && strcmp(new_lat, s_lat) != 0;
     const bool lon_changed  = have_lon  && strcmp(new_lon, s_lon) != 0;
     const bool place_changed = have_place && strcmp(new_place, s_place) != 0;
+    const bool brightness_changed = have_brightness &&
+                                    new_brightness != s_brightness;
 
-    if (tz_changed || lat_changed || lon_changed || place_changed) {
+    if (tz_changed || lat_changed || lon_changed || place_changed ||
+        brightness_changed) {
         nvs_handle_t h;
         esp_err_t nvs_err = nvs_open(NVS_NS, NVS_READWRITE, &h);
         if (nvs_err != ESP_OK) {
@@ -210,6 +280,8 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         if (lat_changed)    nvs_set_str(h, NVS_KEY_LAT, new_lat);
         if (lon_changed)    nvs_set_str(h, NVS_KEY_LON, new_lon);
         if (place_changed)  nvs_set_str(h, NVS_KEY_PLACE, new_place);
+        if (brightness_changed) nvs_set_i32(h, NVS_KEY_BRIGHTNESS,
+                                            new_brightness);
         nvs_err = nvs_commit(h);
         nvs_close(h);
         if (nvs_err != ESP_OK) {
@@ -223,6 +295,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (have_lat)    memcpy(s_lat, new_lat, sizeof(s_lat));
     if (have_lon)    memcpy(s_lon, new_lon, sizeof(s_lon));
     if (have_place)  memcpy(s_place, new_place, sizeof(s_place));
+    if (have_brightness) s_brightness = new_brightness;
     unlock();
 
     if (tz_changed) {
@@ -233,6 +306,11 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (lat_changed || lon_changed || place_changed) {
         ESP_LOGI(TAG, "weather now at %s, %s (\"%s\")", s_lat, s_lon, s_place);
         providers_refresh_now();
+    }
+    if (have_brightness) {
+        /* A config push names a manual override, so it wins immediately. */
+        panel_set_brightness((uint8_t)s_brightness);
+        ESP_LOGI(TAG, "brightness override set to %d", s_brightness);
     }
 
     return ESP_OK;

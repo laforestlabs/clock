@@ -19,6 +19,7 @@ import 'dart:typed_data';
 class MirrorStatus {
   const MirrorStatus({
     required this.version,
+    required this.core,
     required this.ip,
     required this.online,
     required this.rssi,
@@ -30,7 +31,13 @@ class MirrorStatus {
     required this.brightness,
   });
 
+  /// The app image version (esp_app_get_description on the device); what an
+  /// OTA changes.
   final String version;
+
+  /// The render core version (ML_VERSION_STR), empty on firmware older than
+  /// the field's introduction; useful for designer/firmware render drift.
+  final String core;
   final String ip;
   final bool online;
   final int rssi;
@@ -47,6 +54,7 @@ class MirrorStatus {
         v is num ? v.toInt() : fallback;
     return MirrorStatus(
       version: json['version'] as String? ?? '',
+      core: json['core'] as String? ?? '',
       ip: json['ip'] as String? ?? '',
       online: json['online'] as bool? ?? false,
       rssi: asInt(json['rssi'], 0),

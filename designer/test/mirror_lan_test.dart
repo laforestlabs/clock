@@ -33,8 +33,8 @@ class FakeMirror {
       case 'GET /api/status':
         req.response.headers.contentType = ContentType('application', 'json');
         req.response.write(
-          '{"version":"0.1.0","ip":"127.0.0.1","online":true,"rssi":-45,'
-          '"uptime_s":1234,"layout":"mini","width":64,"height":32,'
+          '{"version":"0.1.0","core":"v0.4.1","ip":"127.0.0.1","online":true,'
+          '"rssi":-45,"uptime_s":1234,"layout":"mini","width":64,"height":32,'
           '"brightness":120}',
         );
         break;
@@ -103,6 +103,7 @@ void main() {
     test('parses every field', () async {
       final s = await lan.status();
       expect(s.version, '0.1.0');
+      expect(s.core, 'v0.4.1');
       expect(s.ip, '127.0.0.1');
       expect(s.online, isTrue);
       expect(s.rssi, -45);
@@ -111,6 +112,28 @@ void main() {
       expect(s.width, 64);
       expect(s.height, 32);
       expect(s.brightness, 120);
+    });
+  });
+
+  group('MirrorStatus.fromJson', () {
+    test('tolerates a missing core field (older firmware)', () {
+      final s = MirrorStatus.fromJson(<String, dynamic>{
+        'version': '0.1.0',
+        'ip': '127.0.0.1',
+        'brightness': 120,
+      });
+      expect(s.version, '0.1.0');
+      expect(s.core, '');
+    });
+
+    test('parses the core field when present', () {
+      final s = MirrorStatus.fromJson(<String, dynamic>{
+        'version': '0.2.0',
+        'core': 'v0.5.0',
+        'ip': '127.0.0.1',
+      });
+      expect(s.version, '0.2.0');
+      expect(s.core, 'v0.5.0');
     });
   });
 

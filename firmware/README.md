@@ -169,7 +169,9 @@ diff in M4 stays meaningful.
 **Brightness is done in hardware.** Frames are blitted at full scale and the
 driver dims by shortening LED on-time. Scaling colour values instead would
 work, but it throws away colour depth, and at the settings a mirror behind
-two-way glass actually runs at there is very little to lose.
+two-way glass actually runs at there is very little to lose. The phone can
+set a manual override over Bluetooth; it lives in NVS, so it survives reboots
+and layout pushes until it is cleared ("set brightness auto").
 
 **The panel is initialised before WiFi.** It needs the largest contiguous block
 of DMA-capable internal SRAM in the system, and asking for it before the WiFi
@@ -186,6 +188,41 @@ The DMA buffer must live in internal SRAM. PSRAM-backed HUB75 buffers cap the
 shift clock near 13MHz and flicker visibly. The canvas and frame buffers do go
 in PSRAM, since only the CPU reads them, which keeps internal SRAM free for
 DMA. The log reports which pool each allocation landed in at boot.
+
+## OTA updates
+
+Firmware can be updated from the phone over WiFi, no USB cable. The image is
+the app partition binary the build produces; `tools/build_ota.sh` builds it,
+names it after the version in `firmware/CMakeLists.txt`, and can serve it on
+the LAN so the phone downloads it directly.
+
+The full loop, with the phone and the mirror on the same WiFi as the PC:
+
+1. Bump the version: `project(smart_mirror VERSION x.y.z)` in
+   `firmware/CMakeLists.txt`. The version is baked into the image and is what
+   the app shows after the update, so a release that changes it is verifiable.
+2. Build and serve: `tools/build_ota.sh --serve`. It prints the exact URL to
+   type into the app, e.g. `http://192.168.1.20:8000/smart_mirror-0.2.0.bin`.
+3. In the app: connect to the mirror over Bluetooth, Update firmware,
+   Download from URL, paste the printed URL. The phone uploads the image over
+   HTTP to the mirror's LAN API (`POST /api/ota`), the mirror validates it
+   with `esp_ota_end`, switches the boot partition and reboots; the app polls
+   `/api/status` until the mirror answers and shows the new version.
+
+Rollback is built in and automatic: an image that crashes early (before the
+render task marks the new image valid) is reverted to the previous one on the
+next boot, thanks to `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. A bad update
+therefore ends with the mirror on the old, working image, not on a blank
+panel. The upload leg itself must be over LAN because the image is a 4 MB app
+partition; OTA over BLE is deliberately out of scope.
+
+Notes:
+
+- The phone and the mirror must be on the same LAN for the upload; the app
+  warns about this when the mirror reports no usable WiFi IP.
+- `python3 -m http.server` (which `--serve` wraps) is not a hardened web
+  server. It is fine for a home LAN update session; do not expose it to the
+  internet.
 
 ## Data providers
 
@@ -234,4 +271,4 @@ token.
 
 **Todos** are not wired up yet; the widget shows its empty state.
 
-Layout push over the LAN arrives in M4, OTA in M5.
+Layout push over the LAN and OTA are implemented; see "OTA updates" above.

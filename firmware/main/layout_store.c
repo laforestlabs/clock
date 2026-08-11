@@ -21,6 +21,7 @@
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "config.h"
 #include "panel.h"
 
 static const char *TAG = "layout";
@@ -242,9 +243,10 @@ esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)
     s_layout = *candidate;
     unlock();
 
-    /* Brightness is a real device setting applied by the driver in hardware;
-     * the pushed layout says what it should be. */
-    panel_set_brightness(candidate->brightness);
+    /* Brightness is a real device setting applied by the driver in hardware.
+     * A manual override (set over BLE) wins over what the layout asks for,
+     * so a layout push only dims the panel when no override is set. */
+    panel_set_brightness(mirror_config_effective_brightness(candidate->brightness));
     ESP_LOGI(TAG, "layout \"%s\": %dx%d, %d widgets, brightness %u",
              candidate->name, candidate->w, candidate->h, candidate->count,
              (unsigned)candidate->brightness);

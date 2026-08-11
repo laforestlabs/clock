@@ -25,12 +25,15 @@
 #include <string.h>
 
 #include "config.h"
+#include "esp_app_desc.h"
 #include "esp_bt.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -43,6 +46,7 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
+#include "panel.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "sdkconfig.h"
@@ -184,8 +188,12 @@ static void cmd_ping(void)
     static ml_layout layout;
     layout_store_snapshot(&layout);
 
-    /* The app uses the pong's IP for the WiFi OTA upload. */
-    send_status("pong %s %s %s %d %d", ML_VERSION_STR, wifi_ip(),
+    /* The version token is the app image version (esp_app_get_description),
+     * not the render core version: it is what the phone shows next to the
+     * firmware update, and an OTA must be verifiable. The app uses the
+     * pong's IP for the WiFi OTA upload. */
+    send_status("pong %s %s %s %d %d",
+                esp_app_get_description()->version, wifi_ip(),
                 layout.name, layout.w, layout.h);
 }
 
@@ -196,9 +204,10 @@ static void cmd_get_config(void)
     json_escape(esc_place, sizeof(esc_place), mirror_config_place());
 
     send_status("config {\"timezone\":\"%s\",\"latitude\":\"%s\","
-                "\"longitude\":\"%s\",\"place\":\"%s\"}",
+                "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d}",
                 esc_tz, mirror_config_latitude(),
-                mirror_config_longitude(), esc_place);
+                mirror_config_longitude(), esc_place,
+                mirror_config_brightness());
 }
 
 static void cmd_begin(const char *arg)
@@ -322,6 +331,56 @@ static void cmd_abort(void)
     send_status("abort ok");
 }
 
+static void cmd_get_brightness(void)
+{
+    send_status("brightness %u %s", panel_get_brightness(),
+                mirror_config_brightness() >= 0 ? "manual" : "auto");
+}
+
+static void cmd_set_brightness(const char *arg)
+{
+    if (strcmp(arg, "auto") == 0) {
+        mirror_config_clear_brightness();
+        /* Re-apply the layout's brightness, which the override had hidden. */
+        static ml_layout layout;
+        layout_store_snapshot(&layout);
+        panel_set_brightness(layout.brightness);
+        send_status("brightness ok auto");
+        return;
+    }
+
+    int n;
+    if (sscanf(arg, "%d", &n) != 1) {
+        send_status("brightness error not a number");
+        return;
+    }
+    if (n < 0 || n > 255) {
+        send_status("brightness error out of range");
+        return;
+    }
+
+    /* Persist as an override through the config module, which validates and
+     * applies the panel change atomically. */
+    char err[96];
+    char json[32];
+    snprintf(json, sizeof(json), "{\"brightness\":%d}", n);
+    if (mirror_config_apply_json(json, strlen(json), err, sizeof(err)) != ESP_OK) {
+        send_status("brightness error %s", err);
+        return;
+    }
+    send_status("brightness ok %u", panel_get_brightness());
+}
+
+static void cmd_reboot(void)
+{
+    send_status("reboot ok");
+    /* The notification is queued by the stack; a short delay on the host
+     * task lets it go out before the chip restarts, so the phone sees the
+     * status line instead of a hung request. */
+    vTaskDelay(pdMS_TO_TICKS(300));
+    esp_restart();
+}
+
 /* Parse and run one command line. Commands are the ASCII protocol described
  * at the top of the file. */
 static void handle_cmd(char *line)
@@ -330,6 +389,12 @@ static void handle_cmd(char *line)
         cmd_ping();
     } else if (strcmp(line, "get config") == 0) {
         cmd_get_config();
+    } else if (strcmp(line, "get brightness") == 0) {
+        cmd_get_brightness();
+    } else if (strncmp(line, "set brightness ", 15) == 0) {
+        cmd_set_brightness(line + 15);
+    } else if (strcmp(line, "reboot") == 0) {
+        cmd_reboot();
     } else if (strncmp(line, "begin ", 6) == 0) {
         cmd_begin(line + 6);
     } else if (strcmp(line, "commit") == 0) {

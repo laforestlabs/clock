@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
@@ -32,6 +33,7 @@
 #include "mirror/mirror.h"
 #include "net/ota.h"
 #include "net/wifi.h"
+#include "panel.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "api";
@@ -77,16 +79,21 @@ static esp_err_t handle_get_status(httpd_req_t *req)
     char esc_name[2 * ML_NAME_LEN];
     json_escape(esc_name, sizeof(esc_name), layout.name);
 
-    char body[320];
+    /* "version" is the app image version so an OTA is verifiable; "core" is
+     * the render core version, useful when the designer and the firmware
+     * drift. "brightness" is the live panel value, not the layout's static
+     * one, so a manual override set over BLE shows up here too. */
+    char body[384];
     snprintf(body, sizeof(body),
-             "{\"version\":\"%s\",\"ip\":\"%s\",\"online\":%s,\"rssi\":%d,"
-             "\"uptime_s\":%llu,\"layout\":\"%s\",\"width\":%d,\"height\":%d,"
-             "\"brightness\":%u}",
-             ML_VERSION_STR, wifi_ip(),
+             "{\"version\":\"%s\",\"core\":\"%s\",\"ip\":\"%s\",\"online\":%s,"
+             "\"rssi\":%d,\"uptime_s\":%llu,\"layout\":\"%s\",\"width\":%d,"
+             "\"height\":%d,\"brightness\":%u}",
+             esp_app_get_description()->version, ML_VERSION_STR, wifi_ip(),
              wifi_is_connected() ? "true" : "false",
              wifi_rssi(),
              (unsigned long long)(esp_timer_get_time() / 1000000),
-             esc_name, layout.w, layout.h, (unsigned)layout.brightness);
+             esc_name, layout.w, layout.h,
+             (unsigned)panel_get_brightness());
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);

@@ -13,6 +13,7 @@
  */
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -158,8 +159,9 @@ static void render_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "smart mirror, core %s, render engine v%d",
-             ML_VERSION_STR, ML_RENDER_VERSION);
+    const char *app_version = esp_app_get_description()->version;
+    ESP_LOGI(TAG, "smart mirror app %s, core %s, render engine v%d",
+             app_version, ML_VERSION_STR, ML_RENDER_VERSION);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -194,11 +196,17 @@ void app_main(void)
     ESP_ERROR_CHECK(layout_store_init(layout_json_start,
                                       (size_t)(layout_json_end - layout_json_start)));
 
+    /* Owner config (timezone, coordinates, place, brightness) from NVS,
+     * seeded from Kconfig on first boot. Before the boot brightness and the
+     * clock sync below: the brightness override must win from the first
+     * frame, and sntp_time_start() needs the zone set. */
+    ESP_ERROR_CHECK(mirror_config_init());
+
     /* Static, not stack: ml_layout is ~6.6KB and the main task stack is 3584
      * bytes. The snapshot exists only to read the brightness off. */
     static ml_layout boot;
     layout_store_snapshot(&boot);
-    panel_set_brightness(boot.brightness);
+    panel_set_brightness(mirror_config_effective_brightness(boot.brightness));
     /* Render before the network comes up, so the panel shows placeholders
      * within a second of power-on instead of staying dark while WiFi
      * associates. */
@@ -218,10 +226,6 @@ void app_main(void)
      * saved network does not answer. Either way it returns quickly and the
      * render task keeps drawing placeholders throughout.
      */
-    /* Owner config (timezone, coordinates, place) from NVS, seeded from
-     * Kconfig on first boot. Must precede sntp_time_start() so the first
-     * synced frame is already in the right zone. */
-    ESP_ERROR_CHECK(mirror_config_init());
     ESP_ERROR_CHECK(provision_init());
     ESP_ERROR_CHECK(provision_start());
     sntp_time_start();
