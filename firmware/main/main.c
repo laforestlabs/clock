@@ -163,6 +163,14 @@ void app_main(void)
     ESP_LOGI(TAG, "smart mirror app %s, core %s, render engine v%d",
              app_version, ML_VERSION_STR, ML_RENDER_VERSION);
 
+#if CONFIG_BT_ENABLED
+    /* The BLE commit worker needs an 8KB contiguous internal stack; claim it
+     * now, before panel_init() takes the DMA buffers, or no block that large
+     * survives to ble_init(). It just blocks on its queue until a commit
+     * arrives. */
+    ESP_ERROR_CHECK(ble_commit_init());
+#endif
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* Happens after a partition table change, which this project has

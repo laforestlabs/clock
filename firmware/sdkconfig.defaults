@@ -78,8 +78,11 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
-# The host task processes the phone's commands, and 4KB is tight once NimBLE's
-# own ATT/L2CAP frames are on the stack with the command handler. Commits run
-# on their own task (see net/ble.c), but the command path itself still wants
-# headroom; RAM is not scarce on the N16R8.
-CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
+# NimBLE host memory (msys pools, ACL buffers, GATT db) lives in PSRAM.
+# Internal DRAM is nearly exhausted by the panel's DMA buffers, WiFi and the
+# BT controller (the largest contiguous internal block is ~7.5KB once the BT
+# stack initializes), and the NimBLE host task needs 4KB of it. Without this,
+# either the host task or the "ble_commit" worker fails to be created and the
+# board never advertises. The controller's own memory cannot leave internal
+# DRAM; only the host's allocations move.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y

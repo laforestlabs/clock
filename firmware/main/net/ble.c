@@ -127,9 +127,7 @@ typedef struct {
     size_t          len;
 } commit_job_t;
 
-static QueueHandle_t   s_commit_q;
-static StackType_t     s_commit_stack[COMMIT_STACK_BYTES / sizeof(StackType_t)];
-static StaticTask_t    s_commit_tcb;
+static QueueHandle_t s_commit_q;
 
 static int gap_event_cb(struct ble_gap_event *event, void *arg);
 
@@ -329,6 +327,13 @@ static void cmd_commit(void)
     /* Hand the payload to the commit task: the transfer state is free and
      * the store/config modules are themselves locked, so a concurrent push
      * can start cleanly while the commit work runs off the host task. */
+    if (s_commit_q == NULL) {
+        /* ble_commit_init() failing at boot is the only way to get here. */
+        ESP_LOGE(TAG, "commit queue missing, rejecting");
+        send_status("commit error busy");
+        heap_caps_free((void *)buf);
+        return;
+    }
     const commit_job_t job = { .kind = kind, .buf = buf, .len = len };
     if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
         /* The phone pushes one transfer at a time, so a full queue means a
@@ -685,6 +690,24 @@ static void host_task(void *param)
 
 /* entry */
 
+esp_err_t ble_commit_init(void)
+{
+    s_commit_q = xQueueCreate(COMMIT_Q_DEPTH, sizeof(commit_job_t));
+    if (s_commit_q == NULL) {
+        ESP_LOGE(TAG, "commit queue allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* The worker needs COMMIT_STACK_BYTES of contiguous internal RAM (its
+     * stack, in bytes per ESP-IDF's xTaskCreate, must stay internal: the task
+     * runs NVS/SPIFFS writes, performed with the flash cache disabled, and a
+     * PSRAM-backed stack would be unreachable mid-write). That is only
+     * available here, before the panel claims its DMA buffers. */
+    xTaskCreate(commit_task, "ble_commit", COMMIT_STACK_BYTES, NULL, 5, NULL);
+
+    return ESP_OK;
+}
+
 esp_err_t ble_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -692,20 +715,6 @@ esp_err_t ble_init(void)
 
     s_status_lock = xSemaphoreCreateMutex();
     if (s_status_lock == NULL) return ESP_ERR_NO_MEM;
-
-    s_commit_q = xQueueCreate(COMMIT_Q_DEPTH, sizeof(commit_job_t));
-    if (s_commit_q == NULL) {
-        ESP_LOGE(TAG, "commit queue allocation failed");
-        return ESP_ERR_NO_MEM;
-    }
-
-    /* Commit work (flash writes, tzset, provider refresh) lives here, not on
-     * the BLE host task. The stack is static internal SRAM on purpose: the
-     * task runs NVS/SPIFFS writes, which are performed with the flash cache
-     * disabled, and a PSRAM-backed stack would be unreachable mid-write. */
-    xTaskCreateStatic(commit_task, "ble_commit",
-                      COMMIT_STACK_BYTES / sizeof(StackType_t), NULL, 5,
-                      s_commit_stack, &s_commit_tcb);
 
     /* Same naming convention as the setup access point (build_ap_ssid):
      * last four hex digits of the STA MAC, so several mirrors in one house
