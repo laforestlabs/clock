@@ -5,7 +5,7 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 14 glyphs, codepoints 45 to 58, role digits, 
- * cell height 10, baseline 10, 140 bytes of bitmap.
+ * cell height 10, baseline 10, 1 plane(s), 140 bytes of bitmap.
  */
 #include "mirror/font.h"
 
@@ -183,6 +183,7 @@ const ml_font ml_font_digits10 = {
     .height   = 10,
     .baseline = 10,
     .gap      = 1,
+    .planes   = 1,
     .widths   = s_digits10_widths,
     .offsets  = s_digits10_offsets,
     .bitmap   = s_digits10_bitmap,

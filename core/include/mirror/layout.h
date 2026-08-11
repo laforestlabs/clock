@@ -27,6 +27,9 @@ extern "C" {
 #define ML_FORMAT_LEN     24
 #define ML_BIND_LEN       32
 
+/* Extra palette slots beyond w->color for multi-plane icon fonts. */
+#define ML_ICON_COLORS    3
+
 /*
  * Upper bound on widget scale. Eight times the tallest font already overflows
  * any panel this drives, and a cap means a typo in a pushed layout cannot turn
@@ -72,6 +75,14 @@ typedef struct {
     bool           has_bg;
     ml_rgb         accent;      /* secondary color: times, bullets, dim rows */
     bool           has_accent;
+    /*
+     * Extra palette colours for multi-plane icon sets, filled after w->color
+     * in palette order. colour_count is 0 for the single-colour layouts every
+     * pre-palette layout is, and the renderer then tints all planes with
+     * w->color so old layouts keep rendering exactly as they did.
+     */
+    ml_rgb         colors[ML_ICON_COLORS];
+    int            color_count;
 
     char           font[ML_NAME_LEN];
     char           format[ML_FORMAT_LEN];   /* strftime-ish or printf-ish */

@@ -45,9 +45,18 @@ typedef struct {
     uint8_t         height;    /* rows per glyph */
     uint8_t         baseline;  /* rows from top to the text baseline */
     uint8_t         gap;       /* horizontal pixels inserted between glyphs */
+    /*
+     * Colour planes per glyph, 1 for text and digits. A multi-plane icon set
+     * stores each plane as an independent 1-bit bitmap, plane 0 first, so a
+     * glyph occupies planes * height * stride bytes and a plane's bits are
+     * its own palette slot. A single-colour draw tints every plane with the
+     * one colour it was given, which is what keeps a one-colour layout
+     * rendering an icon set exactly as it always did.
+     */
+    uint8_t         planes;
     const uint8_t  *widths;    /* [count] ink width of each glyph */
     const uint16_t *offsets;   /* [count] byte offset of each glyph in bitmap */
-    const uint8_t  *bitmap;    /* packed glyph rows */
+    const uint8_t  *bitmap;    /* packed glyph rows, plane-major per glyph */
     /*
      * The style this cut belongs to, e.g. "sans" or "digits". A layout that
      * names a family lets the engine pick the cut that fills the box; naming
@@ -128,6 +137,14 @@ int ml_text_height(const ml_font *f, int scale_q8);
  */
 int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
                  const char *s, ml_rgb color, int scale_q8);
+
+/*
+ * Draw text where each colour plane of the font takes a colour from pal.
+ * pal must hold at least f->planes entries; plane 0 is the primary colour.
+ * For single-plane fonts this is exactly ml_text_draw with pal[0].
+ */
+int ml_text_draw_pal(ml_canvas *c, const ml_font *f, int x, int y,
+                     const char *s, const ml_rgb *pal, int scale_q8);
 
 /*
  * Draw text truncated to max_w pixels, appending a one-pixel ellipsis marker if

@@ -57,8 +57,10 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *      continuous downscaling, with gamma-compensated area coverage.
  *   6  weather symbols use the same continuous scaling path above and below
  *      their 16px master instead of flooring fitted sizes to integer steps.
+ *   7  multi-colour weather icons: wx16 carries four colour planes drawn
+ *      through a per-widget palette instead of a single tint.
  */
-#define ML_RENDER_VERSION 6
+#define ML_RENDER_VERSION 7
 
 #ifdef __cplusplus
 }

@@ -817,7 +817,7 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
     /*
      * Scaled to the box like everything else, but never font-substituted. Icons
-     * are indexed by digit, and every body font has digits, so letting
+     * are indexed by digit codepoint, so letting a text font win an
      * auto_font loose here would answer "which font can draw '3'?" with sans9
      * and quietly put the numeral 3 where the rain icon belongs.
      */
@@ -825,7 +825,17 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     int  gw = ml_text_width(f, glyph, sc);
     int  x  = align_x(w->align, w->rect, gw);
     int  y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
-    ml_text_draw(c, f, x, y, glyph, w->color, sc);
+
+    /*
+     * Multi-plane icon sets take one colour per plane. A layout without
+     * 'colors' tints every plane with the widget colour, so the icons stay
+     * single-coloured and unchanged for the layouts that predate palettes.
+     */
+    ml_rgb pal[4];
+    for (int i = 0; i < 4; i++) pal[i] = w->color;
+    for (int i = 0; i < w->color_count && i < ML_ICON_COLORS; i++)
+        pal[i + 1] = w->colors[i];
+    ml_text_draw_pal(c, f, x, y, glyph, pal, sc);
 }
 
 /*

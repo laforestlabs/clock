@@ -150,6 +150,22 @@ partially covered LED pixels from becoming too dim after panel correction.
 The weather symbols use the same continuous area-resampling and
 gamma-compensated coverage, including boxes smaller than their 16px master.
 
+The weather icons are multi-colour: `wx16` carries four colour planes (sun,
+cloud, precipitation, snow), each drawn in its own colour when the icon widget
+provides a `colors` array:
+
+```json
+{ "type": "icon", "rect": [0, 26, 16, 16], "icon_set": "wx16",
+  "bind": "weather.code",
+  "color": "#FFD24D",
+  "colors": ["#C9CDD6", "#5AA0E0", "#E8EEF4"] }
+```
+
+`color` is plane 0 (the sun, and the lightning bolt); `colors` fills planes 1
+to 3 in order (cloud, rain, snow). A layout without `colors` tints every plane
+with its single colour, so the icons remain legible from any layout that
+predates palettes.
+
 Naming a family leaves the size to the engine, which picks the cut that fills
 the widget's box and scales it the rest of the way:
 
@@ -276,7 +292,7 @@ label with weather symbols.
 |---|---|---|
 | `sans8` to `sans24` | 8 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
 | `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
-| `wx16` | 16x16 master | Ten continuously scalable weather icons, indexed by category |
+| `wx16` | 16x16 master | Ten continuously scalable weather icons in four colour planes, indexed by category |
 
 Drop a font you do not use and it stops being compiled in: the build discovers
 `core/src/fonts/*.c` rather than listing them.

@@ -5,7 +5,7 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 96 glyphs, codepoints 32 to 127, role text, 
- * cell height 24, baseline 18, 4512 bytes of bitmap.
+ * cell height 24, baseline 18, 1 plane(s), 4512 bytes of bitmap.
  */
 #include "mirror/font.h"
 
@@ -2440,6 +2440,7 @@ const ml_font ml_font_sans24 = {
     .height   = 24,
     .baseline = 18,
     .gap      = 1,
+    .planes   = 1,
     .widths   = s_sans24_widths,
     .offsets  = s_sans24_offsets,
     .bitmap   = s_sans24_bitmap,

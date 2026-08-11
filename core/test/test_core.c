@@ -661,6 +661,78 @@ static void test_scale_parse(void)
 }
 
 /*
+ * Multi-colour icon palettes: the colors array survives a round trip, the
+ * icon draws each plane in its own colour, and a layout without one stays a
+ * single tint (every pre-palette layout's rendering is unchanged).
+ */
+static void test_icon_palette(void)
+{
+    group("icon palette");
+
+    ml_diag diag;
+    ml_layout l;
+
+    static const char doc[] =
+        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+        "\"widgets\":["
+        "{\"type\":\"icon\",\"rect\":[0,0,16,16],\"icon_set\":\"wx16\","
+        "\"bind\":\"weather.code\",\"color\":\"#FFD24D\","
+        "\"colors\":[\"#C9CDD6\",\"#5AA0E0\",\"#E8EEF4\"]},"
+        "{\"type\":\"icon\",\"rect\":[16,0,16,16],\"icon_set\":\"wx16\","
+        "\"bind\":\"weather.code\",\"color\":\"#FFD24D\"}"
+        "]}";
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "palette layout parses");
+    if (l.count < 2) return;
+
+    CHECK(l.widgets[0].color_count == 3, "colors array is read");
+    CHECK(l.widgets[0].colors[0].r == 0xC9 && l.widgets[0].colors[0].g == 0xCD &&
+          l.widgets[0].colors[0].b == 0xD6, "cloud colour lands in colors[0]");
+    CHECK(l.widgets[1].color_count == 0, "no colors array means a single tint");
+
+    char buf[2048];
+    size_t want = ml_layout_write(&l, buf, sizeof(buf));
+    CHECK(want < sizeof(buf), "palette layout fits the buffer");
+
+    ml_layout back;
+    CHECK(ml_layout_parse(buf, strlen(buf), &back, &diag), "palette reparses");
+    if (back.count < 2) return;
+    CHECK(back.widgets[0].color_count == 3 &&
+          back.widgets[0].colors[1].b == 0xE0, "round trip preserves colors");
+    CHECK(back.widgets[1].color_count == 0, "round trip leaves a plain icon plain");
+
+    /* The typical mock is partly cloudy: yellow sun plus grey cloud on the
+     * same glyph. The plain widget must render the same art as one tint. */
+    ml_model m;
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    ml_canvas c;
+    ml_canvas_init(&c, 64, 64, NULL);
+    ml_render(&l, &m, &c);
+
+    int yellow = 0, grey = 0, white = 0, blue = 0;
+    int tinted = 0, other = 0;
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            ml_rgb p = ml_canvas_get(&c, x, y);
+            if (p.r == 0xFF && p.g == 0xD2 && p.b == 0x4D) yellow++;
+            else if (p.r == 0xC9 && p.g == 0xCD && p.b == 0xD6) grey++;
+            else if (p.r == 0x5A && p.g == 0xA0 && p.b == 0xE0) blue++;
+            else if (p.r == 0xE8 && p.g == 0xEE && p.b == 0xF4) white++;
+        }
+        for (int x = 16; x < 32; x++) {
+            ml_rgb p = ml_canvas_get(&c, x, y);
+            if (p.r == 0xFF && p.g == 0xD2 && p.b == 0x4D) tinted++;
+            else if (p.r || p.g || p.b) other++;
+        }
+    }
+    CHECK(yellow > 0 && grey > 0, "cloudy icon draws sun and cloud in their own colours");
+    CHECK(blue == 0 && white == 0, "cloudy icon uses no precipitation plane");
+    CHECK(tinted > 0 && other == 0, "a palette-less icon stays a single tint");
+
+    ml_canvas_free(&c);
+}
+
+/*
  * fit is the whole point of the resize handles: a taller box must draw taller
  * text, and a box that shrinks must give it back.
  */
@@ -1862,6 +1934,7 @@ int main(void)
     test_fonts();
     test_scale();
     test_scale_parse();
+    test_icon_palette();
     test_fit();
     test_fit_axes();
     test_fit_continuous();

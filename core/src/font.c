@@ -125,28 +125,34 @@ int ml_text_height(const ml_font *f, int scale_q8)
  *
  * Each set bit becomes a scale by scale block. At scale 1 the inner loops run
  * exactly once and this reduces to the single ml_canvas_set it has always
- * been, which is what keeps unscaled output bit-identical.
+ * been, which is what keeps unscaled output bit-identical. Plane 0 alone is
+ * exactly the old single-colour path, so a one-plane font blits identically
+ * to the bitmap format it always had.
  */
 static int draw_glyph_whole(ml_canvas *c, const ml_font *f, int idx,
-                            int x, int y, ml_rgb color, int scale)
+                            int x, int y, const ml_rgb *pal, int planes, int scale)
 {
     int width  = f->widths[idx];
     int stride = (width + 7) / 8;
     const uint8_t *bits = &f->bitmap[f->offsets[idx]];
+    const size_t plane_bytes = (size_t)f->height * (size_t)stride;
 
     for (int row = 0; row < f->height; row++) {
-        const uint8_t *rowbits = bits + (size_t)row * (size_t)stride;
-        int py = y + row * scale;
+        const int py = y + row * scale;
 
         /* Cheap reject: whole rows above or below the clip cost nothing. A
          * scaled row spans scale pixels, so both edges account for that. */
         if (py + scale <= c->clip.y || py >= c->clip.y + c->clip.h) continue;
 
-        for (int col = 0; col < width; col++) {
-            if (!(rowbits[col >> 3] & (0x80u >> (col & 7)))) continue;
-            for (int sy = 0; sy < scale; sy++) {
-                for (int sx = 0; sx < scale; sx++) {
-                    ml_canvas_set(c, x + col * scale + sx, py + sy, color);
+        for (int p = 0; p < planes; p++) {
+            const uint8_t *rowbits = bits + (size_t)p * plane_bytes
+                                   + (size_t)row * (size_t)stride;
+            for (int col = 0; col < width; col++) {
+                if (!(rowbits[col >> 3] & (0x80u >> (col & 7)))) continue;
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale; sx++) {
+                        ml_canvas_set(c, x + col * scale + sx, py + sy, pal[p]);
+                    }
                 }
             }
         }
@@ -210,15 +216,20 @@ static void splat(ml_canvas *c, int fx, int fy, int scale_q8, ml_rgb color)
  * ladder of visually different bitmap cuts.
  *
  * Summing before blending matters: a destination pixel straddling the seam
- * between two inked source pixels is fully covered, and blending each
- * contribution separately would leave a darker seam inside solid stems.
+ * between two inked source pixels of the same plane is fully covered, and
+ * blending each contribution separately would leave a darker seam inside
+ * solid stems. Coverage is summed per plane, so a seam between different
+ * planes composites in palette order, which is the z-order the icon art
+ * intends: cloud over sun edge, precipitation below the cloud.
  */
 static int draw_glyph_frac(ml_canvas *c, const ml_font *f, int idx,
-                           int x_q8, int y, ml_rgb color, int scale_q8)
+                           int x_q8, int y, const ml_rgb *pal, int planes,
+                           int scale_q8)
 {
     const int width  = f->widths[idx];
     const int stride = (width + 7) / 8;
     const uint8_t *bits = &f->bitmap[f->offsets[idx]];
+    const size_t plane_bytes = (size_t)f->height * (size_t)stride;
     const int gy = y << 8;
 
     const int py2 = (gy + f->height * scale_q8 - 1) >> 8;
@@ -244,27 +255,32 @@ static int draw_glyph_frac(ml_canvas *c, const ml_font *f, int idx,
             int sc1 = (col_hi - 1 - x_q8) / scale_q8;
             if (sc1 > width - 1) sc1 = width - 1;
 
-            int cover = 0;
+            int cover[4] = {0, 0, 0, 0};
             for (int sr = sr0; sr <= sr1; sr++) {
-                const uint8_t *rowbits = bits + (size_t)sr * (size_t)stride;
                 const int r1 = gy + (sr + 1) * scale_q8;
                 const int oy = (r1 < row_hi ? r1 : row_hi)
                              - (gy + sr * scale_q8 > row_lo ? gy + sr * scale_q8 : row_lo);
                 for (int sc = sc0; sc <= sc1; sc++) {
-                    if (!(rowbits[sc >> 3] & (0x80u >> (sc & 7)))) continue;
                     const int c1 = x_q8 + (sc + 1) * scale_q8;
                     const int ox = (c1 < col_hi ? c1 : col_hi)
                                  - (x_q8 + sc * scale_q8 > col_lo ? x_q8 + sc * scale_q8 : col_lo);
-                    cover += ox * oy;
+                    for (int p = 0; p < planes; p++) {
+                        const uint8_t *rowbits = bits + (size_t)p * plane_bytes
+                                               + (size_t)sr * (size_t)stride;
+                        if (rowbits[sc >> 3] & (0x80u >> (sc & 7))) cover[p] += ox * oy;
+                    }
                 }
             }
 
-            /* Source pixels tile exactly, so cover can reach but never exceed
-             * the destination pixel's 256x256 area. A fully covered pixel goes
-             * through set rather than blend at 255, keeping full ink exact. */
-            if (cover >= 65536)  ml_canvas_set(c, px, py, color);
-            else if (cover > 0)  ml_canvas_blend(c, px, py, color,
-                                                 coverage_alpha(cover));
+            /* Source pixels tile exactly, so the planes together cover at
+             * most the destination pixel's 256x256 area. A fully covered
+             * pixel goes through set rather than blend at 255, keeping full
+             * ink exact. */
+            for (int p = 0; p < planes; p++) {
+                if (cover[p] >= 65536)  ml_canvas_set(c, px, py, pal[p]);
+                else if (cover[p] > 0)  ml_canvas_blend(c, px, py, pal[p],
+                                                        coverage_alpha(cover[p]));
+            }
         }
     }
     return width * scale_q8;
@@ -273,8 +289,22 @@ static int draw_glyph_frac(ml_canvas *c, const ml_font *f, int idx,
 int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
                  const char *s, ml_rgb color, int scale_q8)
 {
-    if (!c || !f || !s) return 0;
+    /* A single-colour draw tints every plane with that one colour. This is
+     * what makes an icon set readable from a layout that predates palettes,
+     * and it keeps text fonts (one plane) exactly as they always rendered. */
+    ml_rgb pal[4];
+    for (int i = 0; i < 4; i++) pal[i] = color;
+    return ml_text_draw_pal(c, f, x, y, s, pal, scale_q8);
+}
+
+int ml_text_draw_pal(ml_canvas *c, const ml_font *f, int x, int y,
+                     const char *s, const ml_rgb *pal, int scale_q8)
+{
+    if (!c || !f || !s || !pal) return 0;
     scale_q8 = normalized_scale(f, scale_q8);
+
+    /* Defensive cap: fontgen never emits more than four planes. */
+    const int planes = f->planes < 1 ? 1 : f->planes > 4 ? 4 : f->planes;
 
     /* Whole multiples keep the exact block replication they have always had,
      * so unscaled and integrally scaled output stays bit-identical. */
@@ -286,7 +316,7 @@ int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
             int idx = glyph_index(f, *p);
             if (idx < 0) continue;
             if (!first) pen += f->gap * scale;
-            pen += draw_glyph_whole(c, f, idx, pen, y, color, scale);
+            pen += draw_glyph_whole(c, f, idx, pen, y, pal, planes, scale);
             first = false;
         }
         return pen - x;
@@ -300,7 +330,7 @@ int ml_text_draw(ml_canvas *c, const ml_font *f, int x, int y,
         int idx = glyph_index(f, *p);
         if (idx < 0) continue;
         if (!first) pen += f->gap * scale_q8;
-        pen += draw_glyph_frac(c, f, idx, pen, y, color, scale_q8);
+        pen += draw_glyph_frac(c, f, idx, pen, y, pal, planes, scale_q8);
         first = false;
     }
     return (pen - (x << 8) + 128) >> 8;
@@ -311,6 +341,11 @@ int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
 {
     if (!c || !f || !s || max_w <= 0) return 0;
     scale_q8 = normalized_scale(f, scale_q8);
+
+    /* Single colour tints every plane, as in ml_text_draw. */
+    ml_rgb pal[4];
+    for (int i = 0; i < 4; i++) pal[i] = color;
+    const int planes = f->planes < 1 ? 1 : f->planes > 4 ? 4 : f->planes;
 
     /* Fast path: it fits, so draw it whole and skip the truncation logic. */
     if (ml_text_width(f, s, scale_q8) <= max_w) {
@@ -343,7 +378,7 @@ int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
             if (pen - x + advance > budget) break;
 
             if (!first) pen += f->gap * scale;
-            pen += draw_glyph_whole(c, f, idx, pen, y, color, scale);
+            pen += draw_glyph_whole(c, f, idx, pen, y, pal, planes, scale);
             first = false;
         }
 
@@ -382,7 +417,7 @@ int ml_text_draw_clipped(ml_canvas *c, const ml_font *f, int x, int y,
         if (pen - (x << 8) + advance > budget) break;
 
         if (!first) pen += f->gap * scale_q8;
-        pen += draw_glyph_frac(c, f, idx, pen, y, color, scale_q8);
+        pen += draw_glyph_frac(c, f, idx, pen, y, pal, planes, scale_q8);
         first = false;
     }
 

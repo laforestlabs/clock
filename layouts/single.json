@@ -18,7 +18,8 @@
     { "type": "icon", "id": "wx-icon",
       "rect": [0, 26, 16, 16],
       "icon_set": "wx16", "bind": "weather.code",
-      "color": "#FFC24D" },
+      "color": "#FFD24D",
+      "colors": ["#C9CDD6", "#5AA0E0", "#E8EEF4"] },
 
     { "type": "text", "id": "temp",
       "rect": [18, 27, 46, 8],

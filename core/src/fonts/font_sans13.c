@@ -5,7 +5,7 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 96 glyphs, codepoints 32 to 127, role text, 
- * cell height 13, baseline 10, 1430 bytes of bitmap.
+ * cell height 13, baseline 10, 1 plane(s), 1430 bytes of bitmap.
  */
 #include "mirror/font.h"
 
@@ -1384,6 +1384,7 @@ const ml_font ml_font_sans13 = {
     .height   = 13,
     .baseline = 10,
     .gap      = 1,
+    .planes   = 1,
     .widths   = s_sans13_widths,
     .offsets  = s_sans13_offsets,
     .bitmap   = s_sans13_bitmap,

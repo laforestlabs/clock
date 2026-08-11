@@ -214,6 +214,35 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
     w->has_bg     = read_color(j, obj, "bg", &w->bg, diag, index);
     w->has_accent = read_color(j, obj, "accent", &w->accent, diag, index);
 
+    /* Optional multi-colour palette for icon fonts, in plane order after the
+     * primary colour. Absent means single colour, which is every layout that
+     * predates palettes. */
+    int colors_arr = ml_json_member(j, obj, "colors");
+    if (colors_arr >= 0 && j->toks[colors_arr].type == ML_JSON_ARRAY) {
+        int n = ml_json_array_count(j, colors_arr);
+        if (n > ML_ICON_COLORS) {
+            ml_diag_add(diag, "widget %d (%s): 'colors' has %d entries, "
+                        "only the first %d are used",
+                        index, w->type_name, n, ML_ICON_COLORS);
+            n = ML_ICON_COLORS;
+        }
+        for (int i = 0; i < n; i++) {
+            int  e   = ml_json_array_at(j, colors_arr, i);
+            char buf[24];
+            if (e < 0 || !ml_json_str(j, e, buf, sizeof(buf))) {
+                ml_diag_add(diag, "widget %d (%s): colors[%d] is not a string",
+                            index, w->type_name, i);
+                continue;
+            }
+            if (!ml_color_parse(buf, &w->colors[i])) {
+                ml_diag_add(diag, "widget %d (%s): colors[%d] '%s' not understood",
+                            index, w->type_name, i, buf);
+                continue;
+            }
+            w->color_count = i + 1;
+        }
+    }
+
     ml_json_get_str(j, obj, "font",   w->font,     sizeof(w->font));
     ml_json_get_str(j, obj, "format", w->format,   sizeof(w->format));
     ml_json_get_str(j, obj, "bind",   w->bind,     sizeof(w->bind));
@@ -463,6 +492,16 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
                 w->rect.x, w->rect.y, w->rect.w, w->rect.h);
         appendf(buf, cap, &len, ", \"color\": \"#%02X%02X%02X\"",
                 w->color.r, w->color.g, w->color.b);
+
+        if (w->color_count > 0) {
+            appendf(buf, cap, &len, ", \"colors\": [");
+            for (int k = 0; k < w->color_count; k++) {
+                appendf(buf, cap, &len, "%s\"#%02X%02X%02X\"",
+                        k > 0 ? ", " : "",
+                        w->colors[k].r, w->colors[k].g, w->colors[k].b);
+            }
+            appendf(buf, cap, &len, "]");
+        }
 
         if (w->has_bg)
             appendf(buf, cap, &len, ", \"bg\": \"#%02X%02X%02X\"", w->bg.r, w->bg.g, w->bg.b);

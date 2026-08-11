@@ -43,6 +43,14 @@ a glyph must be the same width; that width becomes the glyph's advance. Widths
 may differ between glyphs, which is what makes the font proportional. Blank
 lines and lines starting with '#' in column one are comments.
 
+A font may instead be multi-colour with @planes 2..4. Each plane is one
+palette slot, drawn as its own colour by callers that supply a palette (the
+icon widget does); a single-colour draw tints every plane the same, so old
+layouts keep rendering old icons unchanged. Planes are spelled by ink
+character: '#' is plane 0 (the primary colour), '*' plane 1, '~' plane 2,
+'+' plane 3. A glyph may use any subset of the declared planes; unused
+planes simply contribute no pixels.
+
 Tall glyphs may instead be written as a block, which is the same data laid out
 so it can actually be read and edited as the picture it is:
 
@@ -62,9 +70,11 @@ Output
 core/src/fonts/font_<name>.c   one per source font
 core/src/fonts/font_registry.c the lookup table ml_font_find() walks
 
-Glyph bitmaps are packed row-major, one bit per pixel, MSB first, each row
-padded up to a whole byte. Byte-aligning rows costs a little flash and saves
-the renderer from cross-byte bit shifting in its innermost loop.
+Glyph bitmaps are packed row-major, one bit per pixel per plane, MSB first,
+each row padded up to a whole byte. Byte-aligning rows costs a little flash
+and saves the renderer from cross-byte bit shifting in its innermost loop.
+A multi-plane glyph stores its planes consecutively, plane 0 first, so the
+bitmap offset of a plane is the glyph offset plus plane * height * stride.
 
 Usage: python3 tools/fontgen.py [--check]
        --check verifies the generated files are up to date without writing.
@@ -91,6 +101,12 @@ ROLES = {
     "icons": "ML_FONT_ICONS",
 }
 
+# Plane ink characters, in palette order. '#' is plane 0, the colour a
+# single-colour draw uses; the rest are extra palette slots. @planes declares
+# how many of these a font uses, and a glyph may use any subset.
+INK_CHARS = "#*~+"
+MAX_PLANES = len(INK_CHARS)
+
 
 class Glyph:
     def __init__(self, codepoint: int, rows: list[str]):
@@ -98,15 +114,21 @@ class Glyph:
         self.rows = rows
         self.width = len(rows[0]) if rows else 0
 
-    def pack(self, height: int) -> bytes:
-        """Pack to row-major bits, MSB first, each row padded to a byte."""
+    def pack(self, height: int, plane: int = 0) -> bytes:
+        """Pack one plane to row-major bits, MSB first, row-padded to a byte.
+
+        Pixels of the requested plane become set bits; everything else stays
+        clear, so planes pack independently and a glyph can use a subset of
+        the font's planes.
+        """
         stride = (self.width + 7) // 8
+        ink = INK_CHARS[plane]
         out = bytearray()
         for r in range(height):
             row = self.rows[r] if r < len(self.rows) else "." * self.width
             rowbytes = bytearray(stride)
             for x, ch in enumerate(row):
-                if ch == "#":
+                if ch == ink:
                     rowbytes[x // 8] |= 0x80 >> (x % 8)
             out += rowbytes
         return bytes(out)
@@ -123,6 +145,7 @@ class Font:
         self.family = ""
         self.smooth = True
         self.downscale = False
+        self.planes = 1
         self.glyphs: dict[int, Glyph] = {}
         self._parse()
         self._validate()
@@ -186,6 +209,12 @@ class Font:
                             f"expected one of {', '.join(sorted(ROLES))}"
                         )
                     self.role = value
+                elif key == "planes":
+                    if value not in (str(n) for n in range(1, MAX_PLANES + 1)):
+                        raise FontError(
+                            f"{self.path}:{lineno}: @planes expects 1..{MAX_PLANES}"
+                        )
+                    self.planes = int(value)
                 elif key in ("height", "baseline", "gap"):
                     setattr(self, key, int(value))
                 else:
@@ -215,10 +244,12 @@ class Font:
             raise FontError(
                 f"{self.path}:{lineno}: glyph {codepoint} has ragged rows {sorted(widths)}"
             )
-        bad = set("".join(rows)) - {"#", "."}
+        bad = set("".join(rows)) - set(INK_CHARS[:self.planes] + ".")
         if bad:
             raise FontError(
-                f"{self.path}:{lineno}: glyph {codepoint} has stray characters {sorted(bad)}"
+                f"{self.path}:{lineno}: glyph {codepoint} has stray characters "
+                f"{sorted(bad)} (font declares {self.planes} plane(s): "
+                f"{', '.join(INK_CHARS[:self.planes])})"
             )
         if len(rows) != self.height:
             raise FontError(
@@ -249,6 +280,11 @@ class Font:
             raise FontError(f"{self.path}: missing or invalid @height")
         if not self.glyphs:
             raise FontError(f"{self.path}: no glyphs")
+        if self.planes > 1 and self.role != "icons":
+            raise FontError(
+                f"{self.path}: @planes {self.planes} needs @role icons; "
+                f"only icon widgets carry a colour palette"
+            )
         if self.baseline > self.height:
             raise FontError(f"{self.path}: @baseline {self.baseline} exceeds @height")
 
@@ -277,7 +313,8 @@ class Font:
         blob = bytearray()
         for glyph in ordered:
             offsets.append(len(blob))
-            blob += glyph.pack(self.height)
+            for plane in range(self.planes):
+                blob += glyph.pack(self.height, plane)
 
         if len(blob) > 0xFFFF:
             raise FontError(f"{self.path}: bitmap exceeds the 64KB uint16 offset range")
@@ -291,7 +328,8 @@ class Font:
         out.append(" * Regenerate:  python3 tools/fontgen.py")
         out.append(" *")
         out.append(f" * {self.count} glyphs, codepoints {self.first} to {max(self.glyphs)}, role {self.role}, ")
-        out.append(f" * cell height {self.height}, baseline {self.baseline}, {len(blob)} bytes of bitmap.")
+        out.append(f" * cell height {self.height}, baseline {self.baseline}, {self.planes} plane(s), "
+                   f"{len(blob)} bytes of bitmap.")
         out.append(" */")
         out.append('#include "mirror/font.h"')
         out.append("")
@@ -299,14 +337,23 @@ class Font:
         out.append(f"static const uint8_t s_{ident}_bitmap[{len(blob)}] = {{")
         for glyph in ordered:
             stride = (glyph.width + 7) // 8
-            packed = glyph.pack(self.height)
             label = repr(chr(glyph.codepoint)) if 32 < glyph.codepoint < 127 else ""
             out.append(f"    /* {glyph.codepoint} {label} width {glyph.width} */")
-            for r in range(self.height):
-                rowbytes = packed[r * stride:(r + 1) * stride]
-                art = glyph.rows[r].replace(".", " ") if r < len(glyph.rows) else ""
-                hexes = " ".join(f"0x{b:02X}," for b in rowbytes)
-                out.append(f"    {hexes:<24}/* |{art}| */")
+            for plane in range(self.planes):
+                ink = INK_CHARS[plane]
+                if self.planes > 1:
+                    out.append(f"    /* plane {plane} ('{ink}') */")
+                for r in range(self.height):
+                    packed = glyph.pack(self.height, plane)
+                    rowbytes = packed[r * stride:(r + 1) * stride]
+                    art = glyph.rows[r] if r < len(glyph.rows) else ""
+                    if self.planes > 1:
+                        # Show the plane's own pixels in the art comment.
+                        art = "".join(ch if ch == ink else " " for ch in art)
+                    else:
+                        art = art.replace(".", " ")
+                    hexes = " ".join(f"0x{b:02X}," for b in rowbytes)
+                    out.append(f"    {hexes:<24}/* |{art}| */")
         out.append("};")
         out.append("")
 
@@ -333,6 +380,7 @@ class Font:
         out.append(f"    .height   = {self.height},")
         out.append(f"    .baseline = {self.baseline},")
         out.append(f"    .gap      = {self.gap},")
+        out.append(f"    .planes   = {self.planes},")
         out.append(f"    .widths   = s_{ident}_widths,")
         out.append(f"    .offsets  = s_{ident}_offsets,")
         out.append(f"    .bitmap   = s_{ident}_bitmap,")
@@ -432,10 +480,12 @@ def main(argv: list[str]) -> int:
         return 0
 
     for font in fonts:
-        total = sum(((g.width + 7) // 8) * font.height for g in font.glyphs.values())
+        total = sum(((g.width + 7) // 8) * font.height * font.planes
+                    for g in font.glyphs.values())
         print(
             f"fontgen: {font.name:<10} {font.role:<6} {font.count:3d} glyphs  "
-            f"cell {font.height:2d}px  baseline {font.baseline:2d}  {total:5d} bytes"
+            f"cell {font.height:2d}px  baseline {font.baseline:2d}  "
+            f"{font.planes}p  {total:5d} bytes"
         )
     print(f"fontgen: wrote {len(outputs)} files to {FONT_OUT_DIR.relative_to(ROOT)}")
     return 0
