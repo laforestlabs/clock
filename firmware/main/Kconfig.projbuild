@@ -72,7 +72,7 @@ menu "Smart Mirror"
             default y
             help
                 The default face for clock widgets that do not carry an
-                explicit format: "03:41 PM" on, "15:41" off. A layout that
+                explicit format: "3:41" on, "15:41" off. A layout that
                 pins its own format always wins over this.
 
                 Factory default only; the owner sets the live value from the

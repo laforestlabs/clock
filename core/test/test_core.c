@@ -1756,7 +1756,7 @@ static void test_display_settings(void)
 
         /*
          * The clock setting reaches the panel through the model. Both faces
-         * stay on the digits font (the 12-hour face is plain "%I:%M", no
+         * stay on the digits font (the 12-hour face is plain "%l:%M", no
          * AM/PM), but the evening mock renders differently: 10:07 vs 22:07.
          */
         ml_sim_set_variant(s, ML_MOCK_EVENING);   /* 22:07 */

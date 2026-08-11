@@ -7,7 +7,7 @@
 @role     text
 @height   24
 @baseline 18
-@gap      3
+@gap      2
 @family   display
 @smooth   yes
 @downscale yes

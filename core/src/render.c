@@ -669,12 +669,14 @@ static bool sample_text(const ml_widget *w, const ml_model *m, char *buf, size_t
 
 static bool sample_clock(const ml_widget *w, const ml_model *m, char *buf, size_t n)
 {
-    /* No explicit format: the device's clock setting decides. The 12-hour
-     * face is plain "%I:%M"; AM/PM is deliberately omitted (the owner asked
-     * for a glanceable time, and the digits fonts carry no letters anyway). */
+    /* No explicit format: the device's clock setting decides. Both faces
+     * drop the leading zero from a single-digit hour ("9:41"), which "%l"
+     * and "%k" give where "%I" and "%H" would pad; AM/PM is deliberately
+     * omitted (the owner asked for a glanceable time, and the digits fonts
+     * carry no letters anyway). */
     const char *fmt = w->format[0]
                           ? w->format
-                          : (m->clock_12h ? "%I:%M" : "%H:%M");
+                          : (m->clock_12h ? "%l:%M" : "%k:%M");
 
     if (m->now.valid) {
         fmt_time(fmt, &m->now, buf, n);

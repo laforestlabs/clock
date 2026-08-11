@@ -33,7 +33,7 @@ const char *mirror_config_longitude(void);
 const char *mirror_config_place(void);
 
 /* True when clock widgets without an explicit format use a 12-hour face
- * ("03:41 PM"), false for 24-hour ("15:41"). */
+ * ("3:41"), false for 24-hour ("15:41"). */
 bool mirror_config_clock_12h(void);
 
 /* 'F' or 'C': the unit temperatures are shown in. */

@@ -59,8 +59,11 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *      their 16px master instead of flooring fitted sizes to integer steps.
  *   7  multi-colour weather icons: wx16 carries four colour planes drawn
  *      through a per-widget palette instead of a single tint.
+ *   8  clock faces drop the leading zero from single-digit hours (12-hour
+ *      "%l", 24-hour "%k") and the display face's inter-glyph gap tightens
+ *      from 3 to 2. Every stock layout's output changes.
  */
-#define ML_RENDER_VERSION 7
+#define ML_RENDER_VERSION 8
 
 #ifdef __cplusplus
 }

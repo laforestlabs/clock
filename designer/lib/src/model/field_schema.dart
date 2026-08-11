@@ -84,7 +84,7 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
   ],
   'clock': <FieldSpec>[
     FieldSpec('format', 'Format', FieldKind.format,
-        help: r'strftime style, default %H:%M'),
+        help: r'strftime style; blank uses the clock setting'),
     _font,
     _scale,
     _fit,

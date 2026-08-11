@@ -30,7 +30,7 @@ class MirrorConfig {
   /// object, only through the BLE "set brightness auto" command.
   final int? brightness;
 
-  /// True for a 12-hour clock ("03:41 PM"), false for 24-hour ("15:41").
+  /// True for a 12-hour clock ("3:41"), false for 24-hour ("15:41").
   /// Null leaves the device's setting unchanged.
   final bool? clock12h;
 
