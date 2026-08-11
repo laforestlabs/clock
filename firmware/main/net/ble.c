@@ -245,10 +245,13 @@ static void cmd_get_config(void)
     json_escape(esc_place, sizeof(esc_place), mirror_config_place());
 
     send_status("config {\"timezone\":\"%s\",\"latitude\":\"%s\","
-                "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d}",
+                "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
+                "\"clock12h\":%s,\"temp_unit\":\"%c\"}",
                 esc_tz, mirror_config_latitude(),
                 mirror_config_longitude(), esc_place,
-                mirror_config_brightness());
+                mirror_config_brightness(),
+                mirror_config_clock_12h() ? "true" : "false",
+                mirror_config_temp_unit());
 }
 
 static void cmd_begin(const char *arg)

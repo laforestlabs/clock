@@ -34,6 +34,8 @@ static const char *TAG = "config";
 #define NVS_KEY_LON   "lon"
 #define NVS_KEY_PLACE "place"
 #define NVS_KEY_BRIGHTNESS "brightness"
+#define NVS_KEY_CLOCK12H   "clock12h"
+#define NVS_KEY_TEMP_UNIT  "temp_unit"
 
 /* Validation limits, mirrored exactly in the Dart MirrorConfig.validate(). */
 #define TZ_MAX_LEN    63   /* POSIX TZ strings are short; 63 keeps snprintf
@@ -53,6 +55,10 @@ static char        s_lon[COORD_BUF_LEN];
 static char        s_place[PLACE_BUF_LEN];
 /* -1 means "follow the layout"; 0..255 is a manual override. */
 static int         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
+/* Display settings; Kconfig values are the factory defaults, see the "Display"
+ * menu. */
+static bool        s_clock_12h;
+static char        s_temp_unit;   /* 'F' or 'C' */
 static SemaphoreHandle_t s_lock;
 
 static void lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -102,6 +108,61 @@ static void load_brightness(nvs_handle_t h)
     }
 }
 
+/* The Kconfig factory defaults for the display settings. A bool option is
+ * defined exactly when it is enabled, so the clock defaults to 12-hour unless
+ * the build turns it off. */
+#if defined(CONFIG_MIRROR_CLOCK_12H)
+#define CLOCK12H_DEFAULT 1
+#else
+#define CLOCK12H_DEFAULT 0
+#endif
+
+#if defined(CONFIG_MIRROR_TEMP_UNIT_C)
+#define TEMP_UNIT_DEFAULT 'C'
+#else
+#define TEMP_UNIT_DEFAULT 'F'
+#endif
+
+/* Same seeding contract as load_key, for the display settings. clock12h is
+ * stored as an i32 0/1; temp_unit as a one-character string ("F" or "C"). */
+static void load_clock12h(nvs_handle_t h)
+{
+    int32_t v;
+    esp_err_t err = nvs_get_i32(h, NVS_KEY_CLOCK12H, &v);
+    if (err == ESP_OK) {
+        s_clock_12h = v != 0;
+        return;
+    }
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "clock12h unreadable (%s), reseeding",
+                 esp_err_to_name(err));
+    }
+    s_clock_12h = CLOCK12H_DEFAULT != 0;
+    if (nvs_set_i32(h, NVS_KEY_CLOCK12H, s_clock_12h ? 1 : 0) == ESP_OK) {
+        nvs_commit(h);
+    }
+}
+
+static void load_temp_unit(nvs_handle_t h)
+{
+    char v[2] = "";
+    size_t len = sizeof(v);
+    esp_err_t err = nvs_get_str(h, NVS_KEY_TEMP_UNIT, v, &len);
+    if (err == ESP_OK && (v[0] == 'F' || v[0] == 'C')) {
+        s_temp_unit = v[0];
+        return;
+    }
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "temp_unit unreadable (%s), reseeding",
+                 esp_err_to_name(err));
+    }
+    s_temp_unit = TEMP_UNIT_DEFAULT;
+    char seed[2] = { s_temp_unit, '\0' };
+    if (nvs_set_str(h, NVS_KEY_TEMP_UNIT, seed) == ESP_OK) {
+        nvs_commit(h);
+    }
+}
+
 esp_err_t mirror_config_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -119,11 +180,15 @@ esp_err_t mirror_config_init(void)
     load_key(h, NVS_KEY_LON,   s_lon,   sizeof(s_lon),   CONFIG_MIRROR_LONGITUDE);
     load_key(h, NVS_KEY_PLACE, s_place, sizeof(s_place), CONFIG_MIRROR_PLACE_NAME);
     load_brightness(h);
+    load_clock12h(h);
+    load_temp_unit(h);
 
     nvs_close(h);
 
-    ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d",
-             s_tz, s_lat, s_lon, s_place, s_brightness);
+    ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d, "
+             "clock %s, temp %c",
+             s_tz, s_lat, s_lon, s_place, s_brightness,
+             s_clock_12h ? "12h" : "24h", s_temp_unit);
     return ESP_OK;
 }
 
@@ -131,6 +196,22 @@ const char *mirror_config_timezone(void)  { return s_tz; }
 const char *mirror_config_latitude(void)  { return s_lat; }
 const char *mirror_config_longitude(void) { return s_lon; }
 const char *mirror_config_place(void)     { return s_place; }
+
+bool mirror_config_clock_12h(void)
+{
+    lock();
+    const bool v = s_clock_12h;
+    unlock();
+    return v;
+}
+
+char mirror_config_temp_unit(void)
+{
+    lock();
+    const char v = s_temp_unit;
+    unlock();
+    return v;
+}
 
 int mirror_config_brightness(void) { return s_brightness; }
 
@@ -251,8 +332,10 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     char   new_lon[COORD_BUF_LEN] = "";
     char   new_place[PLACE_BUF_LEN] = "";
     int    new_brightness = -1;
+    bool   new_clock_12h = CLOCK12H_DEFAULT != 0;
+    char   new_temp_unit = TEMP_UNIT_DEFAULT;
     bool   have_tz = false, have_lat = false, have_lon = false, have_place = false;
-    bool   have_brightness = false;
+    bool   have_brightness = false, have_clock12h = false, have_temp_unit = false;
 
     int t = ml_json_member(&j, 0, "timezone");
     if (t >= 0) {
@@ -325,9 +408,30 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         have_brightness = true;
     }
 
+    t = ml_json_member(&j, 0, "clock12h");
+    if (t >= 0) {
+        if (!ml_json_bool(&j, t, &new_clock_12h)) {
+            fail(err, errsz, "clock12h must be a boolean");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_clock12h = true;
+    }
+
+    t = ml_json_member(&j, 0, "temp_unit");
+    if (t >= 0) {
+        char unit[2] = "";
+        if (!ml_json_str(&j, t, unit, sizeof(unit)) ||
+            (unit[0] != 'F' && unit[0] != 'C')) {
+            fail(err, errsz, "temp_unit must be \"F\" or \"C\"");
+            return ESP_ERR_INVALID_ARG;
+        }
+        new_temp_unit = unit[0];
+        have_temp_unit = true;
+    }
+
     /* Nothing named: a no-op, not an error. */
     if (!have_tz && !have_lat && !have_lon && !have_place &&
-        !have_brightness) {
+        !have_brightness && !have_clock12h && !have_temp_unit) {
         fail(err, errsz, "no known fields");
         return ESP_ERR_INVALID_ARG;
     }
@@ -339,9 +443,13 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     const bool place_changed = have_place && strcmp(new_place, s_place) != 0;
     const bool brightness_changed = have_brightness &&
                                     new_brightness != s_brightness;
+    const bool clock12h_changed = have_clock12h &&
+                                  new_clock_12h != s_clock_12h;
+    const bool temp_unit_changed = have_temp_unit &&
+                                   new_temp_unit != s_temp_unit;
 
     if (tz_changed || lat_changed || lon_changed || place_changed ||
-        brightness_changed) {
+        brightness_changed || clock12h_changed || temp_unit_changed) {
         nvs_handle_t h;
         esp_err_t nvs_err = nvs_open(NVS_NS, NVS_READWRITE, &h);
         if (nvs_err != ESP_OK) {
@@ -354,6 +462,13 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         if (place_changed)  nvs_set_str(h, NVS_KEY_PLACE, new_place);
         if (brightness_changed) nvs_set_i32(h, NVS_KEY_BRIGHTNESS,
                                             new_brightness);
+        if (clock12h_changed) {
+            nvs_set_i32(h, NVS_KEY_CLOCK12H, new_clock_12h ? 1 : 0);
+        }
+        if (temp_unit_changed) {
+            char seed[2] = { new_temp_unit, '\0' };
+            nvs_set_str(h, NVS_KEY_TEMP_UNIT, seed);
+        }
         nvs_err = nvs_commit(h);
         nvs_close(h);
         if (nvs_err != ESP_OK) {
@@ -368,6 +483,8 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (have_lon)    memcpy(s_lon, new_lon, sizeof(s_lon));
     if (have_place)  memcpy(s_place, new_place, sizeof(s_place));
     if (have_brightness) s_brightness = new_brightness;
+    if (have_clock12h)   s_clock_12h = new_clock_12h;
+    if (have_temp_unit)  s_temp_unit = new_temp_unit;
     unlock();
 
     if (tz_changed) {
@@ -383,6 +500,12 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         /* A config push names a manual override, so it wins immediately. */
         panel_set_brightness((uint8_t)s_brightness);
         ESP_LOGI(TAG, "brightness override set to %d", s_brightness);
+    }
+    if (have_clock12h) {
+        ESP_LOGI(TAG, "clock set to %s", s_clock_12h ? "12-hour" : "24-hour");
+    }
+    if (have_temp_unit) {
+        ESP_LOGI(TAG, "temperature unit set to %c", s_temp_unit);
     }
 
     return ESP_OK;

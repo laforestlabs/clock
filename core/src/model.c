@@ -1,5 +1,6 @@
 #include "mirror/model.h"
 
+#include <stdio.h>
 #include <string.h>
 
 void ml_model_init(ml_model *m)
@@ -13,6 +14,12 @@ void ml_model_init(ml_model *m)
     m->now.valid     = false;
     m->weather.valid = false;
     m->online        = false;
+
+    /* Factory defaults: 12-hour clock, Fahrenheit. The firmware overwrites
+     * these every frame from the owner config; the mock keeps them so the
+     * designer's preview and the host CLI match a fresh device. */
+    m->clock_12h = true;
+    m->temp_f    = true;
 
     for (int i = 0; i < ML_MAX_TODOS; i++) m->todos[i].due_offset = ML_NO_DUE;
 }
@@ -60,6 +67,32 @@ static bool str(bool *is_num, const char **out_str, const char *v)
     return true;
 }
 
+/* Scratch space for weather.temp. The model is POD by design, but a formatted
+ * temperature has nowhere to live inside ml_weather, and the renderer copies
+ * the returned string into the widget buffer before anything else can run, so
+ * one mutable buffer is safe. */
+static char s_temp_display[16];
+
+static void format_temp_display(const ml_weather *w, bool f)
+{
+    if (f) {
+        const double fv = w->temp_c * 9.0 / 5.0 + 32.0;
+        snprintf(s_temp_display, sizeof(s_temp_display),
+                 "%d" ML_DEGREE_GLYPH "F", (int)(fv + 0.5));
+    } else {
+        snprintf(s_temp_display, sizeof(s_temp_display),
+                 "%d" ML_DEGREE_GLYPH "C", (int)(w->temp_c + 0.5));
+    }
+}
+
+/* The value a display-facing binding should serve: Celsius when the device
+ * shows Celsius, Fahrenheit otherwise. The *_c paths stay raw so a layout
+ * that wants the provider's own numbers can still have them. */
+static double temp_display(bool f, double c)
+{
+    return f ? c * 9.0 / 5.0 + 32.0 : c;
+}
+
 bool ml_model_lookup(const ml_model *m, const char *path,
                      bool *is_num, double *out_num, const char **out_str)
 {
@@ -89,6 +122,17 @@ bool ml_model_lookup(const ml_model *m, const char *path,
         if (!strcmp(f, "feels_c"))      return num(is_num, out_num, m->weather.feels_c);
         if (!strcmp(f, "temp_min_c"))   return num(is_num, out_num, m->weather.temp_min_c);
         if (!strcmp(f, "temp_max_c"))   return num(is_num, out_num, m->weather.temp_max_c);
+        /* Display-facing: follow the device's configured unit. */
+        if (!strcmp(f, "temp")) {
+            format_temp_display(&m->weather, m->temp_f);
+            return str(is_num, out_str, s_temp_display);
+        }
+        if (!strcmp(f, "temp_min"))
+            return num(is_num, out_num,
+                       temp_display(m->temp_f, m->weather.temp_min_c));
+        if (!strcmp(f, "temp_max"))
+            return num(is_num, out_num,
+                       temp_display(m->temp_f, m->weather.temp_max_c));
         if (!strcmp(f, "code"))         return num(is_num, out_num, m->weather.code);
         if (!strcmp(f, "wind_kph"))     return num(is_num, out_num, m->weather.wind_kph);
         if (!strcmp(f, "humidity_pct")) return num(is_num, out_num, m->weather.humidity_pct);

@@ -1602,6 +1602,125 @@ static bool golden_lookup(const char *key, uint64_t *out)
     return false;
 }
 
+static void test_display_settings(void)
+{
+    group("display settings");
+
+    /* Factory defaults: a fresh model is a 12-hour, Fahrenheit device, and
+     * the firmware overwrites these per frame from the owner config. */
+    ml_model m;
+    ml_model_init(&m);
+    CHECK(m.clock_12h == true, "clock defaults to 12-hour");
+    CHECK(m.temp_f == true, "temperature defaults to Fahrenheit");
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    bool is_num;
+    double num = 0.0;
+    const char *sval = NULL;
+
+    /* Typical mock: 21.4 C is 70.52 F, which rounds to 71. */
+    m.temp_f = true;
+    CHECK(ml_model_lookup(&m, "weather.temp", &is_num, &num, &sval) && !is_num,
+          "weather.temp is a string path");
+    CHECK(sval && strcmp(sval, "71" ML_DEGREE_GLYPH "F") == 0,
+          "weather.temp renders Fahrenheit");
+    CHECK(ml_model_lookup(&m, "weather.temp_max", &is_num, &num, &sval) && is_num,
+          "weather.temp_max is a number");
+    CHECK(num > 75.19 && num < 75.21, "temp_max converts to Fahrenheit");
+    CHECK(ml_model_lookup(&m, "weather.temp_min", &is_num, &num, &sval) &&
+          num > 57.19 && num < 57.21, "temp_min converts to Fahrenheit");
+
+    m.temp_f = false;
+    CHECK(ml_model_lookup(&m, "weather.temp", &is_num, &num, &sval) && sval &&
+          strcmp(sval, "21" ML_DEGREE_GLYPH "C") == 0,
+          "weather.temp renders Celsius");
+    CHECK(ml_model_lookup(&m, "weather.temp_max", &is_num, &num, &sval) &&
+          num == 24.0, "temp_max stays Celsius");
+    CHECK(ml_model_lookup(&m, "weather.temp_min", &is_num, &num, &sval) &&
+          num == 14.0, "temp_min stays Celsius");
+
+    /* The raw provider paths are untouched by the unit setting. */
+    CHECK(ml_model_lookup(&m, "weather.temp_c", &is_num, &num, &sval) &&
+          num > 21.39 && num < 21.41, "temp_c stays Celsius by name");
+    CHECK(ml_model_lookup(&m, "weather.temp_max_c", &is_num, &num, &sval) &&
+          num == 24.0, "temp_max_c stays Celsius by name");
+
+    /*
+     * The clock setting reaches the panel through the model, observable via
+     * the sim: digits16 has no letters, so a 12-hour face ("10:07 PM") falls
+     * back to a text cut while a 24-hour face ("22:07") stays on digits.
+     */
+    ml_sim *s = ml_sim_create();
+    CHECK(s != NULL, "sim created");
+    if (s) {
+        static const char clockdoc[] =
+            "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
+            "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,16],"
+            "\"font\":\"digits16\",\"color\":\"#FFFFFF\"}]}";
+        CHECK(ml_sim_load(s, clockdoc) == 1, "clock-only doc loads");
+
+        /*
+         * The clock setting reaches the panel through the model. Both faces
+         * stay on the digits font (the 12-hour face is plain "%I:%M", no
+         * AM/PM), but the evening mock renders differently: 10:07 vs 22:07.
+         */
+        ml_sim_set_variant(s, ML_MOCK_EVENING);   /* 22:07 */
+        ml_sim_set_clock12h(s, 1);
+        const uint8_t *r12 = ml_sim_render_rgba(s);
+        const int rsz = ml_sim_rgba_size(s);
+        const uint64_t h12 = r12 ? fnv1a(r12, (size_t)rsz) : 0;
+        ml_sim_set_clock12h(s, 0);
+        const uint8_t *r24 = ml_sim_render_rgba(s);
+        const uint64_t h24 = r24 ? fnv1a(r24, (size_t)rsz) : 0;
+        CHECK(rsz > 0 && h12 != 0 && h24 != 0, "clock renders in both modes");
+        CHECK(h12 != h24, "12-hour and 24-hour faces differ (10:07 vs 22:07)");
+        CHECK(strcmp(ml_sim_widget_font(s, 0), "digits16") == 0,
+              "both clock faces stay on the digits font");
+
+        /* The 24-hour choice survives a data-variant switch, which re-mocks
+         * the model; a reset to the 12-hour default would show 10:07 again. */
+        ml_sim_set_variant(s, ML_MOCK_EVENING);
+        const uint8_t *r24b = ml_sim_render_rgba(s);
+        CHECK(r24b && fnv1a(r24b, (size_t)rsz) == h24,
+              "the clock choice survives a variant switch");
+
+        /* An explicit widget format beats the device setting. */
+        static const char pinned[] =
+            "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
+            "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,16],"
+            "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\"}]}";
+        CHECK(ml_sim_load(s, pinned) == 1, "pinned doc loads");
+        ml_sim_set_clock12h(s, 1);
+        const uint8_t *rp = ml_sim_render_rgba(s);
+        CHECK(rp && fnv1a(rp, (size_t)rsz) == h24,
+              "an explicit 24-hour format beats the 12-hour setting");
+
+        /* The unit setting changes what the panel draws: the same layout
+         * bound to weather.temp renders different bytes in F and C. */
+        static const char tempdoc[] =
+            "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
+            "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,8],"
+            "\"font\":\"sans9\",\"bind\":\"weather.temp\",\"color\":\"#FFFFFF\"}]}";
+        CHECK(ml_sim_load(s, tempdoc) == 1, "temp doc loads");
+        ml_sim_set_variant(s, ML_MOCK_TYPICAL);
+        ml_sim_set_tempf(s, 1);
+        const uint8_t *fa = ml_sim_render_rgba(s);
+        const int fsz = ml_sim_rgba_size(s);
+        /* The render buffer is one per sim and reused, so the F frame must
+         * be copied before the C render overwrites it. */
+        uint8_t *f_copy = (uint8_t *)malloc((size_t)fsz);
+        if (f_copy && fa) memcpy(f_copy, fa, (size_t)fsz);
+        ml_sim_set_tempf(s, 0);
+        const uint8_t *ca = ml_sim_render_rgba(s);
+        CHECK(f_copy && ca && fsz > 0 &&
+              memcmp(f_copy, ca, (size_t)fsz) != 0,
+              "Fahrenheit and Celsius frames differ");
+        free(f_copy);
+
+        ml_sim_destroy(s);
+    }
+}
+
 static void test_golden(void)
 {
     group("golden images");
@@ -1731,6 +1850,7 @@ int main(void)
     test_render_purity();
     test_resolve_font();
     test_ffi();
+    test_display_settings();
     test_golden();
 
     printf("\n%d checks, %d failure(s)\n", g_checks, g_fails);

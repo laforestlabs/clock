@@ -65,6 +65,38 @@ menu "Smart Mirror"
 
     endmenu
 
+    menu "Display"
+
+        config MIRROR_CLOCK_12H
+            bool "12-hour clock (24-hour when off)"
+            default y
+            help
+                The default face for clock widgets that do not carry an
+                explicit format: "03:41 PM" on, "15:41" off. A layout that
+                pins its own format always wins over this.
+
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
+
+        choice MIRROR_TEMP_UNIT
+            prompt "Temperature unit"
+            default MIRROR_TEMP_UNIT_F
+            help
+                How temperatures are displayed: the weather widget's
+                temperature line and high/low row, and anything bound to the
+                display-facing weather.temp paths in the layout.
+
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS.
+
+            config MIRROR_TEMP_UNIT_F
+                bool "Fahrenheit"
+            config MIRROR_TEMP_UNIT_C
+                bool "Celsius"
+        endchoice
+
+    endmenu
+
     menu "Weather"
 
         config MIRROR_LATITUDE

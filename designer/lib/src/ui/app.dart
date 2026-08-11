@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import '../controller.dart';
 import '../engine/engine.dart';
 import '../services/layout_repository.dart';
+import '../services/mirror_connection.dart';
+import 'ble_prompt.dart';
 import 'inspector.dart';
 import 'mirror_screen.dart';
 import 'panel_view.dart';
@@ -31,12 +33,30 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final LayoutRepository _repo = LayoutRepository();
   final FocusNode _keyboardFocus = FocusNode();
 
+  // Owned here, not by the Mirror screen, so the BLE link survives page
+  // navigation: pushing and popping the Mirror screen never touches it.
+  final MirrorConnection _connection = MirrorConnection();
+
   List<StockLayout> _stock = const <StockLayout>[];
 
   @override
   void initState() {
     super.initState();
     _bootstrap();
+    // Dialogs (the Bluetooth-on prompt) need the first frame to exist.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoConnect());
+  }
+
+  /// Reconnect to the last mirror on launch. Best-effort: a mirror that is
+  /// out of range or powered off just lands in the "failed" state with the
+  /// error visible on the Mirror screen.
+  Future<void> _autoConnect() async {
+    if (!await _connection.hasLastDevice()) return;
+    final gate = await ensureBlePermissions();
+    if (!gate.granted) return;
+    if (!mounted) return;
+    if (!await ensureBluetoothOn(context)) return;
+    await _connection.connectLast();
   }
 
   Future<void> _bootstrap() async {
@@ -68,6 +88,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   void dispose() {
     _keyboardFocus.dispose();
     _c.dispose();
+    _connection.dispose();
     super.dispose();
   }
 
@@ -104,6 +125,76 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  void _openMirror() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MirrorScreen(controller: _c, connection: _connection),
+      ),
+    );
+  }
+
+  /// The BLE link state, always visible in the app bar. Tapping it (or the
+  /// Mirror button) opens the Mirror screen for details and controls.
+  Widget _buildConnectionIndicator() {
+    return ListenableBuilder(
+      listenable: _connection,
+      builder: (context, _) {
+        final theme = Theme.of(context);
+        final connection = _connection;
+        switch (connection.status) {
+          case MirrorConnectionStatus.connected:
+            return Tooltip(
+              message: 'Connected to ${connection.deviceName}',
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                onPressed: _openMirror,
+                icon: Icon(Icons.bluetooth_connected,
+                    size: 18, color: theme.colorScheme.primary),
+                label: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 120),
+                  child: Text(
+                    connection.deviceName ?? '',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium,
+                  ),
+                ),
+              ),
+            );
+          case MirrorConnectionStatus.connecting:
+            return Tooltip(
+              message: 'Connecting to ${connection.deviceName}...',
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            );
+          case MirrorConnectionStatus.failed:
+            return IconButton(
+              tooltip: 'Reconnect failed: ${connection.error ?? 'unknown'}',
+              icon: Icon(Icons.bluetooth, color: theme.colorScheme.error),
+              onPressed: _openMirror,
+            );
+          case MirrorConnectionStatus.disconnected:
+            return IconButton(
+              tooltip: 'Not connected to a mirror',
+              icon: const Icon(Icons.bluetooth_disabled),
+              onPressed: _openMirror,
+            );
+        }
+      },
     );
   }
 
@@ -245,16 +336,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             );
           },
         ),
+        _buildConnectionIndicator(),
         IconButton(
           tooltip: 'Mirror',
           icon: const Icon(Icons.bluetooth_searching),
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => MirrorScreen(controller: _c),
-              ),
-            );
-          },
+          onPressed: _openMirror,
         ),
         PopupMenuButton<String>(
           onSelected: (choice) {
@@ -399,6 +485,36 @@ class _ViewToolbar extends StatelessWidget {
               ],
               selected: <int>{controller.variant},
               onSelectionChanged: (s) => controller.setVariant(s.first),
+            ),
+            const SizedBox(width: 12),
+            Text('Clock', style: theme.textTheme.bodySmall),
+            const SizedBox(width: 8),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const <ButtonSegment<bool>>[
+                ButtonSegment<bool>(
+                    value: true, label: Text('12h', style: TextStyle(fontSize: 11))),
+                ButtonSegment<bool>(
+                    value: false, label: Text('24h', style: TextStyle(fontSize: 11))),
+              ],
+              selected: <bool>{controller.clock12h},
+              onSelectionChanged: (s) => controller.setClock12h(s.first),
+            ),
+            const SizedBox(width: 12),
+            Text('Temp', style: theme.textTheme.bodySmall),
+            const SizedBox(width: 8),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const <ButtonSegment<bool>>[
+                ButtonSegment<bool>(
+                    value: true, label: Text('\u00b0F', style: TextStyle(fontSize: 11))),
+                ButtonSegment<bool>(
+                    value: false, label: Text('\u00b0C', style: TextStyle(fontSize: 11))),
+              ],
+              selected: <bool>{controller.tempF},
+              onSelectionChanged: (s) => controller.setTempF(s.first),
             ),
             const SizedBox(width: 20),
 

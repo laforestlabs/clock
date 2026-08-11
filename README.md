@@ -98,11 +98,11 @@ The four mock variants exist to exercise the paths that break in the field:
   "brightness": 200,
   "widgets": [
     { "type": "clock", "rect": [0, 0, 62, 17],
-      "font": "digits16", "format": "%H:%M",
+      "font": "digits16",
       "color": "#00E5FF", "align": "center" },
 
     { "type": "text", "rect": [20, 32, 42, 7],
-      "bind": "weather.temp_c", "format": "%.0f°C" },
+      "bind": "weather.temp" },
 
     { "type": "date", "rect": [0, 40, 64, 21],
       "fit": true },
@@ -115,9 +115,18 @@ The four mock variants exist to exercise the paths that break in the field:
 
 Widget types: `rect`, `line`, `text`, `clock`, `date`, `weather`, `icon`, `agenda`, `todo`.
 
-Bindings are dotted paths into the model: `weather.temp_c`, `weather.label`,
+Bindings are dotted paths into the model: `weather.temp`, `weather.label`,
 `weather.code`, `now.hour`, `system.rssi`, `counts.events`, and so on. See
 `ml_model_lookup()` in `core/src/model.c` for the full set.
+
+Clock and temperature display follow the device settings, not the layout: a
+clock widget without an explicit `format` shows 12-hour or 24-hour time per
+the mirror's `clock12h` setting, and the display-facing temp bindings
+(`weather.temp`, `weather.temp_min`, `weather.temp_max`) serve the unit the
+mirror is set to (`temp_unit`). Both default to 12-hour and Fahrenheit, and
+are set from the phone app over Bluetooth. A layout that pins its own clock
+`format` or binds the raw `weather.temp_c` paths opts out of those settings
+deliberately.
 
 ### Fonts: a few styles, many sizes
 
@@ -292,7 +301,7 @@ laid out so it can be read:
 ```sh
 . $HOME/esp/esp-idf-v5.5/export.sh
 idf.py -C firmware set-target esp32s3
-idf.py -C firmware menuconfig        # Smart Mirror menu: WiFi, timezone, panel
+idf.py -C firmware menuconfig        # Smart Mirror menu: WiFi, timezone, display, panel
 idf.py -C firmware flash monitor
 ```
 

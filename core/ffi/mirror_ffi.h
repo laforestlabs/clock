@@ -114,6 +114,16 @@ ML_EXPORT const char *ml_sim_variant_name(int variant);
 ML_EXPORT void ml_sim_set_brightness(ml_sim *s, int brightness);
 
 /*
+ * Display settings for the preview: the 12/24-hour clock choice and the
+ * Fahrenheit/Celsius temperature choice. These mirror the device config keys
+ * (clock12h, temp_unit) so the designer shows exactly what a mirror with the
+ * same settings would draw. Each takes 1 for 12-hour / Fahrenheit, 0 for
+ * 24-hour / Celsius, and survives a variant change.
+ */
+ML_EXPORT void ml_sim_set_clock12h(ml_sim *s, int on);
+ML_EXPORT void ml_sim_set_tempf(ml_sim *s, int on);
+
+/*
  * Render and return width*height*4 bytes of RGBA8888, which is the format
  * Flutter's decodeImageFromPixels wants. Converting here avoids a per-pixel
  * loop in Dart on every repaint.

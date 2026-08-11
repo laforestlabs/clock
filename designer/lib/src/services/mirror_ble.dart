@@ -127,9 +127,13 @@ class BleSession {
 
   /// Connect, discover the service and start listening for status
   /// notifications. Throws [BlePushException] when the service is missing.
-  static Future<BleSession> connect(BluetoothDevice device) async {
+  /// [timeout] bounds the link establishment; the caller decides how long a
+  /// stuck connect attempt is worth waiting for (reconnecting at app launch
+  /// wants a short one).
+  static Future<BleSession> connect(BluetoothDevice device,
+      {Duration timeout = const Duration(seconds: 35)}) async {
     // Personal home use: the nonprofit license covers it.
-    await device.connect(mtu: 512, license: License.nonprofit);
+    await device.connect(mtu: 512, license: License.nonprofit, timeout: timeout);
     try {
       final services = await device.discoverServices();
       BluetoothCharacteristic? cmd, data, status;

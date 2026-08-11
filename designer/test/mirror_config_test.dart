@@ -183,6 +183,58 @@ void main() {
       expect(back, isNotNull);
       expect(back!.brightness, 100);
     });
+
+    test('toJson writes clock12h and temp_unit for the display settings', () {
+      final json = const MirrorConfig(clock12h: true, tempF: true).toJson();
+      expect(json, <String, dynamic>{'clock12h': true, 'temp_unit': 'F'});
+      expect(const MirrorConfig(clock12h: false, tempF: false).toJson(),
+          <String, dynamic>{'clock12h': false, 'temp_unit': 'C'});
+    });
+
+    test('toJson omits the display settings when null (unchanged on push)',
+        () {
+      final json = const MirrorConfig().toJson();
+      expect(json.containsKey('clock12h'), isFalse);
+      expect(json.containsKey('temp_unit'), isFalse);
+    });
+
+    test('fromJson reads the display settings', () {
+      final f = MirrorConfig.fromJson(
+          <String, dynamic>{'clock12h': true, 'temp_unit': 'F'});
+      expect(f, isNotNull);
+      expect(f!.clock12h, isTrue);
+      expect(f.tempF, isTrue);
+
+      final c = MirrorConfig.fromJson(
+          <String, dynamic>{'clock12h': false, 'temp_unit': 'C'});
+      expect(c, isNotNull);
+      expect(c!.clock12h, isFalse);
+      expect(c.tempF, isFalse);
+    });
+
+    test('fromJson ignores a non-boolean clock12h and unknown temp units', () {
+      final cfg = MirrorConfig.fromJson(<String, dynamic>{
+        'clock12h': 'yes',
+        'temp_unit': 'K',
+      });
+      // Neither field is present once the bad values are filtered, so the
+      // object itself reads as absent, exactly like the firmware rejecting
+      // them on push.
+      expect(cfg, isNull);
+    });
+
+    test('fromJson round-trips the display settings', () {
+      const cfg = MirrorConfig(clock12h: false, tempF: true);
+      final back = MirrorConfig.fromJson(cfg.toJson());
+      expect(back, isNotNull);
+      expect(back!.clock12h, isFalse);
+      expect(back.tempF, isTrue);
+    });
+
+    test('a display setting alone is a valid config', () {
+      expect(const MirrorConfig(clock12h: true).validate(), isNull);
+      expect(const MirrorConfig(tempF: false).validate(), isNull);
+    });
   });
 
   group('timezone presets', () {

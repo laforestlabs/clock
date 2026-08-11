@@ -112,6 +112,10 @@ static void render_task(void *arg)
         model.online = wifi_is_connected();
         model.wifi_rssi = wifi_rssi();
         model.uptime_s = (uint32_t)(esp_timer_get_time() / 1000000);
+        /* Owner display settings, read fresh so a config push lands at a
+         * frame boundary without any extra signalling. */
+        model.clock_12h = mirror_config_clock_12h();
+        model.temp_f = mirror_config_temp_unit() == 'F';
 
         if (model.now.valid && !was_synced) {
             ESP_LOGI(TAG, "clock is valid, the panel now shows the real time");

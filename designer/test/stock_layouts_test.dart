@@ -45,7 +45,7 @@ void main() {
       expect(contents, contains('"width": 64'));
       expect(contents, contains('"height": 32'));
       expect(contents, contains('"type": "clock"'));
-      expect(contents, contains('weather.temp_c'));
+      expect(contents, contains('weather.temp'));
     });
   });
 }

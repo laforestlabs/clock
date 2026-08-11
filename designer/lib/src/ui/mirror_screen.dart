@@ -17,10 +17,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,36 +28,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../controller.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
+import '../services/mirror_connection.dart';
 import '../services/mirror_discovery.dart';
 import '../services/mirror_lan.dart';
-
-/// What the BLE pong line reports: "pong <version> <ip> <layout> <w> <h>".
-class _PongInfo {
-  const _PongInfo(this.version, this.ip, this.layout, this.width, this.height);
-
-  final String version;
-  final String ip;
-  final String layout;
-  final int width;
-  final int height;
-
-  static _PongInfo? parse(String pong) {
-    final parts = pong.split(' ');
-    if (parts.length < 6 || parts[0] != 'pong') return null;
-    return _PongInfo(
-      parts[1],
-      parts[2],
-      parts[3],
-      int.tryParse(parts[4]) ?? 0,
-      int.tryParse(parts[5]) ?? 0,
-    );
-  }
-}
+import 'ble_prompt.dart';
 
 class MirrorScreen extends StatefulWidget {
-  const MirrorScreen({super.key, required this.controller});
+  const MirrorScreen(
+      {super.key, required this.controller, required this.connection});
 
   final DesignerController controller;
+
+  /// The app-scoped BLE link, owned by the workspace so it survives this
+  /// screen being pushed and popped.
+  final MirrorConnection connection;
 
   @override
   State<MirrorScreen> createState() => _MirrorScreenState();
@@ -65,15 +49,13 @@ class MirrorScreen extends StatefulWidget {
 
 class _MirrorScreenState extends State<MirrorScreen> {
   DesignerController get _c => widget.controller;
+  MirrorConnection get _connection => widget.connection;
 
   // ------------------------------------------------------------- BLE
 
   final List<BleScanEntry> _bleDevices = <BleScanEntry>[];
   bool _scanning = false;
   String? _bleUnavailable;
-  BleSession? _session;
-  String? _bleName;
-  _PongInfo? _pong;
   bool _bleBusy = false;
 
   // Live panel brightness (0..255) and whether the device follows the
@@ -101,11 +83,17 @@ class _MirrorScreenState extends State<MirrorScreen> {
   void initState() {
     super.initState();
     _browse();
+    // Re-entering the screen with a live session: refresh the brightness
+    // slider from the device instead of waiting for a new connect.
+    if (_connection.session != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadBrightness());
+    }
   }
 
   @override
   void dispose() {
-    _session?.close();
+    // Deliberately no connection teardown here: the session is owned by the
+    // workspace and must survive this screen being popped.
     _ipField.dispose();
     super.dispose();
   }
@@ -126,55 +114,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   // ---------------------------------------------------------- scan
 
-  /// Android 12+ needs runtime grants for BLUETOOTH_SCAN and BLUETOOTH_CONNECT
-  /// before scanning; Android 11 and below need a location grant instead (the
-  /// manifest declares ACCESS_FINE_LOCATION with maxSdkVersion 30, and the
-  /// plugin has no legacy scan/connect mapping on those builds). Everything
-  /// else needs no runtime permission. Returns false and fills
-  /// [_bleUnavailable] when a needed permission is denied.
-  ///
-  /// The request is one batch call (a single dialog listing every permission)
-  /// and the outcome is read back with `Permission.status` afterwards:
-  /// permission_handler's request callback can report denied for a permission
-  /// the user just granted (a known race on Android 12+), while `status`
-  /// reads the live OS state.
-  Future<bool> _ensureBlePermissions() async {
-    if (!Platform.isAndroid) return true;
-
-    // Platform.operatingSystemVersion is documented as not parseable and its
-    // format changes across Dart versions; the Android SDK int comes from the
-    // platform API instead.
-    final androidInfo = await DeviceInfoPlugin().androidInfo;
-    final sdkInt = androidInfo.version.sdkInt;
-    debugPrint('ensureBle: sdk=$sdkInt os=${Platform.operatingSystemVersion}');
-
-    final permissions = <Permission>[
-      if (sdkInt >= 31) ...<Permission>[
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-      ] else
-        Permission.locationWhenInUse,
-    ];
-
-    await permissions.request();
-
-    for (final permission in permissions) {
-      final status = await permission.status;
-      if (status.isGranted) continue;
-      final permanent = status.isPermanentlyDenied;
-      if (mounted) {
-        setState(() {
-          _bleUnavailable = permanent
-              ? 'Bluetooth permission denied; grant it in Settings'
-              : 'Bluetooth permission denied';
-          _blePermissionPermanent = permanent;
-        });
-      }
-      return false;
-    }
-    return true;
-  }
-
   Future<void> _scan() async {
     setState(() {
       _scanning = true;
@@ -182,7 +121,29 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _bleDevices.clear();
     });
     try {
-      if (!await _ensureBlePermissions()) return;
+      final gate = await ensureBlePermissions();
+      if (!mounted) return;
+      if (!gate.granted) {
+        setState(() {
+          _bleUnavailable = gate.permanentDenied
+              ? 'Bluetooth permission denied; grant it in Settings'
+              : 'Bluetooth permission denied';
+          _blePermissionPermanent = gate.permanentDenied;
+        });
+        return;
+      }
+      if (!await FlutterBluePlus.isSupported) {
+        if (!mounted) return;
+        setState(() => _bleUnavailable = 'Bluetooth is not available here');
+        return;
+      }
+      if (!mounted) return;
+      if (!await ensureBluetoothOn(context)) {
+        if (!mounted) return;
+        setState(
+            () => _bleUnavailable = 'Bluetooth is off; enable it to scan');
+        return;
+      }
       final found = await scanForMirrors();
       if (!mounted) return;
       setState(() => _bleDevices.addAll(found));
@@ -198,36 +159,28 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   Future<void> _connect(BleScanEntry entry) async {
-    setState(() => _bleBusy = true);
-    try {
-      final session = await BleSession.connect(entry.device);
-      try {
-        final pong = await session.ping();
-        if (!mounted) {
-          await session.close();
-          return;
-        }
-        setState(() {
-          _session = session;
-          _bleName = entry.name;
-          _pong = _PongInfo.parse(pong);
-          _brightness = null;
-          _brightnessAuto = true;
-        });
-        _toast('Connected to ${entry.name}');
-        await _loadBrightness();
-      } catch (e) {
-        // The mirror accepted the link but did not answer. Close the
-        // session so the GATT registration and the mirror's single
-        // connection slot are freed; otherwise every later connect fails
-        // against a stale registration and a busy mirror.
-        await session.close();
-        rethrow;
-      }
-    } catch (e) {
-      _handleError(e, 'connect');
-    } finally {
-      if (mounted) setState(() => _bleBusy = false);
+    await _connection.connect(entry);
+    if (!mounted) return;
+    if (_connection.status != MirrorConnectionStatus.connected) return;
+    setState(() {
+      _brightness = null;
+      _brightnessAuto = true;
+    });
+    _toast('Connected to ${entry.name}');
+    await _loadBrightness();
+  }
+
+  /// Reconnect to the last remembered mirror after a failed connect.
+  Future<void> _retryConnect() async {
+    if (!await ensureBluetoothOn(context)) return;
+    await _connection.connectLast();
+    if (!mounted) return;
+    if (_connection.status == MirrorConnectionStatus.connected) {
+      setState(() {
+        _brightness = null;
+        _brightnessAuto = true;
+      });
+      await _loadBrightness();
     }
   }
 
@@ -235,7 +188,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// mirror on old firmware answers "unknown command", the parse returns
   /// null, and the control stays hidden.
   Future<void> _loadBrightness() async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
     try {
       final b = await session.getBrightness();
@@ -251,7 +204,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   /// Apply a manual override; [value] is the slider position at release.
   Future<void> _sendBrightness(int value) async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
     setState(() => _bleBusy = true);
     try {
@@ -268,7 +221,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// override off sends "set brightness auto"; turning it on pins the current
   /// live value so the slider has a real starting point.
   Future<void> _setBrightnessAuto(bool auto) async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
     setState(() => _bleBusy = true);
     try {
@@ -282,19 +235,17 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   Future<void> _disconnectBle() async {
-    final session = _session;
-    _session = null;
-    setState(() {
-      _bleName = null;
-      _pong = null;
-      _brightness = null;
-      _brightnessAuto = true;
-    });
-    await session?.close();
+    await _connection.disconnect();
+    if (mounted) {
+      setState(() {
+        _brightness = null;
+        _brightnessAuto = true;
+      });
+    }
   }
 
   Future<void> _pushLayoutBle() async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
     setState(() => _bleBusy = true);
     try {
@@ -308,7 +259,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   Future<void> _configure() async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
 
     // Best-effort prefill from the device.
@@ -458,7 +409,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// WiFi IP, which is what the upload talks to. Fails with the ordinary
   /// "could not reach" error when the phone is not on the same WiFi.
   Future<void> _updateFirmwareBle() async {
-    final ip = _pong?.ip;
+    final ip = _connection.pong?.ip;
     if (ip == null || ip.isEmpty || ip == '0.0.0.0') {
       _toast('The mirror has no WiFi IP; the phone and mirror must be on '
           'the same network');
@@ -570,7 +521,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// Confirm, ask the mirror to restart, and drop the session: the device is
   /// going down and the BLE connection dies with it.
   Future<void> _rebootBle() async {
-    final session = _session;
+    final session = _connection.session;
     if (session == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -624,15 +575,21 @@ class _MirrorScreenState extends State<MirrorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Mirror')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: <Widget>[
-          _sectionTitle('Bluetooth'),
-          _buildBleSection(),
-          const SizedBox(height: 24),
-          _sectionTitle('On this network'),
-          _buildLanSection(),
-        ],
+      // The BLE section is a view over the workspace-owned connection, so a
+      // state change (connect, disconnect, dropped link) rebuilds it even
+      // when it happened while this screen was not on stage.
+      body: ListenableBuilder(
+        listenable: _connection,
+        builder: (context, _) => ListView(
+          padding: const EdgeInsets.all(16),
+          children: <Widget>[
+            _sectionTitle('Bluetooth'),
+            _buildBleSection(),
+            const SizedBox(height: 24),
+            _sectionTitle('On this network'),
+            _buildLanSection(),
+          ],
+        ),
       ),
     );
   }
@@ -650,37 +607,54 @@ class _MirrorScreenState extends State<MirrorScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(_bleUnavailable!, style: const TextStyle(color: Colors.grey)),
-          if (_blePermissionPermanent)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                children: <Widget>[
-                  OutlinedButton.icon(
-                    onPressed: _scanning ? null : _scan,
-                    icon: const Icon(Icons.bluetooth_searching, size: 18),
-                    label: const Text('Scan again'),
-                  ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              children: <Widget>[
+                OutlinedButton.icon(
+                  onPressed: _scanning ? null : _scan,
+                  icon: const Icon(Icons.bluetooth_searching, size: 18),
+                  label: const Text('Scan again'),
+                ),
+                if (_blePermissionPermanent) ...<Widget>[
                   const SizedBox(width: 8),
                   const TextButton(
                     onPressed: openAppSettings,
                     child: Text('Open settings'),
-                  ),                ],
-              ),
+                  ),
+                ],
+              ],
             ),
+          ),
         ],
       );
     }
 
-    final session = _session;
+    final connection = _connection;
+    if (connection.status == MirrorConnectionStatus.connecting) {
+      return Row(
+        children: <Widget>[
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 12),
+          Text('Connecting to ${connection.deviceName}...'),
+        ],
+      );
+    }
+
+    final session = connection.session;
     if (session != null) {
-      final pong = _pong;
+      final pong = connection.pong;
       final otaReady = pong != null &&
           pong.ip.isNotEmpty &&
           pong.ip != '0.0.0.0';
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('Connected to $_bleName'),
+          Text('Connected to ${connection.deviceName}'),
           if (pong != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -759,6 +733,32 @@ class _MirrorScreenState extends State<MirrorScreen> {
                 ],
               ),
             ),
+        ],
+      );
+    }
+
+    if (connection.status == MirrorConnectionStatus.failed) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('Could not connect to ${connection.deviceName}: '
+              '${connection.error ?? 'unknown error'}'),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              OutlinedButton.icon(
+                onPressed: _retryConnect,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _scanning ? null : _scan,
+                icon: const Icon(Icons.bluetooth_searching, size: 18),
+                label: const Text('Scan again'),
+              ),
+            ],
+          ),
         ],
       );
     }
@@ -888,8 +888,9 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
 // ------------------------------------------------------------ dialog
 
-/// Configure dialog: timezone preset (or custom), coordinates, place label.
-/// Only reachable over BLE, per the owner's decision.
+/// Configure dialog: timezone preset (or custom), coordinates, place label,
+/// clock format and temperature unit. Only reachable over BLE, per the
+/// owner's decision.
 class _ConfigureDialog extends StatefulWidget {
   const _ConfigureDialog({this.initial});
 
@@ -906,10 +907,19 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
   late final TextEditingController _place;
   String? _presetTz;
 
+  /// Display settings default to the device's factory values (12-hour,
+  /// Fahrenheit) when the device could not be prefilled. They are always
+  /// pushed: unlike the text fields there is no "unchanged" empty state for
+  /// a choice, and the defaults match a fresh mirror.
+  late bool _clock12h;
+  late bool _tempF;
+
   @override
   void initState() {
     super.initState();
     final initial = widget.initial;
+    _clock12h = initial?.clock12h ?? true;
+    _tempF = initial?.tempF ?? true;
     final tz = initial?.timezone;
     final presetValues = kTimezonePresets.map((p) => p.tz).toSet();
     if (tz != null && presetValues.contains(tz)) {
@@ -947,6 +957,8 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
         latitude: _lat.text.trim().isEmpty ? null : _lat.text.trim(),
         longitude: _lon.text.trim().isEmpty ? null : _lon.text.trim(),
         place: _place.text.trim().isEmpty ? null : _place.text.trim(),
+        clock12h: _clock12h,
+        tempF: _tempF,
       );
 
   @override
@@ -1004,6 +1016,30 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
               controller: _place,
               maxLength: 23,
               decoration: const InputDecoration(labelText: 'Place name'),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const <ButtonSegment<bool>>[
+                ButtonSegment<bool>(
+                    value: true, label: Text('12-hour clock')),
+                ButtonSegment<bool>(
+                    value: false, label: Text('24-hour clock')),
+              ],
+              selected: <bool>{_clock12h},
+              onSelectionChanged: (s) => setState(() => _clock12h = s.first),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const <ButtonSegment<bool>>[
+                ButtonSegment<bool>(value: true, label: Text('Fahrenheit')),
+                ButtonSegment<bool>(value: false, label: Text('Celsius')),
+              ],
+              selected: <bool>{_tempF},
+              onSelectionChanged: (s) => setState(() => _tempF = s.first),
             ),
             // The dialog is BLE-only; the LAN API deliberately has no config
             // endpoint.

@@ -96,6 +96,10 @@ class MirrorBindings {
             lib.lookupFunction<_HitTestC, _HitTestD>('ml_sim_hit_test'),
         simSetVariant = lib
             .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_variant'),
+        simSetClock12h = lib
+            .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_clock12h'),
+        simSetTempf = lib
+            .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_tempf'),
         simSetBrightness = lib
             .lookupFunction<_SimSetIntC, _SimSetIntD>('ml_sim_set_brightness'),
         simRenderRgba =
@@ -151,6 +155,8 @@ class MirrorBindings {
   final int Function(Pointer<Void>, int) simWidgetScale;
   final int Function(Pointer<Void>, int, int) simHitTest;
   final void Function(Pointer<Void>, int) simSetVariant;
+  final void Function(Pointer<Void>, int) simSetClock12h;
+  final void Function(Pointer<Void>, int) simSetTempf;
   final void Function(Pointer<Void>, int) simSetBrightness;
   final Pointer<Uint8> Function(Pointer<Void>) simRenderRgba;
   final int Function(Pointer<Void>) simRgbaSize;

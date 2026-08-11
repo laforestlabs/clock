@@ -14,6 +14,13 @@ struct ml_sim {
 
     int  variant;
     int  brightness;   /* -1 means defer to the layout */
+
+    /* Display settings the designer toolbar toggles. Kept out of the model
+     * fields themselves so switching a data variant (which re-mocks the
+     * model) does not silently reset the preview. */
+    int  clock_12h;
+    int  temp_f;
+
     int  loaded;
 
     ml_canvas canvas;
@@ -39,6 +46,8 @@ ml_sim *ml_sim_create(void)
 
     s->brightness = -1;
     s->variant    = ML_MOCK_TYPICAL;
+    s->clock_12h  = 1;
+    s->temp_f     = 1;
     ml_model_mock(&s->model, s->variant);
     ml_layout_init(&s->layout, 64, 64);
     ml_diag_reset(&s->diag);
@@ -175,6 +184,22 @@ void ml_sim_set_variant(ml_sim *s, int variant)
     if (variant < 0 || variant >= ML_MOCK_VARIANTS) variant = ML_MOCK_TYPICAL;
     s->variant = variant;
     ml_model_mock(&s->model, variant);
+    s->model.clock_12h = s->clock_12h != 0;
+    s->model.temp_f    = s->temp_f != 0;
+}
+
+void ml_sim_set_clock12h(ml_sim *s, int on)
+{
+    if (!s) return;
+    s->clock_12h = on != 0;
+    s->model.clock_12h = s->clock_12h != 0;
+}
+
+void ml_sim_set_tempf(ml_sim *s, int on)
+{
+    if (!s) return;
+    s->temp_f = on != 0;
+    s->model.temp_f = s->temp_f != 0;
 }
 
 int ml_sim_variant_count(void) { return ML_MOCK_VARIANTS; }
@@ -359,6 +384,7 @@ static const char *k_bind_paths[] = {
     "now.hour", "now.minute", "now.second",
     "now.day", "now.month", "now.year", "now.weekday",
     "weather.temp_c", "weather.feels_c", "weather.temp_min_c", "weather.temp_max_c",
+    "weather.temp", "weather.temp_min", "weather.temp_max",
     "weather.code", "weather.label", "weather.place",
     "weather.wind_kph", "weather.humidity_pct", "weather.precip_prob", "weather.is_day",
     "system.online", "system.rssi", "system.uptime_s",

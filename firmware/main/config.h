@@ -8,6 +8,7 @@
 #ifndef MIRROR_CONFIG_H
 #define MIRROR_CONFIG_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "esp_err.h"
@@ -30,6 +31,13 @@ const char *mirror_config_timezone(void);
 const char *mirror_config_latitude(void);
 const char *mirror_config_longitude(void);
 const char *mirror_config_place(void);
+
+/* True when clock widgets without an explicit format use a 12-hour face
+ * ("03:41 PM"), false for 24-hour ("15:41"). */
+bool mirror_config_clock_12h(void);
+
+/* 'F' or 'C': the unit temperatures are shown in. */
+char mirror_config_temp_unit(void);
 
 /*
  * The stored brightness override: -1 when the device follows the layout,
@@ -55,14 +63,16 @@ void mirror_config_clear_brightness(void);
 
 /*
  * Apply a partial JSON object: {"timezone","latitude","longitude","place",
- * "brightness"}. Every present field is validated, and nothing is persisted
- * or applied unless all of them pass; missing fields are left unchanged.
+ * "brightness","clock12h","temp_unit"}. Every present field is validated, and
+ * nothing is persisted or applied unless all of them pass; missing fields are
+ * left unchanged.
  * "timezone" must be a POSIX TZ string (the only form newlib's tzset
  * parses; IANA names are rejected rather than silently degrading the clock
  * to UTC). "brightness" is a manual override: an integer 0..255, applied to
- * the panel immediately. On success the changed fields are written to NVS
- * and applied: timezone re-points TZ via setenv/tzset, coordinate or place
- * changes kick a provider refresh so the weather relocates promptly.
+ * the panel immediately. "clock12h" is a JSON boolean; "temp_unit" is "F" or
+ * "C". On success the changed fields are written to NVS and applied:
+ * timezone re-points TZ via setenv/tzset, coordinate or place changes kick a
+ * provider refresh so the weather relocates promptly.
  *
  * On failure returns ESP_ERR_INVALID_ARG and err holds a human message.
  */

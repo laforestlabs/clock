@@ -235,6 +235,20 @@ class MirrorEngine {
     _b.simSetVariant(_sim, variant);
   }
 
+  /// 12/24-hour clock choice for the preview, mirroring the device's
+  /// clock12h config key. Affects clock widgets without an explicit format.
+  void setClock12h(bool on) {
+    _assertLive();
+    _b.simSetClock12h(_sim, on ? 1 : 0);
+  }
+
+  /// Fahrenheit/Celsius choice for the preview, mirroring the device's
+  /// temp_unit config key.
+  void setTempF(bool on) {
+    _assertLive();
+    _b.simSetTempf(_sim, on ? 1 : 0);
+  }
+
   /// Overrides the layout's brightness. Pass null to use the layout's value.
   ///
   /// This belongs in native code rather than in a view filter because the

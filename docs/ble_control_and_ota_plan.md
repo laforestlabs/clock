@@ -36,9 +36,10 @@ Firmware (ESP-IDF 5.5.2, target esp32s3, board Freenove FNK0085 / N16R8):
   image that crashes early reverts automatically.
 - `firmware/partitions.csv`: `ota_0`/`ota_1`, 4 MB each. Already in place.
 - `firmware/main/config.c` / `config.h`: owner config in NVS (timezone,
-  latitude, longitude, place), seeded from Kconfig, partial-JSON apply with
-  all-or-nothing validation via `mirror_config_apply_json()`. This is the
-  pattern to follow for any new persisted setting.
+  latitude, longitude, place, brightness, clock12h, temp_unit), seeded from
+  Kconfig, partial-JSON apply with all-or-nothing validation via
+  `mirror_config_apply_json()`. This is the pattern to follow for any new
+  persisted setting.
 - `firmware/main/panel.cpp`: `panel_set_brightness(uint8_t)` and
   `panel_get_brightness()` already exist and work at runtime (hardware dims by
   shortening LED on-time).
@@ -126,7 +127,9 @@ value. The phone cannot dim the panel.
    API stays read-only for config: the owner's standing decision is that the
    phone writes over BLE only. Do not add a LAN brightness endpoint.)
 5. `get config` response gains `"brightness":<-1|0..255>` so the app can
-   prefill from one place.
+   prefill from one place. The display settings (`clock12h`, `temp_unit`)
+   were added the same way; the configure dialog prefills all of them from
+   this one line.
 
 ### Gap 2: the firmware reports the wrong version, so OTA is not verifiable
 

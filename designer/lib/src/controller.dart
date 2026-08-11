@@ -50,6 +50,15 @@ class DesignerController extends ChangeNotifier {
   int? _brightnessOverride;
   int? get brightnessOverride => _brightnessOverride;
 
+  /// Preview display settings, matching the device config keys (clock12h,
+  /// temp_unit). Defaults are the device factory defaults: 12-hour,
+  /// Fahrenheit.
+  bool _clock12h = true;
+  bool get clock12h => _clock12h;
+
+  bool _tempF = true;
+  bool get tempF => _tempF;
+
   /// Wood veneer diffusion as a percentage. Applied by the view as scatter
   /// around the emitters, never by the engine: the veneer sits in front of the
   /// panel, it is not part of anything the panel does. The painters halve the
@@ -374,6 +383,18 @@ class DesignerController extends ChangeNotifier {
   Future<void> setVariant(int variant) async {
     _variant = variant;
     _engine.setVariant(variant);
+    await _refresh();
+  }
+
+  Future<void> setClock12h(bool on) async {
+    _clock12h = on;
+    _engine.setClock12h(on);
+    await _refresh();
+  }
+
+  Future<void> setTempF(bool on) async {
+    _tempF = on;
+    _engine.setTempF(on);
     await _refresh();
   }
 

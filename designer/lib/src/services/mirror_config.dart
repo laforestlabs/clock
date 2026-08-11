@@ -1,4 +1,5 @@
-// Owner-settable device configuration: timezone, coordinates, place label.
+// Owner-settable device configuration: timezone, coordinates, place label,
+// brightness, clock format and temperature unit.
 //
 // These are the fields the firmware keeps in NVS and the phone pushes over
 // Bluetooth. The validation rules here mirror firmware/main/config.c exactly:
@@ -14,6 +15,8 @@ class MirrorConfig {
     this.longitude,
     this.place,
     this.brightness,
+    this.clock12h,
+    this.tempF,
   });
 
   final String? timezone;
@@ -27,6 +30,14 @@ class MirrorConfig {
   /// object, only through the BLE "set brightness auto" command.
   final int? brightness;
 
+  /// True for a 12-hour clock ("03:41 PM"), false for 24-hour ("15:41").
+  /// Null leaves the device's setting unchanged.
+  final bool? clock12h;
+
+  /// True for Fahrenheit, false for Celsius. Null leaves the device's setting
+  /// unchanged.
+  final bool? tempF;
+
   /// Only the non-null fields, which is exactly what the firmware accepts.
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (timezone != null) 'timezone': timezone,
@@ -34,10 +45,12 @@ class MirrorConfig {
         if (longitude != null) 'longitude': longitude,
         if (place != null) 'place': place,
         if (brightness != null) 'brightness': brightness,
+        if (clock12h != null) 'clock12h': clock12h,
+        if (tempF != null) 'temp_unit': tempF! ? 'F' : 'C',
       };
 
   /// Parse a decoded JSON object. Returns null when the object carries none
-  /// of the five known fields.
+  /// of the seven known fields.
   static MirrorConfig? fromJson(Map<String, dynamic> json) {
     String? str(String key) => json[key] is String ? json[key] as String : null;
 
@@ -50,11 +63,16 @@ class MirrorConfig {
             ? null /* device auto; see the field comment */
             : json['brightness'] as int)
         : null;
+    final clock12h = json['clock12h'] is bool ? json['clock12h'] as bool : null;
+    final tempUnit = str('temp_unit');
+    final tempF = tempUnit == 'F' ? true : (tempUnit == 'C' ? false : null);
     if (timezone == null &&
         latitude == null &&
         longitude == null &&
         place == null &&
-        brightness == null) {
+        brightness == null &&
+        clock12h == null &&
+        tempF == null) {
       return null;
     }
     return MirrorConfig(
@@ -63,6 +81,8 @@ class MirrorConfig {
       longitude: longitude,
       place: place,
       brightness: brightness,
+      clock12h: clock12h,
+      tempF: tempF,
     );
   }
 

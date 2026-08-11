@@ -23,6 +23,11 @@ extern "C" {
 #define ML_MAX_TODOS    12
 #define ML_TITLE_LEN    48
 
+/* The degree sign lives in the unused DEL slot every font carries. Written as
+ * its own string literal because a hex escape would otherwise swallow a
+ * following hex digit: "\x7fC" is one out-of-range character, not two. */
+#define ML_DEGREE_GLYPH "\x7f"
+
 typedef struct {
     bool valid;
     int  year;     /* full year, e.g. 2026 */
@@ -96,6 +101,16 @@ typedef struct {
     bool       online;
     int        wifi_rssi;   /* dBm, 0 when unknown */
     uint32_t   uptime_s;
+
+    /*
+     * Display settings, filled from the device config by the firmware and
+     * from the designer's toolbar by the sim. They travel through the model
+     * so the renderer stays pure: a given (layout, model) pair still renders
+     * identically on the panel and in the preview.
+     */
+    bool clock_12h;   /* clock widgets without an explicit format use a
+                       * 12-hour face (with AM/PM) when true */
+    bool temp_f;      /* temperatures are shown in Fahrenheit when true */
 } ml_model;
 
 /* Zero the model and set sensible defaults (everything invalid, offline). */

@@ -16,7 +16,7 @@
 /* The degree sign lives in the unused DEL slot every font carries. Written as its own
  * string literal because a hex escape would otherwise swallow a following
  * hex digit: "\x7fC" is one out-of-range character, not two. */
-#define ML_DEGREE "\x7f"
+#define ML_DEGREE ML_DEGREE_GLYPH
 
 #define TEXT_BUF 96
 
@@ -650,7 +650,12 @@ static bool sample_text(const ml_widget *w, const ml_model *m, char *buf, size_t
 
 static bool sample_clock(const ml_widget *w, const ml_model *m, char *buf, size_t n)
 {
-    const char *fmt = w->format[0] ? w->format : "%H:%M";
+    /* No explicit format: the device's clock setting decides. The 12-hour
+     * face is plain "%I:%M"; AM/PM is deliberately omitted (the owner asked
+     * for a glanceable time, and the digits fonts carry no letters anyway). */
+    const char *fmt = w->format[0]
+                          ? w->format
+                          : (m->clock_12h ? "%I:%M" : "%H:%M");
 
     if (m->now.valid) {
         fmt_time(fmt, &m->now, buf, n);
@@ -674,11 +679,21 @@ static bool sample_date(const ml_widget *w, const ml_model *m, char *buf, size_t
     return true;
 }
 
+/* A temperature in the device's display unit: Celsius when the model says
+ * Celsius, Fahrenheit otherwise. Shared by the weather block's temp line and
+ * its high/low row. */
+static int temp_display(const ml_model *m, float celsius)
+{
+    if (!m->temp_f) return (int)(celsius + 0.5f);
+    return (int)(celsius * 9.0f / 5.0f + 32.0f + 0.5f);
+}
+
 /* The temperature line, the one line a weather widget is sized against. */
 static void sample_temp(const ml_model *m, char *buf, size_t n)
 {
     if (m->weather.valid) {
-        snprintf(buf, n, "%d" ML_DEGREE "C", (int)(m->weather.temp_c + 0.5));
+        snprintf(buf, n, "%d" ML_DEGREE "%c", temp_display(m, m->weather.temp_c),
+                 m->temp_f ? 'F' : 'C');
     } else {
         snprintf(buf, n, "--");
     }
@@ -836,8 +851,8 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 
     if (y + fh <= w->rect.y + w->rect.h) {
         snprintf(buf, sizeof(buf), "H%d L%d",
-                 (int)(m->weather.temp_max_c + 0.5),
-                 (int)(m->weather.temp_min_c + 0.5));
+                 temp_display(m, m->weather.temp_max_c),
+                 temp_display(m, m->weather.temp_min_c));
         tw = ml_text_width(f, buf, sc);
         ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y,
                              w->rect.w, buf, secondary(w), sc);
