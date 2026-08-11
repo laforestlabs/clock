@@ -41,8 +41,12 @@ int panel_height(void);
  *
  * Do not gamma correct twice: the driver's own CIE 1931 pass is disabled in
  * sdkconfig.defaults precisely so the core stays the single implementation.
+ *
+ * With CONFIG_MIRROR_SWAP_GB the green and blue channels are exchanged in
+ * place first, correcting a panel whose data lines are crossed; rgb must
+ * then be writable scratch memory.
  */
-void panel_blit_rgb888(const uint8_t *rgb);
+void panel_blit_rgb888(uint8_t *rgb);
 
 void panel_clear(void);
 

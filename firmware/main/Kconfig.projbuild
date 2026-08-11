@@ -236,6 +236,17 @@ menu "Smart Mirror"
                 swapped colour channel or a dead data line obvious
                 immediately, rather than looking like a layout problem.
 
+        config MIRROR_SWAP_GB
+            bool "Swap green and blue channels"
+            default n
+            help
+                Set when the boot test pattern reads red, blue, green instead
+                of red, green, blue, meaning the panel's green and blue data
+                lines are crossed at the connector or inside the panel. The
+                swap happens in panel_blit_rgb888, after gamma and before the
+                shift registers, so the render core and the desktop preview
+                keep producing the true colours.
+
     endmenu
 
     menu "Panel pins (ESP32-S3 N16R8)"

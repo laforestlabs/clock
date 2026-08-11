@@ -129,9 +129,25 @@ extern "C" esp_err_t panel_init(void)
 extern "C" int panel_width(void) { return s_width; }
 extern "C" int panel_height(void) { return s_height; }
 
-extern "C" void panel_blit_rgb888(const uint8_t *rgb)
+extern "C" void panel_blit_rgb888(uint8_t *rgb)
 {
     if (s_driver == nullptr || rgb == nullptr) return;
+
+#if CONFIG_MIRROR_SWAP_GB
+    /* This panel's green and blue data lines are crossed at the connector:
+     * the boot test pattern reads red, blue, green instead of red, green,
+     * blue. Compensate here, at the last step before the shift registers, so
+     * the render core, the simulator and the golden tests all keep producing
+     * the true colours and only this panel's quirk is corrected. The buffer
+     * is the caller's per-frame scratch space, so mutating it in place is
+     * safe. */
+    const int pixels = s_width * s_height;
+    for (int i = 0; i < pixels; i++) {
+        uint8_t tmp  = rgb[i * 3 + 1];
+        rgb[i * 3 + 1] = rgb[i * 3 + 2];
+        rgb[i * 3 + 2] = tmp;
+    }
+#endif
 
     /* One bulk call rather than a set_pixel loop. For 128x64 that is 8192
      * pixels; per-pixel calls would spend most of their time in call overhead

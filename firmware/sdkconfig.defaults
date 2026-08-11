@@ -36,6 +36,10 @@ CONFIG_FREERTOS_HZ=1000
 # Linear here means "do not touch what we send you".
 CONFIG_HUB75_GAMMA_LINEAR=y
 
+# This panel's green and blue data lines are crossed: the boot test pattern
+# reads red, blue, green. panel_blit_rgb888 swaps the channels to compensate.
+CONFIG_MIRROR_SWAP_GB=y
+
 # The Freenove FNK0085 routes its USB-C through the onboard CH343 to UART0
 # (GPIO43/44), so the console lives there. The stock DevKitC-1 used the native
 # USB-Serial-JTAG instead, which this board does not expose on the connector.

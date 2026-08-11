@@ -65,6 +65,15 @@ A 64x64 panel is 1/32 scan and **does** need E, wired to GPIO10 and `MIRROR_PIN_
 to match. Without it such a panel shows only half its rows, doubled. This is the single
 easiest thing to get wrong when moving up from the default.
 
+### Swapped colour channels
+
+If the boot test pattern (red, green, blue, white bars) reads **red, blue, green**, the
+panel's green and blue data lines are crossed at the connector or inside the panel.
+Rather than rewiring, set `CONFIG_MIRROR_SWAP_GB` (already on in this project's
+`sdkconfig.defaults`); `panel_blit_rgb888` then exchanges the green and blue channels
+after gamma, before the shift registers, so the render core and the desktop preview
+still produce the true colours.
+
 ## Power
 
 Waveshare rates the 64x64 panel at **5V 4A, 20W maximum**, for an all-white frame at
