@@ -128,18 +128,20 @@ are set from the phone app over Bluetooth. A layout that pins its own clock
 `format` or binds the raw `weather.temp_c` paths opts out of those settings
 deliberately.
 
-### Fonts: one continuously scalable display face
+### Fonts: continuously scalable display faces
 
-New and stock layouts use one `display` family. It is stored once at 24px and
-area-resampled at render time, so dragging a box changes its scale continuously
-instead of switching cuts or jumping between integer multiples. Its figures
-are tabular, keeping clocks stable as digits change.
+New and stock layouts use the `display` family, with `display-thin` available
+as a lighter-stroked alternative. Each is stored once at 24px and area-resampled
+at render time, so dragging a box changes its scale continuously instead of
+switching cuts or jumping between integer multiples. Their figures are tabular,
+keeping clocks stable as digits change.
 
 Older font names remain registered so saved layouts continue to open:
 
 | family | role | cuts | source |
 |---|---|---|---|
 | `display` | all text and digits | one 24px scaling master | Open Sans Bold |
+| `display-thin` | all text and digits | one 24px scaling master | Open Sans Light |
 | `sans` | text | 8 to 24px | Open Sans Regular |
 | `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
 | `wx` | icons | one 16px scaling master | hand-drawn |

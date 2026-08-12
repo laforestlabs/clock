@@ -97,6 +97,13 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
+    // The game screen is operated like a handheld controller. Keep both
+    // thumbs on the controls instead of allowing the phone to rotate back to
+    // a narrow portrait layout while it is in use.
+    unawaited(SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]));
     _games = GameEngine.games;
     _ticker = Ticker(_onTick);
     _keyboardFocus = FocusNode();
@@ -109,6 +116,13 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   void dispose() {
+    // The rest of the designer supports either phone orientation.
+    unawaited(SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]));
     _connection.removeListener(_onConnectionChanged);
     if (_mirrorGame != null) {
       // Leaving the screen stops the mirror's game.
@@ -362,19 +376,19 @@ class _GameScreenState extends State<GameScreen>
           : _games.isEmpty
               ? const Center(child: Text('No games compiled into this build.'))
               : Focus(
-              focusNode: _keyboardFocus,
-              onKeyEvent: _onKey,
-              autofocus: true,
-              child: AnimatedBuilder(
-                animation: _c,
-                builder: (context, _) => Column(
-                  children: <Widget>[
-                    _buildControls(),
-                    Expanded(child: _buildCanvasArea()),
-                  ],
+                  focusNode: _keyboardFocus,
+                  onKeyEvent: _onKey,
+                  autofocus: true,
+                  child: AnimatedBuilder(
+                    animation: _c,
+                    builder: (context, _) => Column(
+                      children: <Widget>[
+                        _buildControls(),
+                        Expanded(child: _buildCanvasArea()),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
     );
   }
 
@@ -509,8 +523,7 @@ class _GameScreenState extends State<GameScreen>
                       child: Text(_mirrorGameLabel(ids[i])),
                     ),
                 ],
-                onChanged: (v) =>
-                    setState(() => _mirrorGameIndex = v ?? 0),
+                onChanged: (v) => setState(() => _mirrorGameIndex = v ?? 0),
               ),
             const SizedBox(height: 24),
             const Text(
@@ -527,8 +540,8 @@ class _GameScreenState extends State<GameScreen>
     return _buildGamepad(game);
   }
 
-  /// The gamepad: a d-pad built from the game's declared control labels,
-  /// plus a row of round fire buttons for anything left over (e.g. Shoot).
+  /// A landscape gamepad with movement under the left thumb and action
+  /// buttons under the right thumb.
   Widget _buildGamepad(MirrorGame game) {
     final controls = game.controls;
 
@@ -544,53 +557,6 @@ class _GameScreenState extends State<GameScreen>
     final left = indexOf('Left');
     final right = indexOf('Right');
 
-    final Widget pad;
-    if (up >= 0 && down >= 0 && left >= 0 && right >= 0) {
-      // 2x2 d-pad cluster: Up | Right over Left | Down.
-      pad = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              _padButton(game, up),
-              const SizedBox(width: 16),
-              _padButton(game, right),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              _padButton(game, left),
-              const SizedBox(width: 16),
-              _padButton(game, down),
-            ],
-          ),
-        ],
-      );
-    } else if (up >= 0 && down >= 0) {
-      pad = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          _padButton(game, up),
-          const SizedBox(height: 16),
-          _padButton(game, down),
-        ],
-      );
-    } else if (left >= 0 && right >= 0) {
-      pad = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          _padButton(game, left),
-          const SizedBox(width: 16),
-          _padButton(game, right),
-        ],
-      );
-    } else {
-      pad = const SizedBox.shrink();
-    }
-
     // Anything that is not a direction renders as a fire button.
     const directions = <String>{'Up', 'Down', 'Left', 'Right'};
     final extras = <int>[
@@ -598,43 +564,110 @@ class _GameScreenState extends State<GameScreen>
         if (!directions.contains(controls[i])) i,
     ];
 
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Text(
-            _mirrorGameLabel(game.id),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 32),
-          pad,
-          if (extras.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 32),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                for (var i = 0; i < extras.length; i++) ...<Widget>[
-                  if (i > 0) const SizedBox(width: 24),
-                  _padButton(game, extras[i]),
-                ],
-              ],
-            ),
-          ],
-        ],
+    return SafeArea(
+      minimum: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Three d-pad rows plus their gaps should fit without scrolling on
+          // a small phone, while larger screens get a comfortably large hit
+          // target. The clamp keeps every button well above the 48dp minimum.
+          final heightLimitedSize = (constraints.maxHeight - 58) / 3.35;
+          final widthLimitedSize = (constraints.maxWidth - 64) / 6.4;
+          final availableSize = heightLimitedSize < widthLimitedSize
+              ? heightLimitedSize
+              : widthLimitedSize;
+          final buttonSize = availableSize.clamp(64.0, 112.0);
+          final gap = (buttonSize * .12).clamp(8.0, 14.0);
+
+          Widget direction(int index) => index < 0
+              ? SizedBox.square(dimension: buttonSize)
+              : _padButton(game, index, size: buttonSize);
+
+          final hasFourDirections =
+              up >= 0 && down >= 0 && left >= 0 && right >= 0;
+          final Widget pad = hasFourDirections
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    direction(up),
+                    SizedBox(height: gap),
+                    Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                      direction(left),
+                      SizedBox(width: gap),
+                      SizedBox.square(dimension: buttonSize),
+                      SizedBox(width: gap),
+                      direction(right),
+                    ]),
+                    SizedBox(height: gap),
+                    direction(down),
+                  ],
+                )
+              : up >= 0 && down >= 0
+                  ? Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                      direction(up),
+                      SizedBox(height: gap),
+                      direction(down),
+                    ])
+                  : Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                      if (left >= 0) direction(left),
+                      if (left >= 0 && right >= 0) SizedBox(width: gap),
+                      if (right >= 0) direction(right),
+                    ]);
+
+          return Stack(
+            alignment: Alignment.topCenter,
+            children: <Widget>[
+              Text(
+                _mirrorGameLabel(game.id),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 34),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    Expanded(
+                        child:
+                            Align(alignment: Alignment.centerLeft, child: pad)),
+                    const SizedBox(width: 24),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          spacing: gap,
+                          runSpacing: gap,
+                          alignment: WrapAlignment.end,
+                          children: <Widget>[
+                            for (final index in extras)
+                              _padButton(game, index, size: buttonSize),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
   /// One gamepad button: tap down presses, tap up/cancel releases. The
   /// pressed visual follows the held state.
-  Widget _padButton(MirrorGame game, int controlIndex) {
+  Widget _padButton(
+    MirrorGame game,
+    int controlIndex, {
+    double size = 88,
+  }) {
     final pressed = controlIndex < _held.length && _held[controlIndex];
     final label = game.controls[controlIndex];
     final Widget child = switch (label) {
-      'Up' => const Icon(Icons.keyboard_arrow_up, size: 40),
-      'Down' => const Icon(Icons.keyboard_arrow_down, size: 40),
-      'Left' => const Icon(Icons.keyboard_arrow_left, size: 40),
-      'Right' => const Icon(Icons.keyboard_arrow_right, size: 40),
+      'Up' => Icon(Icons.keyboard_arrow_up, size: size * .52),
+      'Down' => Icon(Icons.keyboard_arrow_down, size: size * .52),
+      'Left' => Icon(Icons.keyboard_arrow_left, size: size * .52),
+      'Right' => Icon(Icons.keyboard_arrow_right, size: size * .52),
       _ => Text(
           label,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -651,9 +684,10 @@ class _GameScreenState extends State<GameScreen>
       onTapCancel: () => setState(() {
         if (controlIndex < _held.length) _held[controlIndex] = false;
       }),
-      child: Container(
-        width: 88,
-        height: 88,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 70),
+        width: size,
+        height: size,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -868,7 +902,8 @@ class _GamePainter extends CustomPainter {
     // Calibrated so 100% is what 50% meant before the slider was rebased:
     // the diffusion strength is half the slider value.
     final v = veneer / 200;
-    final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+    final src =
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
     final dst = Rect.fromLTWH(0, 0, canvasWidth * zoom, canvasHeight * zoom);
 
     if (!ledPixels || frame == null || zoom < 3) {
@@ -881,8 +916,8 @@ class _GamePainter extends CustomPainter {
         canvas.saveLayer(
           bounds,
           Paint()
-            ..imageFilter = ui.ImageFilter.blur(
-                sigmaX: zoom * 8 * v, sigmaY: zoom * 8 * v),
+            ..imageFilter =
+                ui.ImageFilter.blur(sigmaX: zoom * 8 * v, sigmaY: zoom * 8 * v),
         );
         canvas.drawImageRect(img, src, dst, paint);
         canvas.restore();
@@ -901,8 +936,7 @@ class _GamePainter extends CustomPainter {
     final half = zoom * 0.5;
     final paint = Paint()..isAntiAlias = true;
     if (v > 0) {
-      paint.maskFilter =
-          ui.MaskFilter.blur(ui.BlurStyle.normal, zoom * 2 * v);
+      paint.maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, zoom * 2 * v);
     }
 
     if (v > 0) {
@@ -929,8 +963,7 @@ class _GamePainter extends CustomPainter {
       Canvas canvas, ui.Image img, Rect bounds, double sigma, double opacity) {
     canvas.saveLayer(
       bounds,
-      Paint()
-        ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+      Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
     );
     canvas.drawImageRect(
       img,

@@ -252,7 +252,9 @@ class _Field extends StatelessWidget {
           // purpose from a font menu. A layout naming an exact cut still
           // shows it, via _Dropdown's handling of unlisted values.
           options: controller.engine.families
-              .where((f) => f.drawsText && f.name == 'display')
+              .where((f) =>
+                  f.drawsText &&
+                  (f.name == 'display' || f.name == 'display-thin'))
               .map((f) => f.name)
               .toList(growable: false),
           onChanged: (v) =>

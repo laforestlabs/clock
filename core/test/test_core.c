@@ -438,9 +438,13 @@ static void test_fonts(void)
     CHECK(ml_font_find("sans24") != NULL, "sans24 registered");
     CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
     CHECK(ml_font_find("display24") != NULL, "scalable display master registered");
-    CHECK(ml_font_count() == 24, "24 font cuts in the registry");
+    CHECK(ml_font_find("display-thin24") != NULL,
+          "scalable thin display master registered");
+    CHECK(ml_font_count() == 25, "25 font cuts in the registry");
     CHECK(ml_font_find("display24")->downscale,
           "the display master supports continuous downscaling");
+    CHECK(ml_font_find("display-thin24")->downscale,
+          "the thin display master supports continuous downscaling");
 
     /*
      * Families and smoothness. A layout naming a family gets the cut that
@@ -450,6 +454,7 @@ static void test_fonts(void)
      */
     CHECK(ml_font_is_family("sans"), "sans is a family");
     CHECK(ml_font_is_family("digits"), "digits is a family");
+    CHECK(ml_font_is_family("display-thin"), "display-thin is a family");
     CHECK(ml_font_is_family("wx"), "wx is a family");
     CHECK(!ml_font_is_family("pixel"), "the pixel families are gone");
     CHECK(!ml_font_is_family("sans9"), "a cut is not a family");
