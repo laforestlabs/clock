@@ -19,6 +19,10 @@ import 'game_screen.dart';
 import 'widget_list.dart';
 const double _wideBreakpoint = 900;
 
+/// Below this width the app bar folds the less-used actions into the overflow
+/// menu, so the actions row cannot overflow on a phone.
+const double _appBarBreakpoint = 600;
+
 class WorkspaceScreen extends StatefulWidget {
   const WorkspaceScreen({super.key, required this.engine});
 
@@ -136,9 +140,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
+  void _openGames() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => GameScreen(controller: _c, connection: _connection),
+      ),
+    );
+  }
+
   /// The BLE link state, always visible in the app bar. Tapping it (or the
   /// Mirror button) opens the Mirror screen for details and controls.
-  Widget _buildConnectionIndicator() {
+  Widget _buildConnectionIndicator({required bool compact}) {
     return ListenableBuilder(
       listenable: _connection,
       builder: (context, _) {
@@ -146,6 +158,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         final connection = _connection;
         switch (connection.status) {
           case MirrorConnectionStatus.connected:
+            if (compact) {
+              return IconButton(
+                tooltip: 'Connected to ${connection.deviceName}',
+                icon: Icon(Icons.bluetooth_connected,
+                    size: 18, color: theme.colorScheme.primary),
+                onPressed: _openMirror,
+              );
+            }
             return Tooltip(
               message: 'Connected to ${connection.deviceName}',
               child: TextButton.icon(
@@ -296,6 +316,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
+    final compact = MediaQuery.sizeOf(context).width < _appBarBreakpoint;
     return AppBar(
       titleSpacing: 12,
       title: Row(
@@ -314,30 +335,26 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         ],
       ),
       actions: <Widget>[
-        IconButton(
-          tooltip: 'Undo',
-          icon: const Icon(Icons.undo),
-          onPressed: _c.canUndo ? _c.undo : null,
-        ),
-        IconButton(
-          tooltip: 'Redo',
-          icon: const Icon(Icons.redo),
-          onPressed: _c.canRedo ? _c.redo : null,
-        ),
+        if (!compact) ...<Widget>[
+          IconButton(
+            tooltip: 'Undo',
+            icon: const Icon(Icons.undo),
+            onPressed: _c.canUndo ? _c.undo : null,
+          ),
+          IconButton(
+            tooltip: 'Redo',
+            icon: const Icon(Icons.redo),
+            onPressed: _c.canRedo ? _c.redo : null,
+          ),
+        ],
         AddWidgetButton(controller: _c),
-        IconButton(
-          tooltip: 'Games',
-          icon: const Icon(Icons.sports_esports),
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    GameScreen(controller: _c, connection: _connection),
-              ),
-            );
-          },
-        ),
-        _buildConnectionIndicator(),
+        if (!compact)
+          IconButton(
+            tooltip: 'Games',
+            icon: const Icon(Icons.sports_esports),
+            onPressed: _openGames,
+          ),
+        _buildConnectionIndicator(compact: compact),
         IconButton(
           tooltip: 'Mirror',
           icon: const Icon(Icons.bluetooth_searching),
@@ -360,6 +377,15 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               case 'saveAs':
                 _save(forceAs: true);
                 break;
+              case 'undo':
+                _c.undo();
+                break;
+              case 'redo':
+                _c.redo();
+                break;
+              case 'games':
+                _openGames();
+                break;
               default:
                 final match = _stock.where((s) => s.assetPath == choice);
                 if (match.isNotEmpty) _openStock(match.first);
@@ -377,6 +403,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                 value: s.assetPath,
                 child: Text('Stock: ${s.name}'),
               ),
+            if (compact) ...<PopupMenuEntry<String>>[
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(value: 'undo', child: Text('Undo')),
+              const PopupMenuItem<String>(value: 'redo', child: Text('Redo')),
+              const PopupMenuItem<String>(value: 'games', child: Text('Games')),
+            ],
           ],
         ),
       ],
