@@ -83,10 +83,15 @@ class _GameScreenState extends State<GameScreen>
   DesignerController get _c => widget.controller;
   MirrorConnection get _connection => widget.connection;
 
+  /// Whether the local simulation has reached its terminal state.
+  bool get _localGameOver => _engine?.isOver ?? false;
+
   // Controller mode: the mirror runs the game, this phone streams buttons.
   List<String>? _mirrorGameIds;
   int _mirrorGameIndex = 0;
   MirrorGame? _mirrorGame;
+  bool _mirrorGameOver = false;
+  StreamSubscription<String>? _gameOverSub;
   bool _mirrorUnsupported = false;
   bool _mirrorLoading = false;
   int _lastMirrorSendMs = 0;
@@ -124,6 +129,7 @@ class _GameScreenState extends State<GameScreen>
       DeviceOrientation.landscapeRight,
     ]));
     _connection.removeListener(_onConnectionChanged);
+    _gameOverSub?.cancel();
     if (_mirrorGame != null) {
       // Leaving the screen stops the mirror's game.
       unawaited(_connection.session?.stopGame());
@@ -151,7 +157,8 @@ class _GameScreenState extends State<GameScreen>
       _frame = null;
       _held = List<bool>.filled(game.controls.length, false);
     });
-    _ticker.start();
+    // Restarting (start over) runs while the ticker is already active.
+    if (!_ticker.isActive) _ticker.start();
     // Critical: reclaim focus after the Play button was tapped, so the Focus
     // wrapping the body gets keyboard events before the traversal system.
     _keyboardFocus.requestFocus();
@@ -183,7 +190,10 @@ class _GameScreenState extends State<GameScreen>
         _mirrorGameIds = null;
         _mirrorGame = null;
         _mirrorGameIndex = 0;
+        _mirrorGameOver = false;
         _mirrorUnsupported = false;
+        _gameOverSub?.cancel();
+        _gameOverSub = null;
         _ticker.stop();
       }
     });
@@ -222,11 +232,26 @@ class _GameScreenState extends State<GameScreen>
       if (!mounted) return;
       setState(() {
         _mirrorGame = g;
+        _mirrorGameOver = false;
         _held = List<bool>.filled(g.controls.length, false);
+      });
+      // The mirror pushes "game over <id>" once the game ends; swap the
+      // gamepad for a start-over screen when it arrives.
+      await _gameOverSub?.cancel();
+      _gameOverSub = session.statusLines.listen((line) {
+        if (parseGameOver(line) == null) return;
+        if (!mounted) return;
+        setState(() {
+          _mirrorGameOver = true;
+          for (var i = 0; i < _held.length; i++) {
+            _held[i] = false;
+          }
+        });
+        _ticker.stop();
       });
       // Ticker.start returns a TickerFuture; the tick's completion is
       // irrelevant here.
-      unawaited(_ticker.start());
+      if (!_ticker.isActive) unawaited(_ticker.start());
     } on BlePushException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -237,9 +262,21 @@ class _GameScreenState extends State<GameScreen>
 
   Future<void> _stopMirrorGame() async {
     final session = _connection.session;
+    await _gameOverSub?.cancel();
+    _gameOverSub = null;
     _ticker.stop();
-    setState(() => _mirrorGame = null);
+    setState(() {
+      _mirrorGame = null;
+      _mirrorGameOver = false;
+    });
     await session?.stopGame();
+  }
+
+  /// Start over on the mirror: the runner rejects a start while a session is
+  /// live ("game error busy"), so a restart stops the finished game first.
+  Future<void> _restartMirrorGame() async {
+    await _stopMirrorGame();
+    await _startMirrorGame();
   }
 
   /// Display name for a mirror game id: the local simulation's name when the
@@ -357,7 +394,7 @@ class _GameScreenState extends State<GameScreen>
                         (_mirrorGameIds?.isNotEmpty ?? false)
                     ? _startMirrorGame
                     : null)
-                : (_running ? null : _startGame),
+                : (_running && !_localGameOver ? null : _startGame),
           ),
           IconButton(
             icon: const Icon(Icons.stop),
@@ -400,6 +437,17 @@ class _GameScreenState extends State<GameScreen>
         runSpacing: 4,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
+          // The prominent start control: begins the selected game, and
+          // turns into a start-over once the running game is over.
+          FilledButton.icon(
+            onPressed: _running && !_localGameOver ? null : _startGame,
+            icon: Icon(_running && _localGameOver
+                ? Icons.replay
+                : Icons.play_arrow),
+            label: Text(_running && _localGameOver
+                ? 'Start Over'
+                : 'Start Game'),
+          ),
           // Disable controls while running so they cannot be interacted with
           // or gain focus. ExcludeFocus removes them from the tab order.
           ExcludeFocus(
@@ -514,16 +562,27 @@ class _GameScreenState extends State<GameScreen>
             if (ids == null || ids.isEmpty)
               const Text('Loading games...')
             else
-              DropdownButton<int>(
-                value: _mirrorGameIndex < ids.length ? _mirrorGameIndex : 0,
-                items: <DropdownMenuItem<int>>[
-                  for (var i = 0; i < ids.length; i++)
-                    DropdownMenuItem(
-                      value: i,
-                      child: Text(_mirrorGameLabel(ids[i])),
-                    ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  DropdownButton<int>(
+                    value: _mirrorGameIndex < ids.length ? _mirrorGameIndex : 0,
+                    items: <DropdownMenuItem<int>>[
+                      for (var i = 0; i < ids.length; i++)
+                        DropdownMenuItem(
+                          value: i,
+                          child: Text(_mirrorGameLabel(ids[i])),
+                        ),
+                    ],
+                    onChanged: (v) => setState(() => _mirrorGameIndex = v ?? 0),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: _startMirrorGame,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Start Game'),
+                  ),
                 ],
-                onChanged: (v) => setState(() => _mirrorGameIndex = v ?? 0),
               ),
             const SizedBox(height: 24),
             const Text(
@@ -535,6 +594,12 @@ class _GameScreenState extends State<GameScreen>
           ],
         ),
       );
+    }
+
+    // The mirror pushed "game over <id>": swap the gamepad for a banner
+    // with a start-over button.
+    if (_mirrorGameOver) {
+      return _gameOverBanner('Game Over', _restartMirrorGame);
     }
 
     return _buildGamepad(game);
@@ -713,7 +778,7 @@ class _GameScreenState extends State<GameScreen>
             Icon(Icons.sports_esports, size: 64, color: Colors.grey),
             SizedBox(height: 16),
             Text(
-              'Press Play or Space to start.\n'
+              'Pick a game above, then press Start Game (or Space).\n'
               'Arrow keys / WASD move or steer, Space fires.\n'
               'Touch the panel to move on a phone.',
               textAlign: TextAlign.center,
@@ -746,21 +811,28 @@ class _GameScreenState extends State<GameScreen>
           onPanEnd: (_) => _releaseAll(),
           onPanCancel: () => _releaseAll(),
           child: Center(
-            child: SizedBox(
-              width: w.toDouble(),
-              height: h.toDouble(),
-              child: CustomPaint(
-                isComplex: true,
-                painter: _GamePainter(
-                  image: _image,
-                  frame: _frame,
-                  zoom: zoom.toDouble(),
-                  ledPixels: _c.ledPixels,
-                  veneer: _c.veneer,
-                  canvasWidth: cw,
-                  canvasHeight: ch,
+            child: Stack(
+              alignment: Alignment.center,
+              children: <Widget>[
+                SizedBox(
+                  width: w.toDouble(),
+                  height: h.toDouble(),
+                  child: CustomPaint(
+                    isComplex: true,
+                    painter: _GamePainter(
+                      image: _image,
+                      frame: _frame,
+                      zoom: zoom.toDouble(),
+                      ledPixels: _c.ledPixels,
+                      veneer: _c.veneer,
+                      canvasWidth: cw,
+                      canvasHeight: ch,
+                    ),
+                  ),
                 ),
-              ),
+                if (_running && engine.isOver)
+                  _gameOverBanner('Game Over', _startGame),
+              ],
             ),
           ),
         );
@@ -806,6 +878,41 @@ class _GameScreenState extends State<GameScreen>
         _held[i] = false;
       }
     });
+  }
+
+  /// Centered banner for a finished game: a title and a start-over button.
+  /// Shown over the local simulation's frozen frame and in place of the
+  /// gamepad when the mirror reports the game over.
+  Widget _gameOverBanner(String title, VoidCallback onStartOver) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.primary, width: 2),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              title,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onStartOver,
+              icon: const Icon(Icons.replay),
+              label: const Text('Start Over'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// How touch on the panel maps to the running game's controls.

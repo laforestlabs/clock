@@ -133,6 +133,11 @@ class BleSession {
       StreamController<String>.broadcast();
   StreamSubscription<List<int>>? _notifySub;
 
+  /// Live status lines the mirror pushes (e.g. "game over <id>"). A
+  /// broadcast stream: command replies are consumed by the command methods,
+  /// and any number of listeners can watch for unsolicited lines.
+  Stream<String> get statusLines => _statusController.stream;
+
   // Serialization tail for with-response writes.
   Future<void> _writeTail = Future<void>.value();
 

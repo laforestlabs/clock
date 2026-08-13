@@ -2,7 +2,8 @@
  * game_tetris.c - the third game: falling blocks on any panel.
  *
  * The puzzle game, and the first whose controls are semantic rather than
- * spatial: Up rotates, Down hard-drops, Left/Right move. Same input surface
+ * spatial: Up rotates, Down soft-drops (hold to fall faster, one row per
+ * tick, re-armed by a fresh press per piece), Left/Right move. Same input surface
  * as snake (four direction buttons), different meaning, which is exactly the
  * contract's point: the controls are declared by the game, and the controller
  * client renders them as labels.
@@ -40,7 +41,8 @@ typedef struct {
     uint8_t  next_piece;
     uint16_t score;
     uint16_t lines;
-    uint8_t  pad[2];
+    uint8_t  held_d;           /* last Down held state, for press edges */
+    uint8_t  down_active;      /* soft drop engaged for the current piece */
     uint32_t board[TETRIS_BH]; /* 1 bit per cell, bw wide */
 } tetris_state;
 
@@ -112,6 +114,9 @@ static void tetris_lock(tetris_state *s, ml_game_ctx *ctx)
     s->px = (int16_t)((s->bw - 4) / 2);
     s->py = 0;
     s->fall_ctr = 0;
+    /* the soft drop stops at the lock; the piece only accelerates again
+     * after the player releases Down and holds it once more */
+    s->down_active = 0;
     if (tetris_collide(s, s->mask, s->px, s->py)) s->status = TETRIS_OVER;
 }
 
@@ -129,15 +134,6 @@ static void tetris_rotate(tetris_state *s)
             return;
         }
     }
-}
-
-static void tetris_drop(tetris_state *s, ml_game_ctx *ctx)
-{
-    while (!tetris_collide(s, s->mask, s->px, s->py + 1)) {
-        s->py++;
-        s->score += 2;
-    }
-    tetris_lock(s, ctx);
 }
 
 static void tetris_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
@@ -163,6 +159,8 @@ static void tetris_reset(void *state, ml_game_ctx *ctx)
     s->fall_ctr = 0;
     s->held_l = 0;
     s->held_r = 0;
+    s->held_d = 0;
+    s->down_active = 0;
     s->status = TETRIS_PLAYING;
     s->piece = (uint8_t)(ml_ctx_rng(ctx) % 7);
     s->next_piece = (uint8_t)(ml_ctx_rng(ctx) % 7);
@@ -173,14 +171,22 @@ static void tetris_reset(void *state, ml_game_ctx *ctx)
 
 static void tetris_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
 {
+    (void)ctx;
     tetris_state *s = state;
     if (s->status != TETRIS_PLAYING) return;
     switch (e->code) {
     case 0:  /* Up: rotate */
         if (e->value) tetris_rotate(s);
         break;
-    case 1:  /* Down: hard drop */
-        if (e->value) tetris_drop(s, ctx);
+    case 1:  /* Down: soft drop, re-armed by a release */
+        if (e->value) {
+            /* engage on the press edge only, so a piece held down from the
+             * previous lock never accelerates without a fresh press */
+            if (!s->held_d) s->down_active = 1;
+        } else {
+            s->down_active = 0;
+        }
+        s->held_d = e->value ? 1 : 0;
         break;
     case 2:  /* Left */
         s->held_l = e->value ? 1 : 0;
@@ -201,6 +207,15 @@ static void tetris_update(void *state, ml_game_ctx *ctx)
     /* held moves repeat every tick */
     if (s->held_l && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
     if (s->held_r && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+
+    /* soft drop: one row per tick while Down is engaged, so the piece falls
+     * at the panel's frame rate instead of dropping straight to the floor */
+    if (s->down_active) {
+        s->fall_ctr = 0;
+        if (!tetris_collide(s, s->mask, s->px, s->py + 1)) s->py++;
+        else tetris_lock(s, ctx);
+        return;
+    }
 
     /* gravity: 20 ticks per row at level 0, two fewer per level */
     int interval = 20 - s->level * 2;
@@ -270,12 +285,37 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
         }
     }
 
+    /* next piece preview in the right margin, when the panel has room */
+    if (s->ox + s->bw + 6 <= W) {
+        ml_rgb npc = tetris_piece_color(s->next_piece);
+        uint16_t nm = SHAPES[s->next_piece];
+        int py0 = s->oy + ((s->bh >= 4) ? (s->bh - 4) / 2 : 0);
+        for (int row = 0; row < 4; row++) {
+            for (int col = 0; col < 4; col++) {
+                if (!(nm & (1u << (row * 4 + col)))) continue;
+                int bx = s->ox + s->bw + 2 + col;
+                int by = py0 + row;
+                if (by >= 0 && by < H && bx >= 0 && bx < W)
+                    ml_canvas_set(c, bx, by, npc);
+            }
+        }
+    }
+
     /* score, in the current piece's colour so a new piece resets it */
     char buf[8];
     const ml_font *f = ml_font_find("digits10");
     if (!f) f = ml_font_default();
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, f, 1, 1, buf, pc, ML_SCALE_1X);
+
+    if (s->status == TETRIS_OVER) {
+        const ml_font *of = ml_font_find("sans10");
+        if (!of) of = ml_font_default();
+        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
+        int th = ml_text_height(of, ML_SCALE_1X);
+        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
+                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+    }
 }
 
 static bool tetris_snapshot(const void *state, uint8_t *buf, size_t cap, size_t *len)
@@ -290,6 +330,12 @@ static void tetris_restore(void *state, const uint8_t *buf, size_t len)
 {
     size_t n = len < sizeof(tetris_state) ? len : sizeof(tetris_state);
     memcpy(state, buf, n);
+}
+
+static bool tetris_is_over(const void *state)
+{
+    const tetris_state *s = state;
+    return s->status == TETRIS_OVER;
 }
 
 static const ml_control_def tetris_controls[] = {
@@ -315,4 +361,5 @@ const ml_game_vt ml_game_tetris = {
     .draw          = tetris_draw,
     .snapshot      = tetris_snapshot,
     .restore       = tetris_restore,
+    .is_over       = tetris_is_over,
 };

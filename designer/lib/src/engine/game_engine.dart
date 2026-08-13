@@ -128,6 +128,14 @@ class GameEngine {
     _b.gameStep(_handle, ms);
   }
 
+  /// Whether the game has reached its terminal state (game over, or the win
+  /// state where a game has one). Read after [step]; stays true until the
+  /// session is reopened.
+  bool get isOver {
+    _assertLive();
+    return _b.gameIsOver(_handle) != 0;
+  }
+
   // ------------------------------------------------------------- rendering
 
   /// Copies the current frame as RGBA8888. The native buffer is reused, so this

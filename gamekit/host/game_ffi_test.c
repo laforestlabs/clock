@@ -57,7 +57,7 @@ static uint32_t run_game(const char *id, uint32_t seed)
         ml_game_button(s, 1, 0, 1);  /* Up: rotate */
         for (int t = 0; t < 10; t++) ml_game_step(s, 33);
         ml_game_button(s, 1, 0, 0);
-        ml_game_button(s, 1, 1, 1);  /* Down: hard drop */
+        ml_game_button(s, 1, 1, 1);  /* Down: soft drop */
         for (int t = 0; t < 50; t++) ml_game_step(s, 33);
         ml_game_button(s, 1, 1, 0);
     } else if (!strcmp(id, "breakout")) {

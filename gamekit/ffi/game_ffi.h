@@ -83,6 +83,10 @@ ML_GAME_EXPORT void ml_game_button(ml_game_session *s,
 /* Advance the simulation by wall_ms of real time (fixed-timestep internally). */
 ML_GAME_EXPORT void ml_game_step(ml_game_session *s, uint32_t ms);
 
+/* Whether the game has reached its terminal state (game over, or the win
+ * state where a game has one). Read after ml_game_step. */
+ML_GAME_EXPORT int ml_game_is_over(const ml_game_session *s);
+
 /* ------------------------------------------------------------- rendering */
 
 /*

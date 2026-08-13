@@ -182,6 +182,12 @@ typedef struct ml_game_vt {
      * restore is its inverse, run by every peer on each snapshot. */
     bool (*snapshot)(const void *state, uint8_t *buf, size_t cap, size_t *len);
     void (*restore)(void *state, const uint8_t *buf, size_t len);
+
+    /* Optional: whether the game has reached its terminal state (game over,
+     * or the win state where a game has one). NULL when the game never ends
+     * (rally). A pure read of state; the host polls it after each update,
+     * and the firmware uses it to tell the controller the game ended. */
+    bool (*is_over)(const void *state);
 } ml_game_vt;
 
 #ifdef __cplusplus

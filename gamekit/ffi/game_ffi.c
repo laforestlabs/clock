@@ -165,6 +165,11 @@ void ml_game_step(ml_game_session *s, uint32_t ms)
     ml_host_step(s->host, ms);
 }
 
+int ml_game_is_over(const ml_game_session *s)
+{
+    return s ? (ml_host_is_over(s->host) ? 1 : 0) : 0;
+}
+
 const uint8_t *ml_game_render_rgba(ml_game_session *s)
 {
     if (!s) return NULL;

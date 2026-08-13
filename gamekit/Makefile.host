@@ -37,7 +37,7 @@ CLI     := $(BUILD)/game-cli
 
 # Host tests, compiled against the FFI layer like Dart binds to it. Run with:
 #   make -f Makefile.host check
-TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test
+TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_input_test
 
 .PHONY: all clean cli core check
 

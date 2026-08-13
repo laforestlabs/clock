@@ -5,6 +5,7 @@
 //   game list          -> "games <id>[,<id>...]" (empty list: "games")
 //   game start <id>    -> "game ok <id> <label>..." | "game error <why>"
 //   game stop          -> "game stopped" | "game error no game"
+//   game over <id>     -> pushed when the running game reaches its end
 //
 // Gamepad input rides a separate characteristic (gameInUuid in
 // mirror_ble.dart), one write per frame carrying the full held state,
@@ -46,6 +47,16 @@ MirrorGame? parseGameOk(String line) {
   final parts = line.split(' ');
   if (parts.length < 3 || parts[0] != 'game' || parts[1] != 'ok') return null;
   return MirrorGame(parts[2], parts.sublist(3));
+}
+
+/// Parses a `game over <id>` status line into the game's id. Returns null
+/// for anything else, so unrelated status lines never trip the gamepad.
+String? parseGameOver(String line) {
+  final parts = line.split(' ');
+  if (parts.length != 3 || parts[0] != 'game' || parts[1] != 'over') {
+    return null;
+  }
+  return parts[2];
 }
 
 /// Encodes the full held state as one game_in packet: [held][i] is whether

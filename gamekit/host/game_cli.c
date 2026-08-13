@@ -90,7 +90,7 @@ static const step TETRIS_DEMO[] = {
     { 4,  1, 3, 1 }, { 5,  1, 3, 0 },   /* right */
     { 24, 1, 0, 1 }, { 25, 1, 0, 0 },   /* rotate */
     { 44, 1, 2, 1 }, { 45, 1, 2, 0 },   /* left */
-    { 64, 1, 1, 1 }, { 65, 1, 1, 0 },   /* hard drop */
+    { 64, 1, 1, 1 }, { 65, 1, 1, 0 },   /* soft drop */
 };
 #define TETRIS_DEMO_LEN ((int)(sizeof(TETRIS_DEMO) / sizeof(TETRIS_DEMO[0])))
 

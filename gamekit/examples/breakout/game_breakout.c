@@ -250,7 +250,15 @@ static void breakout_draw(const void *state, const ml_view *view, ml_canvas *c,
     ml_text_draw(c, f, 1, 1, buf, ML_RGB(0, 180, 255), ML_SCALE_1X);
     for (int i = 0; i < s->lives; i++)
         ml_canvas_set(c, 1 + i, H - 1, ML_RGB(220, 220, 220));
-    (void)W;
+
+    if (s->status == BREAKOUT_OVER) {
+        const ml_font *of = ml_font_find("sans10");
+        if (!of) of = ml_font_default();
+        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
+        int th = ml_text_height(of, ML_SCALE_1X);
+        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
+                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+    }
 }
 
 static bool breakout_snapshot(const void *state, uint8_t *buf, size_t cap, size_t *len)
@@ -265,6 +273,12 @@ static void breakout_restore(void *state, const uint8_t *buf, size_t len)
 {
     size_t n = len < sizeof(breakout_state) ? len : sizeof(breakout_state);
     memcpy(state, buf, n);
+}
+
+static bool breakout_is_over(const void *state)
+{
+    const breakout_state *s = state;
+    return s->status == BREAKOUT_OVER;
 }
 
 const ml_game_vt ml_game_breakout = {
@@ -283,4 +297,5 @@ const ml_game_vt ml_game_breakout = {
     .draw          = breakout_draw,
     .snapshot      = breakout_snapshot,
     .restore       = breakout_restore,
+    .is_over       = breakout_is_over,
 };

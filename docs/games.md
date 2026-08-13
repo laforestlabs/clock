@@ -85,6 +85,7 @@ const ml_game_vt ml_game_rally = {
     .draw   = rally_draw,
     .snapshot = rally_snapshot,
     .restore  = rally_restore,
+    .is_over  = NULL,          /* rally never ends */
 };
 ```
 
@@ -100,6 +101,11 @@ The callbacks split cleanly along the determinism rule:
 | `draw` | state, view, canvas, ctx | canvas | each frame, every peer | pure |
 | `snapshot` | state | byte buffer | host, periodically | canonical, compact |
 | `restore` | byte buffer | state | peer, on packet | inverse of snapshot |
+| `is_over` | state | bool | host, after each update | optional; pure read; NULL when the game never ends |
+
+A game that can end implements `is_over`; the host polls it after each update so
+the firmware can tell the controller the game ended (the app swaps its gamepad
+for a start-over button, and the game draws its own "GAME OVER" text).
 
 `update` runs on exactly one machine per session: the authoritative host. `draw`
 runs everywhere: on the host (which is also a display) and on every peer. Peers

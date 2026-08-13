@@ -31,6 +31,9 @@ typedef _PtrToIntD = int Function(_VoidPtr);
 typedef _PtrToUint8C = Pointer<Uint8> Function(_VoidPtr);
 typedef _PtrToUint8D = Pointer<Uint8> Function(_VoidPtr);
 
+typedef _PtrToBoolC = Uint8 Function(_VoidPtr);
+typedef _PtrToBoolD = int Function(_VoidPtr);
+
 typedef _ButtonC = Void Function(_VoidPtr, Uint16, Uint16, Int16);
 typedef _ButtonD = void Function(_VoidPtr, int, int, int);
 
@@ -83,6 +86,8 @@ class GameBindings {
             lib.lookupFunction<_ButtonC, _ButtonD>('ml_game_button'),
         gameStep =
             lib.lookupFunction<_StepC, _StepD>('ml_game_step'),
+        gameIsOver =
+            lib.lookupFunction<_PtrToBoolC, _PtrToBoolD>('ml_game_is_over'),
         gameRenderRgba =
             lib.lookupFunction<_PtrToUint8C, _PtrToUint8D>('ml_game_render_rgba'),
         gameRgbaSize =
@@ -101,6 +106,7 @@ class GameBindings {
   final int Function(_VoidPtr) gameTick;
   final void Function(_VoidPtr, int, int, int) gameButton;
   final void Function(_VoidPtr, int) gameStep;
+  final int Function(_VoidPtr) gameIsOver;
   final Pointer<Uint8> Function(_VoidPtr) gameRenderRgba;
   final int Function(_VoidPtr) gameRgbaSize;
 

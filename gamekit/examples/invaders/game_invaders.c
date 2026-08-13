@@ -260,7 +260,15 @@ static void invaders_draw(const void *state, const ml_view *view, ml_canvas *c,
     if (!f) f = ml_font_default();
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, f, 1, 1, buf, pad, ML_SCALE_1X);
-    (void)W;
+
+    if (s->status == INV_OVER) {
+        const ml_font *of = ml_font_find("sans10");
+        if (!of) of = ml_font_default();
+        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
+        int th = ml_text_height(of, ML_SCALE_1X);
+        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
+                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+    }
 }
 
 static bool invaders_snapshot(const void *state, uint8_t *buf, size_t cap, size_t *len)
@@ -275,6 +283,12 @@ static void invaders_restore(void *state, const uint8_t *buf, size_t len)
 {
     size_t n = len < sizeof(invaders_state) ? len : sizeof(invaders_state);
     memcpy(state, buf, n);
+}
+
+static bool invaders_is_over(const void *state)
+{
+    const invaders_state *s = state;
+    return s->status == INV_OVER;
 }
 
 const ml_game_vt ml_game_invaders = {
@@ -293,4 +307,5 @@ const ml_game_vt ml_game_invaders = {
     .draw          = invaders_draw,
     .snapshot      = invaders_snapshot,
     .restore       = invaders_restore,
+    .is_over       = invaders_is_over,
 };

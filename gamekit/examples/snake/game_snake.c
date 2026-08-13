@@ -240,8 +240,16 @@ static void snake_draw(const void *state, const ml_view *view, ml_canvas *c,
         const ml_font *wf = ml_font_find("sans10");
         if (!wf) wf = ml_font_default();
         int tw = ml_text_width(wf, "WIN", ML_SCALE_1X);
-        ml_text_draw(c, wf, (W - tw) / 2, (H - ML_SCALE_1X) / 2, "WIN",
+        int th = ml_text_height(wf, ML_SCALE_1X);
+        ml_text_draw(c, wf, (W - tw) / 2, (H - th) / 2, "WIN",
                      ML_RGB(255, 220, 60), ML_SCALE_1X);
+    } else if (s->status == SNAKE_DEAD) {
+        const ml_font *of = ml_font_find("sans10");
+        if (!of) of = ml_font_default();
+        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
+        int th = ml_text_height(of, ML_SCALE_1X);
+        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
+                     ML_RGB(255, 60, 60), ML_SCALE_1X);
     }
 }
 
@@ -257,6 +265,13 @@ static void snake_restore(void *state, const uint8_t *buf, size_t len)
 {
     size_t n = len < sizeof(snake_state) ? len : sizeof(snake_state);
     memcpy(state, buf, n);
+}
+
+static bool snake_is_over(const void *state)
+{
+    const snake_state *s = state;
+    /* both the death and the board-filled win end the game */
+    return s->status != SNAKE_PLAYING;
 }
 
 const ml_game_vt ml_game_snake = {
@@ -275,4 +290,5 @@ const ml_game_vt ml_game_snake = {
     .draw          = snake_draw,
     .snapshot      = snake_snapshot,
     .restore       = snake_restore,
+    .is_over       = snake_is_over,
 };

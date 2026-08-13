@@ -59,6 +59,25 @@ void main() {
     });
   });
 
+  group('parseGameOver', () {
+    test('parses a game over line', () {
+      expect(parseGameOver('game over tetris'), 'tetris');
+    });
+
+    test('parses any game id', () {
+      expect(parseGameOver('game over invaders'), 'invaders');
+    });
+
+    test('rejects truncated, error and unrelated lines', () {
+      expect(parseGameOver('game over'), isNull);
+      expect(parseGameOver('game error unknown game'), isNull);
+      expect(parseGameOver('game ok snake Up Down Left Right'), isNull);
+      expect(parseGameOver('game stopped'), isNull);
+      expect(parseGameOver('unknown command'), isNull);
+      expect(parseGameOver(''), isNull);
+    });
+  });
+
   group('encodeGameInput', () {
     void expectBytes(List<bool> held, List<int> expected) {
       expect(encodeGameInput(held), Uint8List.fromList(expected));

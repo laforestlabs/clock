@@ -10,6 +10,10 @@
  * Input contract (from the phone, per the wire protocol in ble.c): one
  * packet per frame carrying the full held state, one event per control in
  * code order. The runtime stamps the host tick; player_id is 1.
+ *
+ * When the game reaches its terminal state (its is_over callback turns
+ * true), the runner pushes one "game over <id>" status line so the phone
+ * can swap its gamepad for a start-over button.
  */
 #include "games/game_runner.h"
 
@@ -53,6 +57,8 @@ static SemaphoreHandle_t s_mutex;   /* guards s_active for other tasks */
 static ml_host_session *s_session;
 static bool             s_active;
 static uint64_t         s_last_us;
+static char             s_game_id[24];   /* id of the running game */
+static bool             s_over_sent;     /* "game over" already pushed */
 
 /* -------------------------------------------------------------- init */
 
@@ -158,6 +164,8 @@ bool game_runner_service(void)
             s_session = h;
             s_active = true;
             s_last_us = esp_timer_get_time();
+            snprintf(s_game_id, sizeof(s_game_id), "%s", item.id);
+            s_over_sent = false;
 
             /* "game ok <id> <label>..." with the control labels in code
              * order, space-separated; the phone builds its gamepad from
@@ -181,6 +189,8 @@ bool game_runner_service(void)
             ml_host_destroy(s_session);
             s_session = NULL;
             s_active = false;
+            s_game_id[0] = '\0';
+            s_over_sent = false;
             ble_send_status_line("game stopped");
         }
     }
@@ -208,5 +218,14 @@ void game_runner_render(ml_canvas *out)
     if (dt_ms > 100) dt_ms = 100;
 
     ml_host_step(s_session, dt_ms);
+    /* Tell the phone the game reached its end, once per session. The poll is
+     * a pure read of game state; the line rides the same status notification
+     * as every other reply, so the app sees it without polling. */
+    if (!s_over_sent && ml_host_is_over(s_session)) {
+        s_over_sent = true;
+        char line[64];
+        snprintf(line, sizeof(line), "game over %s", s_game_id);
+        ble_send_status_line(line);
+    }
     ml_host_render(s_session, out);
 }
