@@ -296,8 +296,6 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             appBar: _buildAppBar(),
             body: Column(
               children: <Widget>[
-                _ViewToolbar(controller: _c),
-                const Divider(height: 1),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) =>
@@ -348,12 +346,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           ),
         ],
         AddWidgetButton(controller: _c),
-        if (!compact)
-          IconButton(
-            tooltip: 'Games',
-            icon: const Icon(Icons.sports_esports),
-            onPressed: _openGames,
-          ),
+        IconButton(
+          tooltip: 'Games',
+          icon: const Icon(Icons.sports_esports),
+          onPressed: _openGames,
+        ),
         _buildConnectionIndicator(compact: compact),
         IconButton(
           tooltip: 'Mirror',
@@ -383,9 +380,6 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               case 'redo':
                 _c.redo();
                 break;
-              case 'games':
-                _openGames();
-                break;
               default:
                 final match = _stock.where((s) => s.assetPath == choice);
                 if (match.isNotEmpty) _openStock(match.first);
@@ -407,7 +401,6 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               const PopupMenuDivider(),
               const PopupMenuItem<String>(value: 'undo', child: Text('Undo')),
               const PopupMenuItem<String>(value: 'redo', child: Text('Redo')),
-              const PopupMenuItem<String>(value: 'games', child: Text('Games')),
             ],
           ],
         ),
@@ -478,137 +471,6 @@ class _CanvasArea extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: PanelView(controller: controller),
-      ),
-    );
-  }
-}
-
-/// Preview controls. None of these change the layout; they change how it is
-/// being looked at. The exception is brightness, which is a real device
-/// setting and is applied by the engine.
-class _ViewToolbar extends StatelessWidget {
-  const _ViewToolbar({required this.controller});
-
-  final DesignerController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          children: <Widget>[
-            Text('Data', style: theme.textTheme.bodySmall),
-            const SizedBox(width: 8),
-            SegmentedButton<int>(
-              showSelectedIcon: false,
-              style: const ButtonStyle(visualDensity: VisualDensity.compact),
-              segments: <ButtonSegment<int>>[
-                for (var i = 0; i < controller.engine.variants.length; i++)
-                  ButtonSegment<int>(
-                    value: i,
-                    label: Text(
-                      controller.engine.variants[i],
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ),
-              ],
-              selected: <int>{controller.variant},
-              onSelectionChanged: (s) => controller.setVariant(s.first),
-            ),
-            const SizedBox(width: 12),
-            Text('Clock', style: theme.textTheme.bodySmall),
-            const SizedBox(width: 8),
-            SegmentedButton<bool>(
-              showSelectedIcon: false,
-              style: const ButtonStyle(visualDensity: VisualDensity.compact),
-              segments: const <ButtonSegment<bool>>[
-                ButtonSegment<bool>(
-                    value: true, label: Text('12h', style: TextStyle(fontSize: 11))),
-                ButtonSegment<bool>(
-                    value: false, label: Text('24h', style: TextStyle(fontSize: 11))),
-              ],
-              selected: <bool>{controller.clock12h},
-              onSelectionChanged: (s) => controller.setClock12h(s.first),
-            ),
-            const SizedBox(width: 12),
-            Text('Temp', style: theme.textTheme.bodySmall),
-            const SizedBox(width: 8),
-            SegmentedButton<bool>(
-              showSelectedIcon: false,
-              style: const ButtonStyle(visualDensity: VisualDensity.compact),
-              segments: const <ButtonSegment<bool>>[
-                ButtonSegment<bool>(
-                    value: true, label: Text('\u00b0F', style: TextStyle(fontSize: 11))),
-                ButtonSegment<bool>(
-                    value: false, label: Text('\u00b0C', style: TextStyle(fontSize: 11))),
-              ],
-              selected: <bool>{controller.tempF},
-              onSelectionChanged: (s) => controller.setTempF(s.first),
-            ),
-            const SizedBox(width: 20),
-
-            IconButton(
-              tooltip: 'Zoom out',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.zoom_out),
-              onPressed: () => controller.zoom = controller.zoom - 1,
-            ),
-            Text('${controller.zoom.toInt()}x',
-                style: theme.textTheme.bodySmall),
-            IconButton(
-              tooltip: 'Zoom in',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.zoom_in),
-              onPressed: () => controller.zoom = controller.zoom + 1,
-            ),
-            IconButton(
-              tooltip: 'Fit to window',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.fit_screen),
-              // Greyed out while the zoom is already following the window,
-              // which doubles as the indicator for which mode is active.
-              onPressed:
-                  controller.zoomFitsWindow ? null : controller.fitToWindow,
-            ),
-
-            const SizedBox(width: 12),
-            IconButton(
-              tooltip: 'Show discrete LED pixels',
-              visualDensity: VisualDensity.compact,
-              isSelected: controller.ledPixels,
-              icon: const Icon(Icons.grid_on_outlined),
-              selectedIcon: const Icon(Icons.grid_on),
-              onPressed: () => controller.ledPixels = !controller.ledPixels,
-            ),
-
-            const SizedBox(width: 12),
-            Tooltip(
-              message: 'Simulates diffusion through a wood veneer face.\n'
-                  'Thicker veneer spreads each pixel\'s light into the gaps.',
-              child: Row(
-                children: <Widget>[
-                  const Icon(Icons.blur_on, size: 18),
-                  const SizedBox(width: 4),
-                  Text('Veneer ${controller.veneer.toInt()}%',
-                      style: theme.textTheme.bodySmall),
-                  SizedBox(
-                    width: 130,
-                    child: Slider(
-                      value: controller.veneer,
-                      min: 0,
-                      max: 100,
-                      onChanged: (v) => controller.veneer = v,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

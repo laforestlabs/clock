@@ -151,10 +151,6 @@ smoothing turns a 5x7 glyph into grey mush.
 | Save | Ctrl+S |
 | Reorder paint order | Drag the handle in the widget list |
 
-The **Data** selector switches between mock fixtures. Check `cold` before
-calling a layout done: that is a freshly booted mirror with no network yet, and
-it is where placeholder text either fits or wrecks your spacing.
-
 The **Veneer** slider spreads each pixel's light into the gaps around it, the
 way a wood veneer face over the matrix diffuses the emitters. Check small text
 against the veneer thickness you plan to use: a stroke that reads as a
