@@ -48,6 +48,16 @@ esp_err_t http_get(const char *url, const char *bearer,
     const int64_t content_length = esp_http_client_fetch_headers(client);
     const int status = esp_http_client_get_status_code(client);
 
+    /* No status line at all means the transport gave up before the server
+     * answered: a connectivity problem, not a service one. Report it as
+     * ESP_ERR_HTTP_CONNECT so the scheduler retries promptly instead of
+     * backing off as though the API had rejected us. */
+    if (status < 100) {
+        ESP_LOGW(TAG, "no HTTP response (status %d)", status);
+        err = ESP_ERR_HTTP_CONNECT;
+        goto done;
+    }
+
     if (status < 200 || status > 299) {
         /* Worth naming the common ones: guessing at a bare 401 wastes time. */
         const char *hint = (status == 401 || status == 403)

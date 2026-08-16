@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -30,14 +31,30 @@ static int            s_count;
 static volatile bool  s_force_refresh;
 
 /*
+ * A connectivity failure means the request never reached the service: the
+ * WiFi link is down, DNS did not resolve, or the connect/TLS handshake timed
+ * out. There is no service to be polite to, so these retry at the healthy
+ * cadence and catch recovery promptly instead of escalating. Only failures
+ * where the service answered (non-2xx, bad payloads, rate limits) back off.
+ */
+static bool is_connectivity_error(esp_err_t err)
+{
+    return err == ESP_ERR_HTTP_CONNECT;
+}
+
+/*
  * Back off after failures, capped.
  *
  * Without this a provider whose service is down retries at its normal
  * interval forever, which is rude to the API and, on a rate-limited one,
  * self-defeating: the 429s keep the backoff from ever clearing.
  */
-static int64_t backoff_us(const ml_provider *def, int failures)
+static int64_t backoff_us(const ml_provider *def, int failures, esp_err_t err)
 {
+    if (is_connectivity_error(err)) {
+        return (int64_t)def->interval_s * 1000000;
+    }
+
     /*
      * Never retry sooner than the provider polls when it is healthy. Clamping
      * flat to an hour did exactly that: the configurable range runs to six
@@ -129,7 +146,7 @@ static void provider_task(void *arg)
                          def->name, (long long)took_ms, def->interval_s);
             } else {
                 st->failures++;
-                const int64_t wait = backoff_us(def, st->failures);
+                const int64_t wait = backoff_us(def, st->failures, err);
                 st->next_due_us = esp_timer_get_time() + wait;
                 ESP_LOGW(TAG, "%s: failed (%s), attempt %d, retry in %llds",
                          def->name, esp_err_to_name(err), st->failures,

@@ -251,9 +251,12 @@ were current is worse than one showing `--`, because you cannot tell by looking
 that it is wrong, and you dress for the wrong weather. Stale data has to
 announce itself.
 
-Failures back off exponentially, capped at an hour. When the link returns the
-backoff is cleared immediately, since an outage's failures are the network's
-fault and the penalty should not outlive it.
+Failures that reach the service (rate limits, bad payloads, 5xx) back off
+exponentially, capped at an hour. Failures where the connection never
+established (WiFi down, DNS failure, connect/TLS timeout) retry at the normal
+interval instead: they never reached the service, so there is nothing to be
+polite to, and the healthy cadence catches recovery fastest. When the WiFi
+association drops and returns, the backoff is cleared immediately.
 
 ### Threading
 
