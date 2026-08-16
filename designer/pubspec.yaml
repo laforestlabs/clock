@@ -30,6 +30,9 @@ dependencies:
   # is explicitly documented as not parseable, and getting it wrong sends the
   # app down the Android-11 permission path on Android 14.
   device_info_plus: ^13.2.0
+  # Phone accelerometer for motion controls (Android only; the BLE controller
+  # path is the only place motion is reachable).
+  sensors_plus: ^6.1.0
 
 dev_dependencies:
   flutter_test:

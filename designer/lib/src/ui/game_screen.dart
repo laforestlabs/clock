@@ -20,15 +20,20 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 
 import '../controller.dart';
 import '../engine/game_engine.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_ble_game.dart';
 import '../services/mirror_connection.dart';
+import '../services/motion_control.dart';
 
 /// How a touch on the panel maps to the running game's controls.
 enum _TouchMode { vertical, horizontal, compass }
+
+/// How the mirror game is controlled: the on-screen gamepad or phone tilt.
+enum _InputMode { manual, motion }
 
 /// A game running on a simulated panel.
 class GameScreen extends StatefulWidget {
@@ -96,6 +101,9 @@ class _GameScreenState extends State<GameScreen>
   bool _mirrorLoading = false;
   int _lastMirrorSendMs = 0;
 
+  _InputMode _inputMode = _InputMode.manual;
+  StreamSubscription<AccelerometerEvent>? _motionSub;
+
   /// Whether this screen is a gamepad for a connected mirror.
   bool get _isControllerMode => _connection.session != null;
 
@@ -134,6 +142,7 @@ class _GameScreenState extends State<GameScreen>
       // Leaving the screen stops the mirror's game.
       unawaited(_connection.session?.stopGame());
     }
+    _stopMotion();
     _ticker.stop();
     _keyboardFocus.dispose();
     _engine?.dispose();
@@ -194,6 +203,7 @@ class _GameScreenState extends State<GameScreen>
         _mirrorUnsupported = false;
         _gameOverSub?.cancel();
         _gameOverSub = null;
+        _stopMotion();
         _ticker.stop();
       }
     });
@@ -235,6 +245,7 @@ class _GameScreenState extends State<GameScreen>
         _mirrorGameOver = false;
         _held = List<bool>.filled(g.controls.length, false);
       });
+      if (_inputMode == _InputMode.motion) _startMotion();
       // The mirror pushes "game over <id>" once the game ends; swap the
       // gamepad for a start-over screen when it arrives.
       await _gameOverSub?.cancel();
@@ -248,6 +259,7 @@ class _GameScreenState extends State<GameScreen>
           }
         });
         _ticker.stop();
+        _stopMotion();
       });
       // Ticker.start returns a TickerFuture; the tick's completion is
       // irrelevant here.
@@ -269,7 +281,60 @@ class _GameScreenState extends State<GameScreen>
       _mirrorGame = null;
       _mirrorGameOver = false;
     });
+    _stopMotion();
     await session?.stopGame();
+  }
+
+  void _startMotion() {
+    _stopMotion();
+    final motion = MotionControl();
+    _motionSub = accelerometerEventStream().listen(
+      (e) {
+        motion.addSample(e.x, e.y, e.z);
+        if (!motion.calibrated) return;
+        if (_mirrorGame == null) return;
+        // Directions are not rendered in motion mode, so update the held list
+        // in place without setState; the ticker reads the same list reference
+        // and streams it every 30 ms.
+        _setMirrorHeld('Up', motion.up);
+        _setMirrorHeld('Down', motion.down);
+        _setMirrorHeld('Left', motion.left);
+        _setMirrorHeld('Right', motion.right);
+      },
+      onError: (Object e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('Accelerometer unavailable; using manual controls')),
+        );
+        setState(() {
+          _inputMode = _InputMode.manual;
+          for (var i = 0; i < _held.length; i++) {
+            _held[i] = false;
+          }
+        });
+        _stopMotion();
+      },
+    );
+  }
+
+  void _stopMotion() {
+    _motionSub?.cancel();
+    _motionSub = null;
+  }
+
+  /// Set the held state of the mirror game's control labelled [label].
+  /// Unlike _setHeld, this reads _mirrorGame.controls, not the local game.
+  void _setMirrorHeld(String label, bool value) {
+    final g = _mirrorGame;
+    if (g == null) return;
+    for (var i = 0; i < g.controls.length && i < _held.length; i++) {
+      if (g.controls[i] == label) {
+        _held[i] = value;
+        return;
+      }
+    }
   }
 
   /// Start over on the mirror: the runner rejects a start while a session is
@@ -577,6 +642,20 @@ class _GameScreenState extends State<GameScreen>
                     onChanged: (v) => setState(() => _mirrorGameIndex = v ?? 0),
                   ),
                   const SizedBox(height: 20),
+                  RadioGroup<_InputMode>(
+                    groupValue: _inputMode,
+                    onChanged: (v) =>
+                        setState(() => _inputMode = v ?? _InputMode.manual),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Radio<_InputMode>(value: _InputMode.manual),
+                        Text('Manual controls'),
+                        Radio<_InputMode>(value: _InputMode.motion),
+                        Text('Motion controls'),
+                      ],
+                    ),
+                  ),
                   FilledButton.icon(
                     onPressed: _startMirrorGame,
                     icon: const Icon(Icons.play_arrow),
@@ -602,7 +681,9 @@ class _GameScreenState extends State<GameScreen>
       return _gameOverBanner('Game Over', _restartMirrorGame);
     }
 
-    return _buildGamepad(game);
+    return _inputMode == _InputMode.motion
+        ? _buildMotionGamepad(game)
+        : _buildGamepad(game);
   }
 
   /// A landscape gamepad with movement under the left thumb and action
@@ -715,6 +796,42 @@ class _GameScreenState extends State<GameScreen>
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Motion mode: no d-pad; tilt drives the four directions and any
+  /// non-directional controls (e.g. invaders' Shoot) remain tappable.
+  Widget _buildMotionGamepad(MirrorGame game) {
+    const directions = <String>{'Up', 'Down', 'Left', 'Right'};
+    final extras = <int>[
+      for (var i = 0; i < game.controls.length; i++)
+        if (!directions.contains(game.controls[i])) i,
+    ];
+    return SafeArea(
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(_mirrorGameLabel(game.id),
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            const Text(
+              'Tilt the phone to steer',
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+            ),
+            if (extras.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 24),
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: <Widget>[
+                  for (final i in extras) _padButton(game, i, size: 88),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

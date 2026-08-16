@@ -25,6 +25,22 @@ flutter run -d linux
 flutter devices && flutter run -d <device-id>
 ```
 
+### Phone installs: rebuild the APK explicitly
+
+`flutter install -d <device-id>` can reuse a previously built
+`build/app/outputs/flutter-apk/app-debug.apk` without recompiling Dart, so a
+phone ends up running stale code. This happened 2026-08-16: a three-day-old
+APK was installed and the new motion controls looked missing. Rebuild
+explicitly, then install the fresh APK:
+
+```sh
+flutter build apk --debug
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+A stale build succeeds with no error, so there is no other signal. If in
+doubt, check the APK timestamp postdates the last edit.
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To
