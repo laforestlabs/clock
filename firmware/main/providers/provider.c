@@ -7,16 +7,12 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "net/sntp_time.h"
 #include "net/wifi.h"
 
 static const char *TAG = "provider";
 
 #define MAX_PROVIDERS 6
 #define TICK_MS       1000
-/* While the clock is unsynced, re-check every few seconds instead of sitting
- * out a full backoff: the sync usually lands seconds after the link does. */
-#define CLOCK_GATE_RETRY_US (5 * 1000000)
 
 typedef struct {
     const ml_provider *def;
@@ -117,17 +113,6 @@ static void provider_task(void *arg)
 
             if (!online) continue;
             if (now < st->next_due_us) continue;
-
-            /*
-             * A TLS provider's certificate validation needs the real time;
-             * while the clock is at 1970 every fetch fails the handshake.
-             * The first fetch of a boot races the SNTP sync, so wait for it
-             * with a short retry rather than burning a full backoff.
-             */
-            if (!sntp_time_is_synced()) {
-                st->next_due_us = now + CLOCK_GATE_RETRY_US;
-                continue;
-            }
 
             const int64_t started = esp_timer_get_time();
             const esp_err_t err = def->refresh();

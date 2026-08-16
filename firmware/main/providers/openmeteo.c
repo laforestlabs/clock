@@ -66,8 +66,12 @@ static bool daily_first(const ml_json *j, int daily, const char *key, double *ou
 static esp_err_t openmeteo_refresh(void)
 {
     char url[512];
+    /* Plain HTTP, deliberately: with no TLS certificate to validate there is
+     * no dependency on the clock, so weather arrives in parallel with SNTP
+     * rather than after it. The request and the coordinates are cleartext;
+     * that is the accepted trade. */
     snprintf(url, sizeof(url),
-             "https://api.open-meteo.com/v1/forecast"
+             "http://api.open-meteo.com/v1/forecast"
              "?latitude=%s&longitude=%s"
              "&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
              "weather_code,is_day,wind_speed_10m"

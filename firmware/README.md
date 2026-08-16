@@ -228,17 +228,19 @@ Notes:
 
 ## Data providers
 
-Weather comes from **Open-Meteo**, fetched directly by the device over HTTPS.
-No API key and no signup, which matters more than convenience: the mirror has
-no weather credential to expire, leak, or re-provision.
+Weather comes from **Open-Meteo**, fetched directly by the device over plain
+HTTP. No API key and no signup, which matters more than convenience: the mirror
+has no weather credential to expire, leak, or re-provision.
+
+HTTP is a deliberate choice. With no TLS certificate to validate there is no
+dependency on the clock, so weather can arrive in parallel with SNTP instead of
+waiting for it, and the TLS handshake is skipped. The cost is that the request
+(including the configured coordinates) is sent in cleartext and could be
+tampered with on the network path.
 
 Set your coordinates in `Smart Mirror > Weather`. The default is central
 London, so it will show you plausible-looking weather for the wrong place if
 you forget.
-
-Certificate verification uses ESP-IDF's bundled root store rather than a pinned
-certificate. Pinning would turn a provider's routine cert rotation into a
-mirror that silently stops updating.
 
 ### Staleness is deliberate
 
