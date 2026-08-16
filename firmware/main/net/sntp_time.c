@@ -4,11 +4,15 @@
 #include <string.h>
 #include <time.h>
 
+#include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "time";
+
+static bool s_started = false;
+static esp_event_handler_instance_t s_ip_handler;
 
 /*
  * Any year at or after this is taken as "the clock has been set".
@@ -32,6 +36,45 @@ static void on_sync(struct timeval *tv)
     ESP_LOGI(TAG, "clock synced: %s", buf);
 }
 
+static void sntp_on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    (void)base;
+    (void)id;
+    (void)data;
+
+    /* Idempotent: the link can drop and return later, but SNTP keeps its own
+     * poll cycle once started, so it must not be re-initialised. */
+    if (s_started) return;
+
+    /* Several servers: lwIP falls through to the next one immediately when a
+     * response is lost, instead of sitting out the 15s recv timeout plus an
+     * exponential backoff on a single server. The configured server stays
+     * first; the rest are public fallbacks that need no signup. */
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        4, ESP_SNTP_SERVER_LIST(CONFIG_MIRROR_SNTP_SERVER, "time.google.com",
+                                "time.cloudflare.com", "time.nist.gov"));
+    config.start = true;
+    config.server_from_dhcp = false;
+    config.sync_cb = on_sync;
+    config.wait_for_sync = false;
+
+    /* Smooth adjustment rather than a step. A clock that jumps backwards makes
+     * an agenda flicker between two states. The first sync is still an
+     * immediate step: lwIP's smooth mode steps when the offset is large, which
+     * 1970-to-now certainly is. */
+    config.smooth_sync = true;
+
+    esp_err_t err = esp_netif_sntp_init(&config);
+    if (err != ESP_OK) {
+        /* Leave s_started false so a later IP event can retry. */
+        ESP_LOGE(TAG, "SNTP init failed: %s", esp_err_to_name(err));
+        return;
+    }
+    s_started = true;
+    ESP_LOGI(TAG, "SNTP started on link-up (%s + 3 fallbacks)", CONFIG_MIRROR_SNTP_SERVER);
+}
+
 void sntp_time_start(void)
 {
     /* Set the zone before the first sync so the very first rendered frame is
@@ -41,22 +84,15 @@ void sntp_time_start(void)
     tzset();
     ESP_LOGI(TAG, "timezone %s", mirror_config_timezone());
 
-    esp_sntp_config_t config =
-        ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_MIRROR_SNTP_SERVER);
-    config.start = true;
-    config.server_from_dhcp = false;
-    config.sync_cb = on_sync;
-
-    /* Smooth adjustment rather than a step. A clock that jumps backwards makes
-     * an agenda flicker between two states. */
-    config.smooth_sync = true;
-
-    esp_err_t err = esp_netif_sntp_init(&config);
+    /* Start SNTP only once the station has an address. A request sent before
+     * the link is up dies with no route and no DNS, and lwIP's exponential
+     * retry backoff (15s doubling to 150s) then delays the real sync by
+     * minutes. Waiting for GOT_IP makes the first request succeed outright. */
+    esp_err_t err = esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, sntp_on_got_ip, NULL, &s_ip_handler);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SNTP init failed: %s", esp_err_to_name(err));
-        return;
+        ESP_LOGE(TAG, "could not register the IP handler: %s", esp_err_to_name(err));
     }
-    ESP_LOGI(TAG, "SNTP started against %s", CONFIG_MIRROR_SNTP_SERVER);
 }
 
 bool sntp_time_is_synced(void)

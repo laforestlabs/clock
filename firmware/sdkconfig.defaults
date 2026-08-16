@@ -104,3 +104,9 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 # board never advertises. The controller's own memory cannot leave internal
 # DRAM; only the host's allocations move.
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+
+# SNTP: send the first request immediately instead of after a random 0-5s
+# startup delay. The mirror starts SNTP on link-up (see sntp_time.c), so the
+# delay is pure latency on top of an already-ready network.
+CONFIG_LWIP_SNTP_STARTUP_DELAY=n
+CONFIG_LWIP_SNTP_MAX_SERVERS=4

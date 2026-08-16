@@ -1,12 +1,14 @@
 #include "wifi.h"
 
 #include <string.h>
+#include <stdint.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
@@ -17,6 +19,8 @@ static volatile bool s_connected = false;
 static int  s_retries = 0;
 static char s_ip[16] = "0.0.0.0";
 static char s_ssid[33] = "";
+static char s_pass[65] = "";
+static bool s_fast_connect = false;
 
 static esp_timer_handle_t s_reconnect;
 static wifi_observer_t s_observer = NULL;
@@ -27,6 +31,17 @@ static bool s_init_done = false;
  * skip the start and leave the radio silent while every API call returns OK. */
 static bool s_started = false;
 static bool s_autoreconnect = true;
+
+/* Last-known-good association, persisted in NVS. Used at boot to skip the
+ * full-channel scan and go straight to the AP we joined before. */
+#define WIFI_NVS_NS       "mirror"
+#define WIFI_NVS_KEY_HINT "sta_hint"
+
+typedef struct {
+    uint8_t bssid[6];
+    uint8_t channel;
+    char    ssid[33];
+} sta_hint_t;
 
 /*
  * Backoff after repeated failures.
@@ -40,6 +55,26 @@ static int backoff_ms(int retries)
     if (retries < CONFIG_MIRROR_WIFI_MAX_RETRY) return 1000;
     if (retries < CONFIG_MIRROR_WIFI_MAX_RETRY * 2) return 5000;
     return 30000;
+}
+
+static void sta_hint_save(const sta_hint_t *hint)
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, WIFI_NVS_KEY_HINT, hint, sizeof(*hint));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static bool sta_hint_load(sta_hint_t *hint)
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    size_t len = sizeof(*hint);
+    bool ok = (nvs_get_blob(h, WIFI_NVS_KEY_HINT, hint, &len) == ESP_OK &&
+               len == sizeof(*hint));
+    nvs_close(h);
+    return ok;
 }
 
 static void reconnect_cb(void *arg)
@@ -69,6 +104,27 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
         esp_wifi_connect();
         break;
 
+    case WIFI_EVENT_STA_CONNECTED: {
+        /* Cache the association so the next boot can skip the full-channel
+         * scan and go straight to this AP. */
+        const wifi_event_sta_connected_t *ev =
+            (const wifi_event_sta_connected_t *)data;
+        if (ev != NULL && ev->ssid_len < sizeof(s_ssid)) {
+            sta_hint_t hint;
+            memcpy(hint.bssid, ev->bssid, sizeof(hint.bssid));
+            hint.channel = ev->channel;
+            memcpy(hint.ssid, ev->ssid, ev->ssid_len);
+            hint.ssid[ev->ssid_len] = '\0';
+            sta_hint_save(&hint);
+            ESP_LOGI(TAG, "cached AP %02x:%02x:%02x:%02x:%02x:%02x channel %u",
+                     hint.bssid[0], hint.bssid[1], hint.bssid[2],
+                     hint.bssid[3], hint.bssid[4], hint.bssid[5], hint.channel);
+        }
+        s_fast_connect = false;
+        break;
+    }
+
+
     case WIFI_EVENT_STA_DISCONNECTED: {
         const wifi_event_sta_disconnected_t *ev =
             (const wifi_event_sta_disconnected_t *)data;
@@ -77,6 +133,25 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
         s_connected = false;
         snprintf(s_ip, sizeof(s_ip), "0.0.0.0");
         s_retries++;
+
+        /* A fast-connect attempt targets one BSSID on one channel. If that AP
+         * has moved or vanished, rebuild the config as a full scan once, so
+         * the retry below finds whatever is actually on the air instead of
+         * the stale hint. */
+        if (s_fast_connect) {
+            s_fast_connect = false;
+            ESP_LOGW(TAG, "fast connect failed (reason %d), full scan", reason);
+
+            wifi_config_t cfg = {0};
+            strncpy((char *)cfg.sta.ssid, s_ssid, sizeof(cfg.sta.ssid) - 1);
+            strncpy((char *)cfg.sta.password, s_pass, sizeof(cfg.sta.password) - 1);
+            cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+            cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+            if (esp_wifi_set_config(WIFI_IF_STA, &cfg) != ESP_OK) {
+                ESP_LOGW(TAG, "could not apply the full-scan fallback config");
+            }
+        }
+
 
         const int wait = backoff_ms(s_retries);
         /* Log the reason code: 15 (4WAY_HANDSHAKE_TIMEOUT) almost always means
@@ -163,6 +238,29 @@ esp_err_t wifi_connect(const char *ssid, const char *password)
     wifi_config_t cfg = {0};
     strncpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid) - 1);
     strncpy((char *)cfg.sta.password, password, sizeof(cfg.sta.password) - 1);
+    /* Scan every channel and connect to the strongest AP matching the SSID.
+     * Fast scan (the default) stops at the first match; with two APs on one
+     * SSID that can latch onto the distant, weak one, whose 4-way handshake
+     * then times out and reads as a wrong password. Scanning all channels
+     * finds both and sorts by RSSI, so the mirror stays on the near AP. */
+    cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+
+    /* Try the AP we joined last boot first. It is usually still on the same
+     * channel, so this skips the several-second full scan; if it has moved,
+     * the disconnect handler falls back to the full scan above. */
+    sta_hint_t hint;
+    if (sta_hint_load(&hint) && strcmp(hint.ssid, ssid) == 0) {
+        memcpy(cfg.sta.bssid, hint.bssid, sizeof(cfg.sta.bssid));
+        cfg.sta.bssid_set = true;
+        cfg.sta.channel = hint.channel;
+        cfg.sta.scan_method = WIFI_FAST_SCAN;
+        s_fast_connect = true;
+        ESP_LOGI(TAG, "fast connect to cached AP (channel %u)", hint.channel);
+    } else {
+        s_fast_connect = false;
+    }
+
 
     /* No authmode threshold: the default (accept anything) lets the driver
      * negotiate with the password we supplied. The old examples set a
@@ -171,6 +269,7 @@ esp_err_t wifi_connect(const char *ssid, const char *password)
      * transition networks, the norm on modern routers. */
 
     strncpy(s_ssid, ssid, sizeof(s_ssid) - 1);
+    strncpy(s_pass, password, sizeof(s_pass) - 1);
     s_connected = false;
     s_retries = 0;
     snprintf(s_ip, sizeof(s_ip), "0.0.0.0");
