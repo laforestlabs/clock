@@ -91,6 +91,17 @@ rm -f "$DESIGNER_DIR/packages/mirror_core_ffi/src/mirror_core_ffi.c" \
       "$DESIGNER_DIR/packages/mirror_core_ffi/lib/mirror_core_ffi_bindings_generated.dart" \
       "$DESIGNER_DIR/packages/mirror_core_ffi/ffigen.yaml"
 
+# -------------------------------------------------------------------- icons
+
+# Android launcher icons are rendered from the committed icon layout rather
+# than shipped as blobs, so generate them once the Android scaffolding exists.
+if [ -d "$DESIGNER_DIR/android/app/src/main/res" ]; then
+  info "Generating launcher icons"
+  if ! python3 "$DESIGNER_DIR/tool/gen_icon.py"; then
+    warn "icon generation failed; the stock launcher icon is left in place"
+  fi
+fi
+
 # ------------------------------------------------------------------- assets
 
 # Stock layouts are shared with the firmware and the CLI. Linked rather than

@@ -60,8 +60,13 @@ indistinguishable from a launcher that had done nothing at all.
 
 The middle two are also on the launcher's right-click menu.
 
-The icon is drawn by the render core, once per icon size rather than scaled
-down from one image, since a 5x7 glyph does not survive resampling.
+The launcher icon is a dedicated layout, `assets/icon.json`: a framed mirror
+panel showing a clock and weather, rendered by the core rather than kept as a
+raster. Linux renders it once per icon size, since a 5x7 glyph does not survive
+resampling. Android ships committed PNGs at fixed densities that are not
+multiples of the 64x64 canvas, so `tool/gen_icon.py` renders one 1024px master
+and resamples it: the icon's display face is anti-aliased, so Lanczos stays
+crisp where the hard pixel glyphs would not.
 
 ## Tests
 

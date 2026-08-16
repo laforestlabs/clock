@@ -58,14 +58,13 @@ if [ -x "$CLI" ]; then
   info "Rendering icons"
   # 64px is the raw framebuffer, so the small icon is pixel exact. The large
   # one gets --led, which reads as an LED panel at desktop icon sizes.
-  # Rendered from the square 64x64 layout rather than the 64x32 default,
-  # because icons are square and a 2:1 render would sit letterboxed in the
-  # application grid.
+  # Rendered from the square 64x64 icon layout (designer/assets/icon.json),
+  # a dedicated mark rather than the stock single.json screen.
   render() {  # size, scale, extra flags
     local size="$1" scale="$2"; shift 2
     mkdir -p "$ICONS/${size}x${size}/apps"
-    ( cd "$REPO" && "$CLI" layouts/single.json -m typical -s "$scale" "$@" >/dev/null )
-    cp "$REPO/out/single-typical.png" "$ICONS/${size}x${size}/apps/mirror-designer.png"
+    ( cd "$REPO" && "$CLI" designer/assets/icon.json -m typical -s "$scale" "$@" >/dev/null )
+    cp "$REPO/out/icon-typical.png" "$ICONS/${size}x${size}/apps/mirror-designer.png"
   }
   render 64 1
   render 128 2
