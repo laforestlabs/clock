@@ -147,6 +147,16 @@ menu "Smart Mirror"
 
     menu "Panel"
 
+        config MIRROR_NO_PANEL
+            bool "Do not drive the panel (diagnostic)"
+            default n
+            help
+                Skips the HUB75 driver entirely so no DMA runs and no panel
+                GPIOs switch, while the render task still renders off-panel
+                into PSRAM. For isolating panel EMI or DMA-bus contention
+                from WiFi problems without physically disconnecting the
+                panel. The panel is left dark; this is not a normal run mode.
+
         config MIRROR_PANEL_WIDTH
             int "Single panel width in pixels"
             default 64
@@ -227,22 +237,13 @@ menu "Smart Mirror"
                 this. Below about 60Hz the panel visibly flickers, especially
                 in peripheral vision, which is exactly how a mirror is seen.
 
-        config MIRROR_TEST_PATTERN
-            bool "Show a colour test pattern at boot"
-            default y
-            help
-                Draws red, green, blue and white bars for two seconds before
-                normal rendering. Worth keeping during bring-up: it makes a
-                swapped colour channel or a dead data line obvious
-                immediately, rather than looking like a layout problem.
-
         config MIRROR_SWAP_GB
             bool "Swap green and blue channels"
             default n
             help
-                Set when the boot test pattern reads red, blue, green instead
-                of red, green, blue, meaning the panel's green and blue data
-                lines are crossed at the connector or inside the panel. The
+                Set when the panel's green and blue data lines are crossed at
+                the connector or inside the panel: blue comes out on the green
+                line and vice versa. The
                 swap happens in panel_blit_rgb888, after gamma and before the
                 shift registers, so the render core and the desktop preview
                 keep producing the true colours.

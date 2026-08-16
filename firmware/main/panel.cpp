@@ -4,8 +4,6 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "hub75.h"
 #include "sdkconfig.h"
 
@@ -48,10 +46,42 @@ static const char *shift_driver_name()
     return "GENERIC";
 #endif
 }
+static Hub75ClockSpeed clock_speed_from_config()
+{
+#if defined(CONFIG_HUB75_CLK_8MHZ)
+    return Hub75ClockSpeed::HZ_8M;
+#elif defined(CONFIG_HUB75_CLK_10MHZ)
+    return Hub75ClockSpeed::HZ_10M;
+#elif defined(CONFIG_HUB75_CLK_16MHZ)
+    return Hub75ClockSpeed::HZ_16M;
+#elif defined(CONFIG_HUB75_CLK_18MHZ)
+    return Hub75ClockSpeed::HZ_18M;
+#elif defined(CONFIG_HUB75_CLK_23MHZ)
+    return Hub75ClockSpeed::HZ_23M;
+#elif defined(CONFIG_HUB75_CLK_27MHZ)
+    return Hub75ClockSpeed::HZ_27M;
+#elif defined(CONFIG_HUB75_CLK_32MHZ)
+    return Hub75ClockSpeed::HZ_32M;
+#else
+    return Hub75ClockSpeed::HZ_20M;
+#endif
+}
 
 extern "C" esp_err_t panel_init(void)
 {
     if (s_driver != nullptr) return ESP_OK;
+
+#if CONFIG_MIRROR_NO_PANEL
+    /* Diagnostic: keep the render path (and its CPU load) but never bring up
+     * the driver, so no DMA runs and no panel GPIOs switch. Isolates panel
+     * EMI and bus contention from WiFi problems. All blit/clear/brightness
+     * calls below already no-op while s_driver is null. */
+    s_width  = CONFIG_MIRROR_PANEL_WIDTH * CONFIG_MIRROR_PANEL_COLS;
+    s_height = CONFIG_MIRROR_PANEL_HEIGHT * CONFIG_MIRROR_PANEL_ROWS;
+    ESP_LOGW(TAG, "panel disabled (MIRROR_NO_PANEL): %dx%d off-panel render",
+             s_width, s_height);
+    return ESP_OK;
+#endif
 
     Hub75Config cfg{};
 
@@ -78,6 +108,7 @@ extern "C" esp_err_t panel_init(void)
     cfg.pins.oe  = CONFIG_MIRROR_PIN_OE;
     cfg.pins.clk = CONFIG_MIRROR_PIN_CLK;
 
+    cfg.output_clock_speed = clock_speed_from_config();
     cfg.min_refresh_rate = CONFIG_MIRROR_MIN_REFRESH_HZ;
     cfg.brightness       = CONFIG_MIRROR_BRIGHTNESS;
 
@@ -135,8 +166,8 @@ extern "C" void panel_blit_rgb888(uint8_t *rgb)
 
 #if CONFIG_MIRROR_SWAP_GB
     /* This panel's green and blue data lines are crossed at the connector:
-     * the boot test pattern reads red, blue, green instead of red, green,
-     * blue. Compensate here, at the last step before the shift registers, so
+     * blue comes out on the green line and vice versa. Compensate here, at
+     * the last step before the shift registers, so
      * the render core, the simulator and the golden tests all keep producing
      * the true colours and only this panel's quirk is corrected. The buffer
      * is the caller's per-frame scratch space, so mutating it in place is
@@ -174,41 +205,4 @@ extern "C" void panel_set_brightness(uint8_t brightness)
 extern "C" uint8_t panel_get_brightness(void)
 {
     return s_driver != nullptr ? s_driver->get_brightness() : 0;
-}
-
-extern "C" void panel_test_pattern(void)
-{
-    if (s_driver == nullptr) return;
-
-    struct Bar {
-        uint8_t r, g, b;
-        const char *name;
-    };
-    static const Bar bars[] = {
-        {255, 0, 0, "red"},
-        {0, 255, 0, "green"},
-        {0, 0, 255, "blue"},
-        {255, 255, 255, "white"},
-    };
-    const int count = (int)(sizeof(bars) / sizeof(bars[0]));
-
-    ESP_LOGI(TAG, "test pattern: expect red, green, blue, white bars left to right");
-    ESP_LOGW(TAG, "if the colours are in a different order the data pins are swapped");
-    ESP_LOGW(TAG, "if the board resets during the white bar the 5V supply is undersized");
-
-    const int bar_w = s_width / count;
-    s_driver->clear();
-    for (int i = 0; i < count; i++) {
-        /* The last bar takes the remainder so nothing is left unlit when the
-         * width does not divide evenly. */
-        const int w = (i == count - 1) ? (s_width - bar_w * i) : bar_w;
-        s_driver->fill((uint16_t)(bar_w * i), 0, (uint16_t)w, (uint16_t)s_height,
-                       bars[i].r, bars[i].g, bars[i].b);
-    }
-    s_driver->flip_buffer();
-
-    vTaskDelay(pdMS_TO_TICKS(2000));
-
-    s_driver->clear();
-    s_driver->flip_buffer();
 }

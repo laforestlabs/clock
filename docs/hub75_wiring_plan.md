@@ -99,8 +99,8 @@ If you ever re-pin, change `menuconfig` rather than the code, and keep out of
 1. Camera FPC disconnected.
 2. Wire GND pins 4 and 16 first; verify continuity to panel supply GND.
 3. Power panel from 5V/4A, ESP32 from USB; confirm common ground.
-4. Flash this firmware (`idf.py -C firmware flash monitor`). At boot the panel
-   shows a red/green/blue/white test pattern for two seconds before rendering.
+4. Flash this firmware (`idf.py -C firmware flash monitor`); the panel starts
+   rendering placeholders within a second of power-on.
 5. If the panel is dark or shows garbage, try the other shift register driver
    (`Smart Mirror > Panel > Shift register driver IC`) before suspecting wiring.
    Waveshare ships either ICN2038S (no setup) or FM6126A (needs init).

@@ -67,8 +67,8 @@ easiest thing to get wrong when moving up from the default.
 
 ### Swapped colour channels
 
-If the boot test pattern (red, green, blue, white bars) reads **red, blue, green**, the
-panel's green and blue data lines are crossed at the connector or inside the panel.
+If green and blue come out exchanged, the panel's green and blue data lines
+are crossed at the connector or inside the panel.
 Rather than rewiring, set `CONFIG_MIRROR_SWAP_GB` (already on in this project's
 `sdkconfig.defaults`); `panel_blit_rgb888` then exchanges the green and blue channels
 after gamma, before the shift registers, so the render core and the desktop preview

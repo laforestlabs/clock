@@ -95,20 +95,7 @@ worst case, needing a 5V 10A supply. Inject power into each panel's own VH4
 socket. Do not daisy-chain power through the HUB75 ribbon, and do not power
 panels from the dev board.
 
-### 2. Test pattern
-
-Enabled by default (`MIRROR_TEST_PATTERN`). At boot the panel shows red,
-green, blue and white bars for two seconds.
-
-| What you see | What it means |
-|---|---|
-| Correct bars, left to right | Wiring and colour order are right |
-| Colours in the wrong order | Data pins swapped: check R1/G1/B1 and R2/G2/B2 |
-| Top half right, bottom half wrong | The R2/G2/B2 group is miswired |
-| Nothing at all | See the shift driver section below |
-| Board resets during the white bar | The 5V supply cannot hold up. This looks exactly like a firmware crash and is not one. |
-
-### 3. Shift driver
+### 2. Shift driver
 
 The single most likely bring-up surprise. Waveshare ships these panels with
 either an **ICN2038S**, which needs no setup, or an **FM6126A**, which needs an
@@ -119,7 +106,7 @@ If the panel is dark or shows garbage, change
 `Smart Mirror > Panel > Shift register driver IC` and reflash before suspecting
 your wiring. `GENERIC` covers ICN2038S and most panels; try `FM6126A` next.
 
-### 4. Clock
+### 3. Clock
 
 Once WiFi joins and SNTP replies, the clock changes from `--:--` to the real
 time. The log says so:

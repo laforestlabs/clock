@@ -36,8 +36,15 @@ CONFIG_FREERTOS_HZ=1000
 # Linear here means "do not touch what we send you".
 CONFIG_HUB75_GAMMA_LINEAR=y
 
-# This panel's green and blue data lines are crossed: the boot test pattern
-# reads red, blue, green. panel_blit_rgb888 swaps the channels to compensate.
+# The HUB75 shift clock is a strong 2.4GHz interference source on this board:
+# at the driver's 20MHz default the WiFi MAC drops management frames and the
+# post-link traffic (SNTP, weather HTTP) stalls for tens of seconds. 8MHz is
+# the difference between weather arriving ~2s after link-up and not at all.
+# panel.cpp maps this choice into Hub75Config.output_clock_speed.
+CONFIG_HUB75_CLK_8MHZ=y
+
+# This panel's green and blue data lines are crossed: blue comes out on the
+# green line and vice versa. panel_blit_rgb888 swaps the channels back.
 CONFIG_MIRROR_SWAP_GB=y
 
 # The Freenove FNK0085 routes its USB-C through the onboard CH343 to UART0

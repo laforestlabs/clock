@@ -214,10 +214,6 @@ void app_main(void)
         return;
     }
 
-#if CONFIG_MIRROR_TEST_PATTERN
-    panel_test_pattern();
-#endif
-
     /* The layout store loads the pushed layout from SPIFFS when there is one
      * and falls back to the embedded layout otherwise. */
     ESP_ERROR_CHECK(layout_store_init(layout_json_start,

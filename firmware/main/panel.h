@@ -53,16 +53,6 @@ void panel_clear(void);
 void    panel_set_brightness(uint8_t brightness);
 uint8_t panel_get_brightness(void);
 
-/*
- * Red, green, blue and white bars, held for a moment.
- *
- * Worth running at every boot during bring-up. A swapped colour channel, a
- * dead data line, or a supply that cannot hold up under white all show
- * themselves here in a second, whereas the same faults inside a real layout
- * look like a rendering bug and cost an afternoon.
- */
-void panel_test_pattern(void);
-
 #ifdef __cplusplus
 }
 #endif
