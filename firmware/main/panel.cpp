@@ -46,25 +46,13 @@ static const char *shift_driver_name()
     return "GENERIC";
 #endif
 }
+/* The S3 derives the HUB75 clock from a 160MHz PLL with an integer divider,
+ * so any requested MHz resolves to the nearest 160/N. Cast through the enum's
+ * underlying type rather than enumerating the driver's fixed choices, so
+ * MIRROR_PANEL_CLOCK_MHZ can pick any value (e.g. 9 -> 8.89MHz). */
 static Hub75ClockSpeed clock_speed_from_config()
 {
-#if defined(CONFIG_HUB75_CLK_8MHZ)
-    return Hub75ClockSpeed::HZ_8M;
-#elif defined(CONFIG_HUB75_CLK_10MHZ)
-    return Hub75ClockSpeed::HZ_10M;
-#elif defined(CONFIG_HUB75_CLK_16MHZ)
-    return Hub75ClockSpeed::HZ_16M;
-#elif defined(CONFIG_HUB75_CLK_18MHZ)
-    return Hub75ClockSpeed::HZ_18M;
-#elif defined(CONFIG_HUB75_CLK_23MHZ)
-    return Hub75ClockSpeed::HZ_23M;
-#elif defined(CONFIG_HUB75_CLK_27MHZ)
-    return Hub75ClockSpeed::HZ_27M;
-#elif defined(CONFIG_HUB75_CLK_32MHZ)
-    return Hub75ClockSpeed::HZ_32M;
-#else
-    return Hub75ClockSpeed::HZ_20M;
-#endif
+    return static_cast<Hub75ClockSpeed>(CONFIG_MIRROR_PANEL_CLOCK_MHZ * 1000000u);
 }
 
 extern "C" esp_err_t panel_init(void)

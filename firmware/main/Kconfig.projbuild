@@ -157,6 +157,18 @@ menu "Smart Mirror"
                 from WiFi problems without physically disconnecting the
                 panel. The panel is left dark; this is not a normal run mode.
 
+        config MIRROR_PANEL_CLOCK_MHZ
+            int "HUB75 shift clock (MHz)"
+            default 8
+            range 8 32
+            help
+                Shift clock for the HUB75 bus. The S3 derives it from a
+                160MHz PLL with an integer divider, so the value rounds to
+                the nearest 160/N MHz: 8 and 10 are exact, 9 becomes 8.89,
+                and so on. Higher clocks refresh faster and reduce flicker,
+                but the switching edges interfere with the 2.4GHz WiFi radio
+                on this board; see the notes in sdkconfig.defaults.
+
         config MIRROR_PANEL_WIDTH
             int "Single panel width in pixels"
             default 64

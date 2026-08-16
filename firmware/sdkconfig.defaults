@@ -39,9 +39,11 @@ CONFIG_HUB75_GAMMA_LINEAR=y
 # The HUB75 shift clock is a strong 2.4GHz interference source on this board:
 # at the driver's 20MHz default the WiFi MAC drops management frames and the
 # post-link traffic (SNTP, weather HTTP) stalls for tens of seconds. 8MHz is
-# the difference between weather arriving ~2s after link-up and not at all.
-# panel.cpp maps this choice into Hub75Config.output_clock_speed.
-CONFIG_HUB75_CLK_8MHZ=y
+# the safe floor, but only reaches 61Hz refresh and can visibly flicker. 9MHz
+# requests 160/18 = 8.89MHz, ~68Hz, which clears the flicker while staying
+# under the clock at which WiFi breaks. panel.cpp maps this into
+# Hub75Config.output_clock_speed.
+CONFIG_MIRROR_PANEL_CLOCK_MHZ=9
 
 # This panel's green and blue data lines are crossed: blue comes out on the
 # green line and vice versa. panel_blit_rgb888 swaps the channels back.
