@@ -808,6 +808,49 @@ static void draw_date_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
     ml_text_draw_clipped(c, f, x, y, w->rect.w - (x - w->rect.x), buf, color, sc);
 }
+/* The string a countdown is sized and drawn against. Returns true (dimmed
+ * placeholder) only when there is nothing to count: the clock has not synced,
+ * or the layout carries no target. An expired target is real data (zero). */
+static bool sample_countdown(const ml_widget *w, const ml_model *m,
+                             char *buf, size_t n)
+{
+    if (!m->now.valid || w->until_s == 0) {
+        snprintf(buf, n, "--:--:--");
+        return true;
+    }
+
+    int64_t rem = w->until_s - m->now.epoch_s;
+    if (rem < 0) rem = 0;
+
+    int64_t h  = rem / 3600;
+    int64_t mi = (rem % 3600) / 60;
+    int64_t s  = rem % 60;
+    snprintf(buf, n, "%02d:%02d:%02d", (int)h, (int)mi, (int)s);
+    return false;
+}
+
+static void draw_countdown_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    char buf[TEXT_BUF];
+    const bool placeholder = sample_countdown(w, m, buf, sizeof(buf));
+
+    ml_rgb color = w->color;
+    if (placeholder) {
+        color = dim(w->color);
+    } else if (w->until_s <= m->now.epoch_s) {
+        /* Expired: blink the zeroed readout at 1 Hz. The wall-clock second's
+         * parity is the phase, so the renderer stays pure: one model, one
+         * frame. The blink persists indefinitely while the target is past. */
+        if (!(m->now.second & 1)) color = dim(w->color);
+    }
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
+    int tw = ml_text_width(f, buf, sc);
+    int x  = align_x(w->align, w->rect, tw);
+    int y  = valign_y(w->valign, w->rect, ml_text_height(f, sc));
+    ml_text_draw(c, f, x, y, buf, color, sc);
+}
 
 static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
@@ -1031,6 +1074,11 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
         sample_date(w, m, buf, sizeof(buf));
         f = choose_font(w, "display24", buf, &sc);
         break;
+    case ML_W_COUNTDOWN:
+        sample_countdown(w, m, buf, sizeof(buf));
+        f = choose_font(w, "display24", buf, &sc);
+        break;
+
     case ML_W_WEATHER:
         sample_temp(m, buf, sizeof(buf));
         f = choose_font(w, "display24", buf, &sc);
@@ -1080,6 +1128,7 @@ void ml_render_widget(const ml_widget *w, const ml_model *m, ml_canvas *c)
     case ML_W_ICON:    draw_icon_w(w, m, c);    break;
     case ML_W_AGENDA:  draw_agenda_w(w, m, c);  break;
     case ML_W_TODO:    draw_todo_w(w, m, c);    break;
+    case ML_W_COUNTDOWN: draw_countdown_w(w, m, c); break;
     default: break;
     }
 

@@ -22,6 +22,7 @@ enum FieldKind {
   integer,
   boolean,
   triState,
+  datetime,
 }
 
 @immutable
@@ -133,6 +134,15 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _maxItems,
     _lineGap,
     FieldSpec('hide_done', 'Hide completed', FieldKind.boolean),
+  ],
+  'countdown': <FieldSpec>[
+    FieldSpec('until', 'Target time', FieldKind.datetime,
+        help: 'When the countdown reaches zero'),
+    _font,
+    _scale,
+    _fit,
+    _align,
+    _valign,
   ],
 };
 

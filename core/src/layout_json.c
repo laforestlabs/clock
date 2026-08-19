@@ -46,6 +46,7 @@ static const struct {
     {ML_W_ICON,    "icon"},
     {ML_W_AGENDA,  "agenda"},
     {ML_W_TODO,    "todo"},
+    {ML_W_COUNTDOWN, "countdown"},
 };
 
 ml_widget_type ml_widget_type_from_name(const char *name)
@@ -250,6 +251,10 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
 
     if (!ml_json_get_str(j, obj, "icon_set", w->icon_set, sizeof(w->icon_set)))
         ml_json_get_str(j, obj, "set", w->icon_set, sizeof(w->icon_set));
+
+    double until_d = 0;
+    if (ml_json_get_double(j, obj, "until", &until_d))
+        w->until_s = (int64_t)until_d;
 
     char buf[16];
     if (ml_json_get_str(j, obj, "align", buf, sizeof(buf)))
@@ -540,6 +545,8 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
             else
                 appendf(buf, cap, &len, ", \"hide_done\": %s", w->hide_done ? "true" : "false");
         }
+        if (w->type == ML_W_COUNTDOWN && w->until_s != 0)
+            appendf(buf, cap, &len, ", \"until\": %lld", (long long)w->until_s);
 
         /* Written only when they differ from the default, to keep the output
          * as small as the layouts people hand-write. */

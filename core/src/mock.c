@@ -52,6 +52,7 @@ void ml_model_mock(ml_model *m, int variant)
     m->now.hour    = 9;
     m->now.minute  = 41;
     m->now.second  = 0;
+    m->now.epoch_s = 1785318060LL;   /* 2026-07-29 09:41:00 UTC, matches the fixed broken-down now */
 
     m->online    = true;
     m->wifi_rssi = -58;

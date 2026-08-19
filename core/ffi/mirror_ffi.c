@@ -362,6 +362,7 @@ int ml_sim_family_role(int index)
 /* Kept in the same order as ml_widget_type so index maps straight to the enum. */
 static const char *k_type_names[] = {
     "rect", "line", "text", "clock", "date", "weather", "icon", "agenda", "todo",
+    "countdown",
 };
 
 int ml_sim_type_count(void)

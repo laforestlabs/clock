@@ -118,6 +118,7 @@ void sntp_time_fill(ml_time *out)
     }
 
     out->valid   = true;
+    out->epoch_s = (int64_t)now;
     out->year    = local.tm_year + 1900;
     out->month   = local.tm_mon + 1;
     out->day     = local.tm_mday;

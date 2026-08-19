@@ -62,8 +62,10 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *   8  clock faces drop the leading zero from single-digit hours (12-hour
  *      "%l", 24-hour "%k") and the display face's inter-glyph gap tightens
  *      from 3 to 2. Every stock layout's output changes.
+ *   9  new "countdown" widget; a layout using it renders differently (or is
+ *      skipped) on older builds, so the designer/device version check must warn.
  */
-#define ML_RENDER_VERSION 8
+#define ML_RENDER_VERSION 9
 
 #ifdef __cplusplus
 }

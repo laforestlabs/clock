@@ -24,6 +24,7 @@ class WidgetListPanel extends StatelessWidget {
     'icon': Icons.image_outlined,
     'agenda': Icons.event_note,
     'todo': Icons.checklist,
+    'countdown': Icons.timer_outlined,
   };
 
   @override

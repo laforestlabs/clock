@@ -1615,7 +1615,7 @@ static void test_ffi(void)
     }
     CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
     CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
-    CHECK(ml_sim_type_count() == 9, "all widget types enumerated");
+    CHECK(ml_sim_type_count() == 10, "all widget types enumerated");
     CHECK(ml_sim_bind_count() > 10, "bind paths enumerated");
 
     /* Every advertised bind path must actually resolve, or the inspector would
@@ -1821,6 +1821,72 @@ static void test_display_settings(void)
     }
 }
 
+static void test_countdown(void)
+{
+    group("countdown");
+
+    static const char doc[] =
+        "{\"canvas\":{\"width\":64,\"height\":16},\"background\":\"#000000\","
+        "\"widgets\":[{\"type\":\"countdown\",\"rect\":[0,0,64,16],"
+        "\"until\":1785501905,\"font\":\"digits16\",\"color\":\"#FFFFFF\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "countdown doc parses");
+    CHECK(l.count == 1, "one widget parsed");
+    CHECK(l.widgets[0].type == ML_W_COUNTDOWN, "widget type is countdown");
+    CHECK(l.widgets[0].until_s == 1785501905, "until parsed");
+
+    /* Round-trip preserves the deadline. */
+    char json[1024];
+    size_t n = ml_layout_write(&l, json, sizeof(json));
+    CHECK(n > 0 && n < sizeof(json), "layout serializes");
+    ml_layout r;
+    ml_diag   rdiag;
+    CHECK(ml_layout_parse(json, n, &r, &rdiag), "serialized layout reparses");
+    CHECK(r.widgets[0].until_s == 1785501905, "until survives round-trip");
+
+    ml_model  m;
+    ml_canvas c;
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    ml_canvas_init(&c, l.w, l.h, NULL);
+
+    /* Active target (51:04:05 ahead of the fixed mock now): non-black ink. */
+    ml_render(&l, &m, &c);
+    uint8_t *rgb = (uint8_t *)malloc((size_t)l.w * (size_t)l.h * 3);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    bool ink = false;
+    for (int i = 0; i < l.w * l.h * 3; i++) {
+        if (rgb[i] > 0) { ink = true; break; }
+    }
+    CHECK(ink, "active countdown draws ink");
+
+    /* Expired: 90 seconds past zeroes the readout, and the blink phase (the
+     * wall-clock second's parity) changes the frame. */
+    l.widgets[0].until_s = 1785317970;
+    m.now.second = 0;
+    ml_render(&l, &m, &c);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    const uint64_t h_even = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+    m.now.second = 1;
+    ml_render(&l, &m, &c);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    const uint64_t h_odd = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+    CHECK(h_even != h_odd, "expired readout blinks with the second parity");
+
+    /* Clamp: any past deadline renders the same zeroed frame, no negative-time
+     * wrap. */
+    m.now.second = 0;
+    l.widgets[0].until_s = 1;
+    ml_render(&l, &m, &c);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    const uint64_t h_clamp = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+    CHECK(h_clamp == h_even, "past deadlines clamp to 00:00:00");
+
+    free(rgb);
+    ml_canvas_free(&c);
+}
+
 static void test_golden(void)
 {
     group("golden images");
@@ -1952,6 +2018,7 @@ int main(void)
     test_resolve_font();
     test_ffi();
     test_display_settings();
+    test_countdown();
     test_golden();
 
     printf("\n%d checks, %d failure(s)\n", g_checks, g_fails);

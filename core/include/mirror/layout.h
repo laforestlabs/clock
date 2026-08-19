@@ -47,7 +47,8 @@ typedef enum {
     ML_W_WEATHER,
     ML_W_ICON,
     ML_W_AGENDA,
-    ML_W_TODO
+    ML_W_TODO,
+    ML_W_COUNTDOWN
 } ml_widget_type;
 
 typedef enum {
@@ -134,6 +135,7 @@ typedef struct {
     int            line_gap;    /* extra pixels between rows */
     bool           show_time;   /* agenda: prefix each row with its time */
     bool           hide_done;   /* todo: skip completed entries */
+    int64_t        until_s;     /* countdown deadline, UTC epoch seconds; 0 = unset */
 } ml_widget;
 
 typedef struct {

@@ -38,6 +38,7 @@ typedef struct {
     int  second;   /* 0..59 */
     int  weekday;  /* 0 = Sunday .. 6 = Saturday */
     int  yday;     /* 1..366 */
+    int64_t epoch_s;   /* UTC epoch seconds of now, valid only when valid */
 } ml_time;
 
 /* WMO weather codes, as used by Open-Meteo. */

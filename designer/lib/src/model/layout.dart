@@ -125,7 +125,8 @@ class LayoutDoc {
       'date',
       'weather',
       'agenda',
-      'todo'
+      'todo',
+      'countdown',
     };
     if (textTypes.contains(type)) {
       raw['font'] = 'display';
