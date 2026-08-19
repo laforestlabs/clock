@@ -34,6 +34,7 @@
 #include "net/wifi.h"
 #include "net/api_server.h"
 #include "net/ota.h"
+#include "net/flash_write.h"
 #if CONFIG_BT_ENABLED
 #include "net/ble.h"
 #endif
@@ -278,6 +279,7 @@ void app_main(void)
     /* The LAN API (status/layout/OTA) and the Bluetooth config+layout
      * service. Both are event-driven from here on; the API server starts
      * when the station gets an IP. */
+    flash_write_init();
     ESP_ERROR_CHECK(api_server_init());
 #if CONFIG_BT_ENABLED
     ESP_ERROR_CHECK(ble_init());

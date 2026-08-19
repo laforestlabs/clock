@@ -8,6 +8,15 @@ the repository's `core/`, so the firmware and the desktop designer compile
 literally the same source files. That is what makes the designer's preview
 worth trusting.
 
+## Versioning
+
+**Rule: bump the firmware version on every firmware change.** The version is
+`project(smart_mirror VERSION x.y.z)` in `firmware/CMakeLists.txt`; it is baked
+into the image and reported by `/api/status` and the BLE `pong`. Every change
+under `firmware/` gets a new version. Never reuse a version for a different
+build, and never flash or ship two builds under one version: a reused version
+makes it impossible to tell what is actually running on the board or over OTA.
+
 ## ESP-IDF version
 
 **ESP-IDF 5.4 or newer is required.** Not a preference: `esp-hub75` will not
@@ -180,23 +189,30 @@ DMA. The log reports which pool each allocation landed in at boot.
 
 ## OTA updates
 
-Firmware can be updated from the phone over WiFi, no USB cable. The image is
-the app partition binary the build produces; `tools/build_ota.sh` builds it,
-names it after the version in `firmware/CMakeLists.txt`, and can serve it on
-the LAN so the phone downloads it directly.
+The phone ships the firmware it needs: the app bundles the current image, so
+the normal update is "rebuild the app, then push the bundled firmware". No
+USB cable and no manual file transfer. The image is the app partition binary
+the build produces; `tools/build_ota.sh` builds it and refreshes the copy
+bundled into the app (`designer/assets/firmware/smart_mirror.bin`).
 
-The full loop, with the phone and the mirror on the same WiFi as the PC:
+The normal loop, with the phone and the mirror on the same WiFi:
 
 1. Bump the version: `project(smart_mirror VERSION x.y.z)` in
    `firmware/CMakeLists.txt`. The version is baked into the image and is what
    the app shows after the update, so a release that changes it is verifiable.
-2. Build and serve: `tools/build_ota.sh --serve`. It prints the exact URL to
-   type into the app, e.g. `http://192.168.1.20:8000/smart_mirror-0.2.0.bin`.
-3. In the app: connect to the mirror over Bluetooth, Update firmware,
-   Download from URL, paste the printed URL. The phone uploads the image over
-   HTTP to the mirror's LAN API (`POST /api/ota`), the mirror validates it
-   with `esp_ota_end`, switches the boot partition and reboots; the app polls
+2. Build and stage: `tools/build_ota.sh`. It builds, refreshes the app's
+   bundled image, and prints the version, size and SHA-256.
+3. Rebuild and install the app on the phone (see `designer/README.md`: build
+   the APK explicitly so a stale one is not installed).
+4. In the app: connect to the mirror over Bluetooth, Update firmware, then
+   confirm **Install vx.y.z**. The app uploads the bundled image over HTTP to
+   the mirror's LAN API (`POST /api/ota`), the mirror validates it with
+   `esp_ota_end`, switches the boot partition and reboots; the app polls
    `/api/status` until the mirror answers and shows the new version.
+
+"Choose file..." and "From URL..." remain in the same dialog for pushing a
+specific image, for example a `tools/build_ota.sh --serve` URL, which serves
+the directory on `http://<pc-ip>:8000/`.
 
 Rollback is built in and automatic: an image that crashes early (before the
 render task marks the new image valid) is reverted to the previous one on the

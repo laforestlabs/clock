@@ -11,6 +11,7 @@ idf_component_register(
         "net/http_get.c"
         "net/api_server.c"
         "net/ota.c"
+        "net/flash_write.c"
         "net/ble.c"
         "games/game_runner.c"
         "providers/provider.c"

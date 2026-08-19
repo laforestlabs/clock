@@ -89,6 +89,10 @@ class MirrorLan {
   final String ip;
 
   static const Duration _timeout = Duration(seconds: 8);
+  // Flash writes take ~10-30s for a 1.3MB image; the 8s request timeout would
+  // abort a legitimate OTA mid-write (the mirror answers only after it has
+  // written and validated the whole image).
+  static const Duration _otaTimeout = Duration(seconds: 120);
 
   Uri _uri(String path) => Uri.parse('http://$ip$path');
 
@@ -173,40 +177,41 @@ class MirrorLan {
     }
   }
 
-  /// Upload a firmware image to POST /api/ota, streaming the file in 64KB
-  /// chunks. [onProgress] is called with (sent, total) after each chunk.
-  /// Throws [MirrorApiException] on any non-200 response.
+  /// Upload a firmware image from a file to POST /api/ota (the "choose file"
+  /// fallback). Delegates to [uploadFirmwareBytes].
   Future<void> uploadFirmware(
     File file, {
     void Function(int sent, int total)? onProgress,
   }) async {
-    final total = await file.length();
+    await uploadFirmwareBytes(await file.readAsBytes(), onProgress: onProgress);
+  }
+
+  /// Upload raw firmware bytes to POST /api/ota, streaming in 64KB chunks.
+  /// [onProgress] is called with (sent, total) after each chunk. Throws
+  /// [MirrorApiException] on any non-200 response.
+  Future<void> uploadFirmwareBytes(
+    Uint8List bytes, {
+    void Function(int sent, int total)? onProgress,
+  }) async {
     final client = await _newClient();
     try {
       final req = await client.postUrl(_uri('/api/ota')).timeout(_timeout);
       req.headers.contentType = ContentType('application', 'octet-stream');
-      req.contentLength = total;
+      req.contentLength = bytes.length;
 
-      final raf = await file.open();
-      try {
-        final chunk = Uint8List(64 * 1024);
-        var sent = 0;
-        while (true) {
-          final n = await raf.readInto(chunk);
-          if (n == 0) break;
-          req.add(Uint8List.sublistView(chunk, 0, n));
-          sent += n;
-          onProgress?.call(sent, total);
-        }
-      } finally {
-        await raf.close();
+      const chunkSize = 64 * 1024;
+      for (var sent = 0; sent < bytes.length; sent += chunkSize) {
+        final end =
+            sent + chunkSize < bytes.length ? sent + chunkSize : bytes.length;
+        req.add(Uint8List.sublistView(bytes, sent, end));
+        onProgress?.call(end, bytes.length);
       }
 
-      final resp = await req.close().timeout(_timeout);
+      final resp = await req.close().timeout(_otaTimeout);
       final body = await resp.transform(utf8.decoder).join().timeout(_timeout);
       if (resp.statusCode != 200) {
         throw MirrorApiException(
-          'update failed: ${resp.statusCode} $body',
+          'update failed: HTTP ${resp.statusCode} $body',
           statusCode: resp.statusCode,
         );
       }

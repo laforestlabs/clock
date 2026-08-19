@@ -46,3 +46,7 @@ flutter:
     # duplicated here. setup.sh links this directory to the repository's
     # top-level layouts folder so there is one copy of the truth.
     - assets/layouts/
+    # The firmware image pushed by the phone's normal OTA flow. Refreshed by
+    # tools/build_ota.sh after each firmware build; the app reads its version
+    # from the image itself, so the bundle cannot drift from what it ships.
+    - assets/firmware/

@@ -250,9 +250,10 @@ static void api_server_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
-    /* The httpd task stack on PSRAM: internal SRAM is the scarce resource
-     * (panel DMA, WiFi and the BT controller all live there). An 8KB stack
-     * for a LAN JSON API is fine outside it. */
+    /* The httpd task stack lives in PSRAM: internal SRAM is the scarce
+     * resource (panel DMA, WiFi and the BT controller all live there). Flash
+     * writes that must not run on a PSRAM stack (OTA and the layout persist)
+     * are routed to the dedicated internal-DRAM task in flash_write.c. */
     cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 
     const esp_err_t err = httpd_start(&s_httpd, &cfg);

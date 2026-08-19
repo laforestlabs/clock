@@ -8,6 +8,10 @@ out/
 *.bin
 *.map
 
+# Firmware image bundled into the app for phone-driven OTA. The *.bin rule
+# above would otherwise ignore it; this is a deliberate, committed asset.
+!designer/assets/firmware/smart_mirror.bin
+
 # ESP-IDF
 firmware/build/
 firmware/sdkconfig

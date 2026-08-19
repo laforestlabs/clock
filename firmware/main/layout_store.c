@@ -22,6 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "config.h"
+#include "net/flash_write.h"
 #include "panel.h"
 
 static const char *TAG = "layout";
@@ -191,21 +192,35 @@ void layout_store_snapshot(ml_layout *out)
 /* Best-effort. A crash mid-write leaves a corrupt file, which next boot's
  * parse failure handles by falling back to the embedded layout. No atomic
  * rename dance needed. */
-static void persist(const char *json, size_t len)
+typedef struct {
+    const char *json;
+    size_t len;
+} persist_ctx_t;
+
+static void persist_fn(void *arg)
 {
+    persist_ctx_t *c = arg;
     FILE *f = fopen(LAYOUT_FILE, "w");
     if (f == NULL) {
         ESP_LOGW(TAG, "could not open %s for writing", LAYOUT_FILE);
         return;
     }
-    const size_t wrote = fwrite(json, 1, len, f);
+    const size_t wrote = fwrite(c->json, 1, c->len, f);
     const int err = fclose(f);
-    if (wrote != len || err != 0) {
+    if (wrote != c->len || err != 0) {
         ESP_LOGW(TAG, "layout persist incomplete (%u/%u bytes)",
-                 (unsigned)wrote, (unsigned)len);
+                 (unsigned)wrote, (unsigned)c->len);
     } else {
-        ESP_LOGI(TAG, "layout persisted (%u bytes)", (unsigned)len);
+        ESP_LOGI(TAG, "layout persisted (%u bytes)", (unsigned)c->len);
     }
+}
+
+/* SPIFFS writes freeze the cache and need an internal-DRAM stack; the httpd
+ * caller may be PSRAM-backed, so run the write on the flash-writer task. */
+static void persist(const char *json, size_t len)
+{
+    persist_ctx_t ctx = { .json = json, .len = len };
+    flash_write_run(persist_fn, &ctx);
 }
 
 esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)

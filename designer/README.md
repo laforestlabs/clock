@@ -41,6 +41,11 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 A stale build succeeds with no error, so there is no other signal. If in
 doubt, check the APK timestamp postdates the last edit.
 
+The app also bundles the firmware image for the normal OTA flow
+(`assets/firmware/smart_mirror.bin`, version read from the image itself).
+`tools/build_ota.sh` refreshes that asset after each firmware build, so run it
+before rebuilding the APK when the firmware version has changed.
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To

@@ -16,16 +16,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controller.dart';
+import '../services/bundled_firmware.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_connection.dart';
@@ -401,7 +402,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toast('No WiFi IP reported; firmware upload needs the LAN address');
       return;
     }
-    await _updateFirmware(device.ip);
+    await _updateFirmware(device.ip, deviceVersion: status.version);
     if (mounted) await _refreshLanStatus(index);
   }
 
@@ -415,26 +416,37 @@ class _MirrorScreenState extends State<MirrorScreen> {
           'the same network');
       return;
     }
-    await _updateFirmware(ip);
+    await _updateFirmware(ip, deviceVersion: _connection.pong?.version ?? '');
   }
 
-  /// Shared OTA flow: pick the image (file or URL download), upload it over
-  /// the LAN API, then poll until the mirror answers again after its reboot.
-  Future<void> _updateFirmware(String ip) async {
+  /// Shared OTA flow: prefer the firmware bundled with this app, offering a
+  /// file or a URL as fallbacks. Upload the chosen bytes over the LAN API,
+  /// then poll until the mirror answers again after its reboot.
+  Future<void> _updateFirmware(String ip, {String deviceVersion = ''}) async {
+    final bundled = await loadBundledFirmware();
+    if (!mounted) return;
+
     final source = await showDialog<_FirmwareSource>(
       context: context,
-      builder: (_) => const _FirmwareSourceDialog(),
+      builder: (_) => _FirmwareSourceDialog(
+        bundledVersion: bundled?.version,
+        deviceVersion: deviceVersion,
+      ),
     );
     if (source == null || !mounted) return;
 
-    final File file;
+    final Uint8List bytes;
     final String fileName;
-    if (source.url == null) {
-      const typeGroup = XTypeGroup(label: 'firmware', extensions: <String>['bin']);
+    if (source.kind == _FirmwareSourceKind.bundled) {
+      bytes = bundled!.bytes;
+      fileName = 'bundled v${bundled.version}';
+    } else if (source.kind == _FirmwareSourceKind.file) {
+      const typeGroup =
+          XTypeGroup(label: 'firmware', extensions: <String>['bin']);
       final picked =
           await openFile(acceptedTypeGroups: const <XTypeGroup>[typeGroup]);
       if (picked == null || !mounted) return;
-      file = File(picked.path);
+      bytes = await File(picked.path).readAsBytes();
       fileName = picked.name;
     } else {
       if (!mounted) return;
@@ -444,17 +456,23 @@ class _MirrorScreenState extends State<MirrorScreen> {
         builder: (_) => const _DownloadingDialog(),
       ));
       try {
-        file = await _downloadFirmware(source.url!);
+        bytes = await _downloadFirmwareBytes(source.url!);
       } catch (e) {
         if (mounted) Navigator.of(context).pop(); // close the download dialog
         if (mounted) _handleError(e, 'download');
         return;
       }
       if (mounted) Navigator.of(context).pop(); // close the download dialog
-      if (!mounted) return;
       fileName = 'ota.bin';
     }
 
+    await _uploadAndWait(ip, bytes, fileName);
+  }
+
+  /// Stream [bytes] to the mirror's OTA endpoint, poll until it answers after
+  /// the reboot, then toast the result.
+  Future<void> _uploadAndWait(
+      String ip, Uint8List bytes, String fileName) async {
     final progress = ValueNotifier<double>(0);
     unawaited(showDialog<void>(
       context: context,
@@ -463,8 +481,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
     ));
 
     try {
-      await MirrorLan(ip).uploadFirmware(
-        file,
+      await MirrorLan(ip).uploadFirmwareBytes(
+        bytes,
         onProgress: (sent, total) =>
             progress.value = total > 0 ? sent / total : 0,
       );
@@ -472,6 +490,12 @@ class _MirrorScreenState extends State<MirrorScreen> {
       final newStatus = await _waitForReboot(ip);
       if (!mounted) return;
       Navigator.of(context).pop(); // close the upload dialog
+      if (newStatus != null) {
+        // The mirror rebooted, so the BLE link died. Reconnect it now that
+        // the device is advertising again (no-op when nothing is remembered
+        // or on platforms without BLE).
+        unawaited(_connection.connectLast());
+      }
       _toast(newStatus == null
           ? 'Update uploaded; the mirror is rebooting'
           : 'Updated to ${newStatus.version}');
@@ -483,10 +507,10 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
-  /// Download a firmware image from [url] into the app's temp directory and
-  /// sanity-check it (non-empty, fits a 4 MB OTA partition). Throws
-  /// [MirrorApiException] on transport or size problems.
-  Future<File> _downloadFirmware(String url) async {
+  /// Download a firmware image from [url] and sanity-check it (non-empty,
+  /// fits a 4 MB OTA partition). Throws [MirrorApiException] on transport or
+  /// size problems.
+  Future<Uint8List> _downloadFirmwareBytes(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.host.isEmpty) {
       throw MirrorApiException('enter a full http:// URL');
@@ -498,19 +522,16 @@ class _MirrorScreenState extends State<MirrorScreen> {
       if (resp.statusCode != 200) {
         throw MirrorApiException('download failed: HTTP ${resp.statusCode}');
       }
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/ota.bin');
-      final sink = file.openWrite();
-      await resp.pipe(sink);
-      await sink.close();
-      final size = await file.length();
-      if (size == 0) {
+      final builder = BytesBuilder(copy: false);
+      await resp.forEach(builder.add);
+      final bytes = builder.takeBytes();
+      if (bytes.isEmpty) {
         throw MirrorApiException('the downloaded image is empty');
       }
-      if (size > 4 * 1024 * 1024) {
+      if (bytes.length > 4 * 1024 * 1024) {
         throw MirrorApiException('the downloaded image is too large (max 4 MB)');
       }
-      return file;
+      return bytes;
     } on SocketException catch (e) {
       throw MirrorApiException('could not reach $url: ${e.message}');
     } finally {
@@ -1097,35 +1118,63 @@ class _UploadDialog extends StatelessWidget {
   }
 }
 
-/// How the user chose to provide the image: a local file, or a URL to
-/// download (url non-null).
-class _FirmwareSource {
-  const _FirmwareSource.chooseFile() : url = null;
-  const _FirmwareSource.download(this.url);
+/// How the user chose to provide the image: the firmware bundled with this
+/// app, a local file, or a URL to download.
+enum _FirmwareSourceKind { bundled, file, download }
 
+class _FirmwareSource {
+  const _FirmwareSource.bundled()
+      : kind = _FirmwareSourceKind.bundled,
+        url = null;
+  const _FirmwareSource.chooseFile()
+      : kind = _FirmwareSourceKind.file,
+        url = null;
+  const _FirmwareSource.download(this.url)
+      : kind = _FirmwareSourceKind.download;
+
+  final _FirmwareSourceKind kind;
   final String? url;
 }
 
-/// Two ways to get the image onto the phone: pick the .bin, or fetch it from
-/// a PC that runs `tools/build_ota.sh --serve`.
+/// Source selection for an update. The bundled firmware is the normal path:
+/// update the app, then install what it ships. File and URL stay available as
+/// fallbacks for a specific image.
 class _FirmwareSourceDialog extends StatelessWidget {
-  const _FirmwareSourceDialog();
+  const _FirmwareSourceDialog({
+    required this.bundledVersion,
+    required this.deviceVersion,
+  });
+
+  final String? bundledVersion;
+  final String deviceVersion;
 
   @override
   Widget build(BuildContext context) {
+    final bundled = bundledVersion;
+    final String body;
+    if (bundled == null) {
+      body = 'No firmware is bundled with this build. Choose an image to '
+          'upload.';
+    } else if (deviceVersion.isEmpty) {
+      body = 'Install the firmware bundled with this app (v$bundled).';
+    } else if (deviceVersion == bundled) {
+      body = 'The mirror is already on v$bundled, the version bundled with '
+          'this app. Reinstall it, or choose another image.';
+    } else {
+      body = 'Install the bundled firmware v$bundled '
+          '(the mirror is on v$deviceVersion).';
+    }
+
     return AlertDialog(
-      title: const Text('Firmware image'),
-      content: const Text(
-        'The .bin is the app partition image from the PC build '
-        '(tools/build_ota.sh).',
-      ),
+      title: const Text('Update firmware'),
+      content: Text(body),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context)
               .pop(const _FirmwareSource.chooseFile()),
-          child: const Text('Choose file'),
+          child: const Text('Choose file...'),
         ),
-        FilledButton(
+        TextButton(
           onPressed: () async {
             final url = await showDialog<String>(
               context: context,
@@ -1135,8 +1184,16 @@ class _FirmwareSourceDialog extends StatelessWidget {
               Navigator.of(context).pop(_FirmwareSource.download(url));
             }
           },
-          child: const Text('Download from URL'),
+          child: const Text('From URL...'),
         ),
+        if (bundled != null)
+          FilledButton(
+            onPressed: () => Navigator.of(context)
+                .pop(const _FirmwareSource.bundled()),
+            child: Text(deviceVersion == bundled
+                ? 'Reinstall v$bundled'
+                : 'Install v$bundled'),
+          ),
       ],
     );
   }

@@ -59,6 +59,12 @@ mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/smart_mirror-$VERSION.bin"
 cp "$SRC" "$OUT"
 
+# Refresh the firmware bundled into the app so the next APK ships this image
+# (the normal phone OTA path: update the app, then push the bundled firmware).
+APP_FW_DIR="$ROOT/designer/assets/firmware"
+mkdir -p "$APP_FW_DIR"
+cp "$SRC" "$APP_FW_DIR/smart_mirror.bin"
+
 SIZE="$(stat -c %s "$OUT")"
 SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"
 echo "OTA image: $OUT"
