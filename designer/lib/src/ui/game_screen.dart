@@ -288,7 +288,9 @@ class _GameScreenState extends State<GameScreen>
   void _startMotion() {
     _stopMotion();
     final motion = MotionControl();
-    _motionSub = accelerometerEventStream().listen(
+    _motionSub = accelerometerEventStream(
+      samplingPeriod: SensorInterval.gameInterval,
+    ).listen(
       (e) {
         motion.addSample(e.x, e.y, e.z);
         if (!motion.calibrated) return;
