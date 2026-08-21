@@ -366,6 +366,14 @@ class _Field extends StatelessWidget {
           onChanged: (v) =>
               controller.updateSelected((w) => w.setInt(spec.key, v)),
         );
+      case FieldKind.dateStyle:
+        return _DateStyleField(
+          label: spec.label,
+          help: spec.help,
+          value: widget.getString(spec.key),
+          onChanged: (v) =>
+              controller.updateSelected((w) => w.setString(spec.key, v)),
+        );
 
     }
   }
@@ -780,6 +788,67 @@ class _FormatField extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+/// A labelled dropdown for the date widget's display style. The layout stores a
+/// raw strftime string; this maps it to the named styles in field_schema.dart so
+/// the user picks "29 Jul" rather than typing "%e %b". A hand-authored format
+/// that matches no preset still shows and can be kept, matching _Dropdown's
+/// handling of unlisted values.
+class _DateStyleField extends StatelessWidget {
+  const _DateStyleField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.help,
+  });
+
+  final String label;
+  final String? value;
+  final String? help;
+  final ValueChanged<String?> onChanged;
+
+  /// The label for the current format string, or null when the field is blank,
+  /// which leaves the engine's default in charge.
+  String? get _currentLabel {
+    final v = value;
+    if (v == null || v.isEmpty) return null;
+    for (final entry in dateStyles.entries) {
+      if (entry.value == v) return entry.key;
+    }
+    return v; // a custom hand-authored format
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = _currentLabel;
+    final items = <String>[
+      if (current != null && !dateStyles.containsKey(current)) current,
+      ...dateStyles.keys,
+    ];
+
+    return DropdownButtonFormField<String>(
+      initialValue: current,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: help,
+        isDense: true,
+        border: const OutlineInputBorder(),
+      ),
+      items: <DropdownMenuItem<String>>[
+        const DropdownMenuItem<String>(child: Text('(default)')),
+        ...items.map(
+          (o) => DropdownMenuItem<String>(value: o, child: Text(o)),
+        ),
+      ],
+      onChanged: (selected) {
+        // null is the (default) item: clear the key so the engine's own
+        // default format stands. A label maps through dateStyles; an unknown
+        // label is a custom format written verbatim.
+        onChanged(selected == null ? null : dateStyles[selected] ?? selected);
+      },
     );
   }
 }

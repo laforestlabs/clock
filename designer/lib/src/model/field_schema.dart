@@ -23,6 +23,7 @@ enum FieldKind {
   boolean,
   triState,
   datetime,
+  dateStyle,
 }
 
 @immutable
@@ -93,8 +94,10 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _valign,
   ],
   'date': <FieldSpec>[
-    FieldSpec('format', 'Format', FieldKind.format,
-        help: r'strftime style, default %a %e %b'),
+    FieldSpec('format', 'Style', FieldKind.dateStyle,
+        help: 'Day, month and year order, and whether the month is a name'),
+    FieldSpec('format', 'Custom format', FieldKind.format,
+        help: r'strftime style; blank uses %a %e %b'),
     _font,
     _scale,
     _fit,
@@ -161,4 +164,22 @@ const Map<String, List<String>> formatPresets = <String, List<String>>{
   'clock': <String>['%H:%M', '%H:%M:%S', '%I:%M %p', '%l:%M'],
   'date': <String>['%a %e %b', '%d/%m', '%A', '%e %B', '%a %d %b %Y'],
   'text': <String>[r'%.0f', r'%.1f', r'%.0f°C', r'%d%%', r'%s'],
+};
+
+/// Named date styles for the date widget's Style dropdown. The keys are the
+/// labels the user reads, shown with the mock date (Wednesday 29 July 2026) so
+/// the choice is self-explanatory; the values are the strftime strings the
+/// renderer understands. Mapping to a name means the user picks "29 Jul"
+/// rather than remembering "%e %b".
+const Map<String, String> dateStyles = <String, String>{
+  'Wed 29 Jul': '%a %e %b',
+  'Wed Jul 29': '%a %b %e',
+  '29 Jul': '%e %b',
+  'Jul 29': '%b %e',
+  '29 July': '%e %B',
+  'July 29': '%B %e',
+  '29/07': '%d/%m',
+  '07/29': '%m/%d',
+  'Wed 29 Jul 2026': '%a %e %b %Y',
+  'Wednesday 29 July': '%A %e %B',
 };
