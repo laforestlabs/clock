@@ -1,4 +1,5 @@
 #include "wifi.h"
+#include "netlog.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -80,6 +81,7 @@ static bool sta_hint_load(sta_hint_t *hint)
 static void reconnect_cb(void *arg)
 {
     (void)arg;
+    netlog_record(NETLOG_EVT_WIFI_CONNECTING, 0, s_retries);
     esp_wifi_connect();
 }
 
@@ -102,6 +104,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
 
         ESP_LOGI(TAG, "connecting to \"%s\"", s_ssid);
         esp_wifi_connect();
+        netlog_record(NETLOG_EVT_WIFI_CONNECTING, 0, s_retries);
         break;
 
     case WIFI_EVENT_STA_CONNECTED: {
@@ -120,6 +123,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
                      hint.bssid[0], hint.bssid[1], hint.bssid[2],
                      hint.bssid[3], hint.bssid[4], hint.bssid[5], hint.channel);
         }
+        netlog_record(NETLOG_EVT_WIFI_CONNECTED, wifi_rssi(),
+                      ev != NULL ? ev->channel : 0);
         s_fast_connect = false;
         break;
     }
@@ -173,6 +178,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
             esp_wifi_connect();
         }
 
+        netlog_record(NETLOG_EVT_WIFI_DISCONNECTED, 0, reason);
         notify(WIFI_OBS_DISCONNECTED, reason);
         break;
     }
@@ -196,6 +202,7 @@ static void on_ip_event(void *arg, esp_event_base_t base,
     s_connected = true;
     s_retries = 0;
     ESP_LOGI(TAG, "connected, address %s", s_ip);
+    netlog_record(NETLOG_EVT_WIFI_GOT_IP, wifi_rssi(), 0);
 
     notify(WIFI_OBS_CONNECTED, 0);
 }

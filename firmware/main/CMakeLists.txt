@@ -5,6 +5,7 @@ idf_component_register(
         "config.c"
         "layout_store.c"
         "model_store.c"
+        "netlog.c"
         "net/wifi.c"
         "net/provision.c"
         "net/sntp_time.c"

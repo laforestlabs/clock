@@ -31,6 +31,7 @@
 #include "freertos/task.h"
 
 #include "flash_write.h"
+#include "netlog.h"
 
 static const char *TAG = "ota";
 
@@ -137,6 +138,7 @@ esp_err_t ota_handle_upload(httpd_req_t *req)
         .len = (size_t)content_len,
         .result = ESP_FAIL,
     };
+    netlog_record(NETLOG_EVT_OTA_BEGIN, 0, 0);
     const esp_err_t run_err = flash_write_run(ota_write_fn, &ctx);
     heap_caps_free(data);
 
@@ -151,6 +153,7 @@ esp_err_t ota_handle_upload(httpd_req_t *req)
     s_ota_active = false;
     ESP_LOGI(TAG, "received %d bytes, new app on partition \"%s\", rebooting",
              received, part->label);
+    netlog_record(NETLOG_EVT_OTA_OK, 0, 0);
 
     send_json(req, "200 OK", "{\"ok\":true}");
     /* The response is queued by the stack; a short delay on the httpd task

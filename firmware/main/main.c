@@ -29,6 +29,7 @@
 #include "games/game_runner.h"
 #include "layout_store.h"
 #include "model_store.h"
+#include "netlog.h"
 #include "net/provision.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
@@ -121,6 +122,8 @@ static void render_task(void *arg)
 
         if (model.now.valid && !was_synced) {
             ESP_LOGI(TAG, "clock is valid, the panel now shows the real time");
+            netlog_set_boot_epoch();
+            netlog_record(NETLOG_EVT_CLOCK_SYNCED, 0, 0);
             was_synced = true;
         }
 
@@ -203,6 +206,9 @@ void app_main(void)
 
     /* Before the render task, which reads through it every frame. */
     ESP_ERROR_CHECK(model_store_init());
+    /* The flash-writer task, before netlog and before panel_init takes the
+     * big DMA block. Its stack is static (BSS), so this costs no heap. */
+    flash_write_init();
 
     /*
      * Panel first, deliberately. It needs the largest contiguous block of
@@ -219,6 +225,9 @@ void app_main(void)
      * and falls back to the embedded layout otherwise. */
     ESP_ERROR_CHECK(layout_store_init(layout_json_start,
                                       (size_t)(layout_json_end - layout_json_start)));
+    /* Nonvolatile ring of network/error events. Before provisioning so the
+     * BOOT entry lands ahead of every WiFi event. */
+    netlog_init();
 
     /* Owner config (timezone, coordinates, place, brightness) from NVS,
      * seeded from Kconfig on first boot. Before the boot brightness and the
@@ -279,7 +288,6 @@ void app_main(void)
     /* The LAN API (status/layout/OTA) and the Bluetooth config+layout
      * service. Both are event-driven from here on; the API server starts
      * when the station gets an IP. */
-    flash_write_init();
     ESP_ERROR_CHECK(api_server_init());
 #if CONFIG_BT_ENABLED
     ESP_ERROR_CHECK(ble_init());

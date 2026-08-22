@@ -5,11 +5,14 @@
 
 #include "config.h"
 #include "esp_heap_caps.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "mirror/json.h"
 #include "model_store.h"
 #include "net/http_get.h"
 #include "sdkconfig.h"
+#include "netlog.h"
+#include "net/wifi.h"
 
 static const char *TAG = "openmeteo";
 
@@ -81,12 +84,20 @@ static esp_err_t openmeteo_refresh(void)
 
     size_t len = 0;
     esp_err_t err = http_get(url, NULL, s_body, RESPONSE_CAP, &len, 10000);
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) {
+        int cls = NETLOG_ERR_CONNECT;
+        if (err == ESP_ERR_INVALID_RESPONSE) cls = NETLOG_ERR_HTTP;
+        else if (err == ESP_ERR_NO_MEM)       cls = NETLOG_ERR_NOMEM;
+        else if (err != ESP_ERR_HTTP_CONNECT) cls = NETLOG_ERR_HTTP;
+        netlog_record(NETLOG_EVT_WEATHER_FETCH_FAIL, wifi_rssi(), cls);
+        return err;
+    }
 
     ml_json j;
     const int tokens = ml_json_parse(&j, s_body, len, s_tokens, TOKEN_CAP);
     if (tokens < 0) {
         ESP_LOGW(TAG, "response did not parse (code %d, %u bytes)", tokens, (unsigned)len);
+        netlog_record(NETLOG_EVT_WEATHER_FETCH_FAIL, wifi_rssi(), NETLOG_ERR_PARSE);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -102,6 +113,7 @@ static esp_err_t openmeteo_refresh(void)
     const int current = ml_json_member(&j, 0, "current");
     if (current < 0) {
         ESP_LOGW(TAG, "no \"current\" block in the response");
+        netlog_record(NETLOG_EVT_WEATHER_FETCH_FAIL, wifi_rssi(), NETLOG_ERR_PARSE);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -110,6 +122,7 @@ static esp_err_t openmeteo_refresh(void)
         /* Temperature is the one field the layout cannot sensibly do without,
          * so treat its absence as a failed fetch and keep the old reading. */
         ESP_LOGW(TAG, "no temperature in the response");
+        netlog_record(NETLOG_EVT_WEATHER_FETCH_FAIL, wifi_rssi(), NETLOG_ERR_PARSE);
         return ESP_ERR_INVALID_RESPONSE;
     }
     w.temp_c = (float)value;
@@ -154,6 +167,7 @@ static esp_err_t openmeteo_refresh(void)
              (double)w.temp_c, (double)w.feels_c, w.code,
              (double)w.temp_max_c, (double)w.temp_min_c, w.precip_prob);
 
+    netlog_record(NETLOG_EVT_WEATHER_FETCH_OK, wifi_rssi(), 0);
     return ESP_OK;
 }
 
@@ -162,6 +176,7 @@ static void openmeteo_invalidate(void)
     model_store_lock();
     model_store_locked()->weather.valid = false;
     model_store_unlock();
+    netlog_record(NETLOG_EVT_WEATHER_STALE, wifi_rssi(), 0);
 }
 
 static const ml_provider s_provider = {

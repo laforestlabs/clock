@@ -32,6 +32,7 @@
 #include "mdns.h"
 #include "mirror/mirror.h"
 #include "net/ota.h"
+#include "netlog.h"
 #include "net/wifi.h"
 #include "panel.h"
 #include "sdkconfig.h"
@@ -132,6 +133,32 @@ static esp_err_t handle_get_layout(httpd_req_t *req)
     return ret;
 }
 
+static esp_err_t handle_get_log(httpd_req_t *req)
+{
+    /* Small internal-DRAM chunk: SPIFFS reads run on the flash-writer task
+     * with the cache disabled, where PSRAM is unreachable, and a full 32 KB
+     * internal buffer does not fit the fragmented internal heap. */
+    enum { CHUNK = 1024 };
+    char *chunk = heap_caps_malloc(CHUNK, MALLOC_CAP_INTERNAL);
+    if (chunk == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/octet-stream");
+    size_t off = 0;
+    for (;;) {
+        const size_t n = netlog_read(chunk, CHUNK, off);
+        if (n == 0) break;
+        if (httpd_resp_send_chunk(req, chunk, (ssize_t)n) != ESP_OK) break;
+        off += n;
+    }
+    httpd_resp_send_chunk(req, NULL, 0);
+
+    heap_caps_free(chunk);
+    return ESP_OK;
+}
+
 static esp_err_t handle_put_layout(httpd_req_t *req)
 {
     const int total = req->content_len;
@@ -230,11 +257,15 @@ static void register_handlers(void)
     static const httpd_uri_t post_ota = {
         .uri = "/api/ota", .method = HTTP_POST, .handler = handle_post_ota,
     };
+    static const httpd_uri_t get_log = {
+        .uri = "/api/log", .method = HTTP_GET, .handler = handle_get_log,
+    };
 
     httpd_register_uri_handler(s_httpd, &get_status);
     httpd_register_uri_handler(s_httpd, &get_layout);
     httpd_register_uri_handler(s_httpd, &put_layout);
     httpd_register_uri_handler(s_httpd, &post_ota);
+    httpd_register_uri_handler(s_httpd, &get_log);
 }
 
 static void on_retry(void *arg)

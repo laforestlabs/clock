@@ -22,6 +22,7 @@
  * product, where anyone within radio range could otherwise claim the device.
  */
 #include "provision.h"
+#include "netlog.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -302,6 +303,7 @@ static void on_teardown(void *arg)
     unlock_state();
 
     ESP_LOGI(TAG, "setup portal closed, running on the home network");
+    netlog_record(NETLOG_EVT_PORTAL_CLOSED, 0, 0);
 }
 
 /* httpd */
@@ -1057,6 +1059,7 @@ static void portal_start(void)
              ap_ssid,
              CONFIG_MIRROR_AP_PASSWORD[0] != '\0' ? " (password protected)"
                                                   : " (open)");
+    netlog_record(NETLOG_EVT_PORTAL_OPENED, 0, 0);
 
     /* The httpd starts on a timer, not here: this runs inside the
      * WIFI_EVENT_STA_DISCONNECTED dispatch, and the LAN API server's own
