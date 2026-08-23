@@ -3,15 +3,35 @@
 // Stock layouts ship as assets and are the same files the firmware and the CLI
 // use, linked rather than copied by setup.sh so there is one copy of the truth.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 
 class StockLayout {
-  const StockLayout(this.name, this.assetPath);
+  const StockLayout(this.name, this.assetPath, this.width, this.height);
   final String name;
   final String assetPath;
+
+  /// The layout's canvas size, read from its JSON. Zero when unreadable, in
+  /// which case the preset never matches a connected panel and is hidden
+  /// while one is connected.
+  final int width;
+  final int height;
+}
+
+/// Presets that fit a panel of the given size. A zero or negative panel size
+/// means "no panel known", which keeps every preset visible.
+List<StockLayout> stockLayoutsForPanel(
+  List<StockLayout> layouts,
+  int width,
+  int height,
+) {
+  if (width <= 0 || height <= 0) return layouts;
+  return layouts
+      .where((l) => l.width == width && l.height == height)
+      .toList(growable: false);
 }
 
 class LayoutRepository {
@@ -31,14 +51,25 @@ class LayoutRepository {
           .toList()
         ..sort();
 
-      return paths
-          .map(
-            (p) => StockLayout(
-              p.split('/').last.replaceAll('.json', ''),
-              p,
-            ),
-          )
-          .toList(growable: false);
+      final layouts = <StockLayout>[];
+      for (final path in paths) {
+        final name = path.split('/').last.replaceAll('.json', '');
+        var width = 0;
+        var height = 0;
+        try {
+          final json = jsonDecode(await rootBundle.loadString(path))
+              as Map<String, dynamic>;
+          final canvas = json['canvas'];
+          if (canvas is Map<String, dynamic>) {
+            width = (canvas['width'] as num?)?.toInt() ?? 0;
+            height = (canvas['height'] as num?)?.toInt() ?? 0;
+          }
+        } catch (_) {
+          // Keep the preset discoverable; it just never matches a panel.
+        }
+        layouts.add(StockLayout(name, path, width, height));
+      }
+      return layouts;
     } catch (_) {
       // A missing manifest is not fatal; the user can still open a file.
       return const <StockLayout>[];

@@ -1,0 +1,38 @@
+{
+  "name": "status",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "text", "id": "status-header",
+      "rect": [0, 0, 30, 7],
+      "font": "display", "fit": true, "text": "STATUS",
+      "color": "#FF9F43", "align": "left" },
+
+    { "type": "clock", "id": "clock",
+      "rect": [34, 0, 30, 7],
+      "font": "display", "fit": true, "format": "%H:%M",
+      "color": "#00E5FF", "align": "right" },
+
+    { "type": "text", "id": "uptime-label",
+      "rect": [0, 9, 32, 7],
+      "font": "sans", "fit": true, "text": "UPTIME",
+      "color": "#8899AA", "align": "left" },
+
+    { "type": "text", "id": "uptime",
+      "rect": [0, 16, 32, 16],
+      "font": "digits", "fit": true, "bind": "system.uptime_s", "format": "%d",
+      "color": "#FFFFFF", "align": "center" },
+
+    { "type": "text", "id": "wifi-label",
+      "rect": [32, 9, 32, 7],
+      "font": "sans", "fit": true, "text": "WIFI",
+      "color": "#8899AA", "align": "right" },
+
+    { "type": "text", "id": "rssi",
+      "rect": [32, 16, 32, 16],
+      "font": "display", "fit": true, "bind": "system.rssi", "format": "%d dBm",
+      "color": "#5AA0E0", "align": "right" }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "planner",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "date", "id": "date",
+      "rect": [0, 0, 64, 7],
+      "font": "display", "fit": true, "format": "%a %e %b",
+      "color": "#7A8A99", "align": "center" },
+
+    { "type": "agenda", "id": "agenda",
+      "rect": [0, 8, 32, 24],
+      "font": "display", "fit": true,
+      "color": "#FFFFFF", "accent": "#66D9EF",
+      "max_items": 4, "line_gap": 1, "show_time": false },
+
+    { "type": "todo", "id": "todo",
+      "rect": [32, 8, 32, 24],
+      "font": "display", "fit": true,
+      "color": "#DDDDDD", "accent": "#A0E060",
+      "max_items": 4, "line_gap": 1, "hide_done": false }
+  ]
+}

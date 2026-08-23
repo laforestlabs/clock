@@ -1,0 +1,71 @@
+{
+  "name": "status",
+  "canvas": { "width": 128, "height": 64 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "text", "id": "status-header",
+      "rect": [2, 2, 60, 8],
+      "font": "display", "fit": true, "text": "STATUS",
+      "color": "#FF9F43", "align": "left" },
+
+    { "type": "clock", "id": "clock",
+      "rect": [66, 2, 60, 8],
+      "font": "display", "fit": true, "format": "%H:%M",
+      "color": "#00E5FF", "align": "right" },
+
+    { "type": "line", "id": "rule-top",
+      "rect": [2, 12, 124, 1],
+      "color": "#1E2A33" },
+
+    { "type": "rect", "id": "card-uptime",
+      "rect": [2, 15, 60, 47],
+      "color": "#1E2A33", "bg": "#0A1620" },
+
+    { "type": "text", "id": "uptime-label",
+      "rect": [5, 18, 54, 7],
+      "font": "sans", "fit": true, "text": "UPTIME",
+      "color": "#8899AA", "align": "center" },
+
+    { "type": "text", "id": "uptime",
+      "rect": [5, 26, 54, 22],
+      "font": "digits", "fit": true, "bind": "system.uptime_s", "format": "%d",
+      "color": "#FFFFFF", "align": "center" },
+
+    { "type": "text", "id": "uptime-unit",
+      "rect": [5, 50, 54, 7],
+      "font": "sans", "fit": true, "text": "SECONDS",
+      "color": "#8899AA", "align": "center" },
+
+    { "type": "text", "id": "wifi-label",
+      "rect": [66, 16, 60, 7],
+      "font": "sans", "fit": true, "text": "WIFI",
+      "color": "#8899AA", "align": "left" },
+
+    { "type": "text", "id": "rssi",
+      "rect": [66, 24, 60, 14],
+      "font": "display", "fit": true, "bind": "system.rssi", "format": "%d dBm",
+      "color": "#5AA0E0", "align": "left" },
+
+    { "type": "text", "id": "events-label",
+      "rect": [66, 41, 60, 7],
+      "font": "sans", "fit": true, "text": "EVENTS",
+      "color": "#8899AA", "align": "left" },
+
+    { "type": "text", "id": "events",
+      "rect": [66, 49, 28, 12],
+      "font": "digits", "fit": true, "bind": "counts.events", "format": "%d",
+      "color": "#FFFFFF", "align": "left" },
+
+    { "type": "text", "id": "todos-label",
+      "rect": [96, 41, 30, 7],
+      "font": "sans", "fit": true, "text": "TODOS",
+      "color": "#8899AA", "align": "left" },
+
+    { "type": "text", "id": "todos",
+      "rect": [96, 49, 30, 12],
+      "font": "digits", "fit": true, "bind": "counts.todos", "format": "%d",
+      "color": "#FFFFFF", "align": "left" }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "name": "bigclock",
+  "canvas": { "width": 128, "height": 64 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "clock", "id": "clock",
+      "rect": [0, 2, 88, 60],
+      "font": "digits", "fit": true, "format": "%H:%M",
+      "color": "#00E5FF", "align": "center", "valign": "middle" },
+
+    { "type": "line", "id": "divider",
+      "rect": [90, 2, 1, 60],
+      "color": "#1E2A33" },
+
+    { "type": "date", "id": "day",
+      "rect": [92, 2, 36, 18],
+      "font": "digits", "fit": true, "format": "%e",
+      "color": "#FFFFFF", "align": "center" },
+
+    { "type": "date", "id": "weekday",
+      "rect": [92, 22, 36, 10],
+      "font": "display", "fit": true, "format": "%A",
+      "color": "#7A8A99", "align": "center" },
+
+    { "type": "date", "id": "month",
+      "rect": [92, 34, 36, 10],
+      "font": "display", "fit": true, "format": "%B",
+      "color": "#7A8A99", "align": "center" },
+
+    { "type": "weather", "id": "wx",
+      "rect": [92, 47, 36, 15],
+      "font": "display", "fit": true,
+      "color": "#FFFFFF", "accent": "#66D9EF", "align": "center" }
+  ]
+}

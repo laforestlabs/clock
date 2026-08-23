@@ -186,7 +186,7 @@ menu "Smart Mirror"
             help
                 One P2.5-64x32 gives the 64x32 canvas the default layout is
                 tuned for. Two 64x64 panels side by side instead gives 128x64,
-                which is what layouts/dual.json expects.
+                which is what layouts/dual-128x64.json expects.
 
         config MIRROR_PANEL_ROWS
             int "Panels down"

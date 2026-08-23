@@ -223,6 +223,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _toast('Opened ${layout.name}');
   }
 
+  /// Stock presets that match the currently connected panel. With no
+  /// connected panel (or one whose size the pong does not report) every
+  /// preset stays visible.
+  List<StockLayout> get _visibleStock {
+    final pong = _connection.pong;
+    return stockLayoutsForPanel(_stock, pong?.width ?? 0, pong?.height ?? 0);
+  }
+
   // -------------------------------------------------------------- keyboard
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -391,8 +399,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             const PopupMenuItem<String>(value: 'open', child: Text('Open...')),
             const PopupMenuItem<String>(value: 'save', child: Text('Save')),
             const PopupMenuItem<String>(value: 'saveAs', child: Text('Save as...')),
-            if (_stock.isNotEmpty) const PopupMenuDivider(),
-            for (final s in _stock)
+            if (_visibleStock.isNotEmpty) const PopupMenuDivider(),
+            for (final s in _visibleStock)
               PopupMenuItem<String>(
                 value: s.assetPath,
                 child: Text('Stock: ${s.name}'),

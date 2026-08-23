@@ -11,7 +11,8 @@
 | Mirror | Two-way acrylic or glass | Passes roughly 10 to 30 percent of light |
 
 Panel geometry is configurable, so 1, 2 or 4 panels all work with the same firmware.
-The stock layouts in `layouts/` cover 64x32, 64x64, 128x64 and 128x128.
+The active stock presets in `layouts/` are all authored for the default 64x32 panel;
+larger arrangements stay available as size-suffixed presets (e.g. `dual-128x64.json`).
 
 The default is the single **P2.5-64x32** and `layouts/mini.json`, a clock and the
 weather. It is the cheapest way to get a working mirror, and it is the one arrangement

@@ -359,7 +359,7 @@ core/       portable C99 render engine. No platform dependencies. The contract.
   host/             host-only: PNG writer and the CLI harness
   test/             unit tests and golden-image regression tests
 fonts/      editable ASCII-art font sources
-layouts/    stock layouts for 64x32 (the default), 64x64, 128x64 and 128x128
+layouts/    stock layouts, all 64x32 (the default); larger panels ship as size-suffixed presets
 tools/      fontgen, fontproof, gamma table generator
 docs/       hardware notes
 firmware/   ESP-IDF application: panel, wifi, clock, data providers

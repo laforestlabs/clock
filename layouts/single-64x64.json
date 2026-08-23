@@ -1,6 +1,6 @@
 {
-  "name": "quad",
-  "canvas": { "width": 64, "height": 32 },
+  "name": "single",
+  "canvas": { "width": 64, "height": 64 },
   "background": "#000000",
   "brightness": 200,
 
@@ -10,30 +10,35 @@
       "font": "display", "fit": true,
       "color": "#00E5FF", "align": "center" },
 
+    { "type": "date", "id": "date",
+      "rect": [0, 17, 64, 8],
+      "font": "display", "fit": true, "format": "%a %e %b",
+      "color": "#7A8A99", "align": "center" },
+
     { "type": "icon", "id": "wx-icon",
-      "rect": [0, 16, 16, 16],
+      "rect": [0, 26, 16, 16],
       "icon_set": "wx16", "bind": "weather.code",
       "color": "#FFD24D",
       "colors": ["#C9CDD6", "#5AA0E0", "#E8EEF4"] },
 
     { "type": "text", "id": "temp",
-      "rect": [18, 16, 28, 8],
+      "rect": [18, 27, 46, 8],
       "font": "display", "fit": true, "bind": "weather.temp",
       "color": "#FFFFFF" },
 
-    { "type": "text", "id": "high",
-      "rect": [48, 16, 16, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
-      "color": "#E06C5A" },
-
     { "type": "text", "id": "conditions",
-      "rect": [18, 24, 28, 8],
+      "rect": [18, 36, 46, 8],
       "font": "display", "fit": true, "bind": "weather.label",
       "color": "#8899AA" },
 
-    { "type": "text", "id": "low",
-      "rect": [48, 24, 16, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
-      "color": "#5AA0E0" }
+    { "type": "line", "id": "rule",
+      "rect": [2, 44, 60, 1],
+      "color": "#1E2A33" },
+
+    { "type": "agenda", "id": "agenda",
+      "rect": [1, 47, 62, 17],
+      "font": "display", "fit": true,
+      "color": "#FFFFFF", "accent": "#66D9EF",
+      "max_items": 2, "line_gap": 1, "show_time": true }
   ]
 }
