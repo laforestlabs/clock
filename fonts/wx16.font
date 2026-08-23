@@ -19,6 +19,7 @@
 #   48 '0'  clear          51 '3'  overcast      54 '6'  rain      57 '9'  storm
 #   49 '1'  fair           52 '4'  fog           55 '7'  snow
 #   50 '2'  cloudy         53 '5'  drizzle       56 '8'  showers
+#   58 ':'  water drop      (precipitation marker)
 
 @name     wx16
 @role     icons
@@ -219,3 +220,23 @@
   |......###.......|
   |.....##.........|
   |....#...........|
+
+# water drop: a lone droplet in the precipitation plane, used to mark a
+# precipitation chart without borrowing a weather-coded cloud icon.
+58
+  |................|
+  |.....~~~~~~.....|
+  |...~~~~~~~~~~...|
+  |...~~~~~~~~~~...|
+  |...~~~~~~~~~~...|
+  |....~~~~~~~~....|
+  |....~~~~~~~~....|
+  |.....~~~~~~.....|
+  |.....~~~~~~.....|
+  |......~~~~......|
+  |......~~~~......|
+  |.......~~.......|
+  |.......~~.......|
+  |.......~~.......|
+  |................|
+  |................|

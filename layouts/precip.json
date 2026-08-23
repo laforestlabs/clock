@@ -5,27 +5,32 @@
   "brightness": 200,
 
   "widgets": [
-    { "type": "date", "id": "date",
-      "rect": [1, 1, 38, 7],
-      "font": "display", "fit": true, "format": "%a %e %b",
-      "color": "#7A8A99", "align": "left" },
+    { "type": "text", "id": "high",
+      "rect": [1, 1, 18, 7],
+      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
+      "color": "#E06C5A", "align": "left" },
 
-    { "type": "text", "id": "place",
+    { "type": "text", "id": "low",
+      "rect": [20, 1, 18, 7],
+      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
+      "color": "#5AA0E0", "align": "left" },
+
+    { "type": "clock", "id": "clock",
       "rect": [40, 1, 23, 7],
-      "font": "display", "fit": true, "bind": "weather.place",
-      "color": "#5AA0E0", "align": "right" },
+      "font": "display", "fit": true, "format": "%l:%M",
+      "color": "#FFFFFF", "align": "right" },
 
     { "type": "line", "id": "rule-top",
       "rect": [1, 10, 62, 1],
       "color": "#1E2A33" },
 
-    { "type": "text", "id": "precip-label",
-      "rect": [1, 12, 62, 6],
-      "font": "sans", "fit": true, "text": "PRECIP NEXT 12H",
-      "color": "#8899AA", "align": "left" },
+    { "type": "icon", "id": "drop",
+      "rect": [2, 13, 12, 12],
+      "icon_set": "wx16", "text": ":", "fit": true,
+      "color": "#5AA0E0" },
 
     { "type": "precip", "id": "precip-chart",
-      "rect": [1, 19, 62, 12],
+      "rect": [16, 12, 47, 19],
       "color": "#5AA0E0", "accent": "#2A3B4D" }
   ]
 }

@@ -724,6 +724,15 @@ static void sample_temp(const ml_model *m, char *buf, size_t n)
  * sensible to draw. */
 static bool sample_icon(const ml_widget *w, const ml_model *m, char glyph[2])
 {
+    /* A literal glyph (e.g. ":" for the water drop) draws that fixed icon
+     * instead of resolving the current conditions. Lets a layout label a
+     * chart with a marker that does not depend on the weather. */
+    if (w->text[0]) {
+        glyph[0] = w->text[0];
+        glyph[1] = '\0';
+        return true;
+    }
+
     int category = 0;
     if (w->bind[0]) {
         bool        is_num = true;
@@ -933,10 +942,22 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 }
 
+/* A dashed horizontal rule: 2px on, 2px off, for reference lines a solid
+ * line would turn into a full-width bar. */
+static void dashed_hline(ml_canvas *c, int x, int y, int len, ml_rgb color)
+{
+    for (int i = 0; i < len; i += 4) {
+        int run = len - i;
+        if (run > 2) run = 2;
+        ml_canvas_hline(c, x + i, y, run, color);
+    }
+}
+
+
 /*
  * Precipitation chance over the next 12 hours, one vertical bar per hour.
  * Bar height is the 0..100 chance scaled to the box, drawn on a baseline with
- * faint 50% and 100% reference lines so the scale is readable without labels.
+ * dashed white 50% and 100% reference lines so the scale is readable without labels.
  * Reads m->weather.precip_hourly directly, like the weather block reads the
  * current conditions.
  */
@@ -956,11 +977,11 @@ static void draw_precip_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
         return;
     }
 
-    /* Reference lines sit behind the bars. The 50% and 100% lines only make
-     * sense when the box is tall enough that they do not crowd the bars. */
+    /* Dashed white reference lines at 50% and 100%, behind the bars, so the
+     * scale is readable without reading as solid full-width bars. */
     if (plot_h >= 12) {
-        ml_canvas_hline(c, w->rect.x, w->rect.y, plot_w, ref);
-        ml_canvas_hline(c, w->rect.x, w->rect.y + (plot_h - 1) / 2, plot_w, ref);
+        dashed_hline(c, w->rect.x, w->rect.y, plot_w, ml_white);
+        dashed_hline(c, w->rect.x, w->rect.y + (plot_h - 1) / 2, plot_w, ml_white);
     }
     ml_canvas_hline(c, w->rect.x, base_y, plot_w, ref);
 

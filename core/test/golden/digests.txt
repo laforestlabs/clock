@@ -22,7 +22,7 @@ quad:typical             7d632582f4cd0bbd
 quad:cold                91ad6a0ce6120de5
 quad:overflow            fdaaf0369a71555c
 quad:evening             befc251f7ae8280e
-precip:typical           3e2ee7c7b6de580e
-precip:cold              b764d1c424941d1e
-precip:overflow          a1989f4e4f5ab11a
-precip:evening           446cfeeb32ce4fee
+precip:typical           d8f2a5fabc2f03fc
+precip:cold              bd735ae706e0b45c
+precip:overflow          d88eba88d255633a
+precip:evening           1c102581b8d50e2c
