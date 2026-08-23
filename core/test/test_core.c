@@ -1615,7 +1615,7 @@ static void test_ffi(void)
     }
     CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
     CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
-    CHECK(ml_sim_type_count() == 10, "all widget types enumerated");
+    CHECK(ml_sim_type_count() == 11, "all widget types enumerated");
     CHECK(ml_sim_bind_count() > 10, "bind paths enumerated");
 
     /* Every advertised bind path must actually resolve, or the inspector would
@@ -1887,11 +1887,67 @@ static void test_countdown(void)
     ml_canvas_free(&c);
 }
 
+static bool px_black(ml_rgb p)
+{
+    return p.r == 0 && p.g == 0 && p.b == 0;
+}
+
+/*
+ * The precip chart: one full-height bar where the chance is 100%, nothing
+ * where it is 0%, and a baseline-only placeholder before the forecast lands.
+ */
+static void test_precip(void)
+{
+    group("precip chart");
+
+    const char *doc =
+        "{\"name\":\"p\",\"canvas\":{\"width\":48,\"height\":24},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"precip\",\"rect\":[0,0,48,24],"
+        "\"color\":\"#5AA0E0\",\"accent\":\"#2A3B4D\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "precip layout parses");
+    CHECK(diag.count == 0, "precip layout parses clean");
+
+    /* Hour 0 at 100%, the rest at zero: exactly one full-height bar. The box
+     * is 48 wide, so each of the 12 columns is 4px. */
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    for (int i = 0; i < ML_PRECIP_HOURS; i++) m.weather.precip_hourly[i] = 0;
+    m.weather.precip_hourly[0]     = 100;
+    m.weather.precip_hourly_valid  = true;
+
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "precip canvas allocates");
+    ml_render(&l, &m, &c);
+
+    /* Baseline is the bottom row; a 24px box puts it at y=23. */
+    CHECK(!px_black(ml_canvas_get(&c, 0, 23)), "baseline is drawn");
+    /* The 100% bar (column 0, x=1..2) inks a mid-height row... */
+    CHECK(!px_black(ml_canvas_get(&c, 1, 5)), "100% bar inks the middle");
+    /* ...while a zero-chance hour (column 1, x=5) stays dark there. */
+    CHECK(px_black(ml_canvas_get(&c, 5, 5)), "0% hour draws no bar");
+    ml_canvas_free(&c);
+
+    /* No forecast yet: baseline only, no bars and no reference lines. */
+    ml_model_mock(&m, ML_MOCK_COLD);
+    CHECK(!m.weather.precip_hourly_valid, "cold mock has no hourly forecast");
+
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "precip canvas allocates (cold)");
+    ml_render(&l, &m, &c);
+    CHECK(!px_black(ml_canvas_get(&c, 0, 23)), "placeholder baseline is drawn");
+    CHECK(px_black(ml_canvas_get(&c, 1, 0)), "placeholder draws no bars");
+    ml_canvas_free(&c);
+}
+
 static void test_golden(void)
 {
     group("golden images");
 
-    const char *layouts[] = {"mini", "dual", "single", "quad"};
+    const char *layouts[] = {"mini", "dual", "single", "quad", "precip"};
     bool update = getenv("MIRROR_UPDATE_GOLDEN") != NULL;
 
     golden_load();
@@ -2019,6 +2075,7 @@ int main(void)
     test_ffi();
     test_display_settings();
     test_countdown();
+    test_precip();
     test_golden();
 
     printf("\n%d checks, %d failure(s)\n", g_checks, g_fails);

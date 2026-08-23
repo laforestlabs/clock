@@ -22,6 +22,7 @@ extern "C" {
 #define ML_MAX_EVENTS   12
 #define ML_MAX_TODOS    12
 #define ML_TITLE_LEN    48
+#define ML_PRECIP_HOURS 12   /* hourly precipitation slots, next 12 hours */
 
 /* The degree sign lives in the unused DEL slot every font carries. Written as
  * its own string literal because a hex escape would otherwise swallow a
@@ -68,6 +69,13 @@ typedef struct {
     int   precip_prob;   /* 0..100 */
     bool  is_day;
     char  place[24];     /* short location label, may be empty */
+
+    /* Next 12 hours of precipitation probability, 0..100, starting at the
+     * current hour. Filled from Open-Meteo's hourly forecast; invalid until
+     * that arrives, so the precip chart can draw a placeholder rather than a
+     * confident flat zero. */
+    int   precip_hourly[ML_PRECIP_HOURS];
+    bool  precip_hourly_valid;
 } ml_weather;
 
 typedef struct {

@@ -66,6 +66,27 @@ static bool daily_first(const ml_json *j, int daily, const char *key, double *ou
     return ml_json_double(j, first, out);
 }
 
+/* Copy the first ML_PRECIP_HOURS entries of the "hourly" precipitation array.
+ * Open-Meteo returns exactly 12 entries when forecast_hours=12 is requested,
+ * starting at the current hour. */
+static void hourly_precip(const ml_json *j, int hourly, ml_weather *w)
+{
+    const int arr = ml_json_member(j, hourly, "precipitation_probability");
+    if (arr < 0) return;
+
+    int n = ml_json_array_count(j, arr);
+    if (n > ML_PRECIP_HOURS) n = ML_PRECIP_HOURS;
+
+    for (int i = 0; i < n; i++) {
+        int e     = ml_json_array_at(j, arr, i);
+        int value = 0;
+        if (e >= 0 && ml_json_int(j, e, &value)) {
+            w->precip_hourly[i] = value;
+        }
+    }
+    if (n > 0) w->precip_hourly_valid = true;
+}
+
 static esp_err_t openmeteo_refresh(void)
 {
     char url[512];
@@ -79,7 +100,8 @@ static esp_err_t openmeteo_refresh(void)
              "&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
              "weather_code,is_day,wind_speed_10m"
              "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
-             "&forecast_days=1&timezone=auto",
+             "&hourly=precipitation_probability"
+             "&forecast_days=1&forecast_hours=12&timezone=auto",
              mirror_config_latitude(), mirror_config_longitude());
 
     size_t len = 0;
@@ -154,6 +176,11 @@ static esp_err_t openmeteo_refresh(void)
         if (daily_first(&j, daily, "precipitation_probability_max", &value)) {
             w.precip_prob = (int)value;
         }
+    }
+
+    const int hourly = ml_json_member(&j, 0, "hourly");
+    if (hourly >= 0) {
+        hourly_precip(&j, hourly, &w);
     }
 
     w.valid = true;

@@ -147,6 +147,9 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
     _align,
     _valign,
   ],
+  'precip': <FieldSpec>[
+    _accent,
+  ],
 };
 
 List<FieldSpec> fieldsFor(String type) => _byType[type] ?? const <FieldSpec>[];

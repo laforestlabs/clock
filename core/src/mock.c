@@ -26,6 +26,20 @@ static void add_todo(ml_model *m, const char *text, bool done, int priority)
     snprintf(t->text, sizeof(t->text), "%s", text);
 }
 
+/* Hourly precipitation chance fixtures for the precip chart widget. */
+static const int k_precip_typical[ML_PRECIP_HOURS] =
+    {5, 5, 5, 10, 10, 15, 20, 25, 30, 25, 20, 15};
+static const int k_precip_overflow[ML_PRECIP_HOURS] =
+    {95, 95, 90, 90, 95, 95, 90, 85, 90, 95, 95, 90};
+static const int k_precip_evening[ML_PRECIP_HOURS] =
+    {80, 85, 90, 85, 70, 60, 55, 50, 45, 40, 35, 30};
+
+static void set_precip(ml_weather *w, const int *vals)
+{
+    for (int i = 0; i < ML_PRECIP_HOURS; i++) w->precip_hourly[i] = vals[i];
+    w->precip_hourly_valid = true;
+}
+
 const char *ml_mock_name(int variant)
 {
     switch (variant) {
@@ -80,6 +94,7 @@ void ml_model_mock(ml_model *m, int variant)
         m->weather.precip_prob  = 95;
         m->weather.is_day       = true;
         snprintf(m->weather.place, sizeof(m->weather.place), "Longplacename");
+        set_precip(&m->weather, k_precip_overflow);
 
         add_event(m, "Quarterly planning review with the whole team", 9 * 60 + 0, false);
         add_event(m, "1:1 Alex", 11 * 60 + 30, false);
@@ -110,6 +125,7 @@ void ml_model_mock(ml_model *m, int variant)
         m->weather.precip_prob  = 80;
         m->weather.is_day       = false;
         snprintf(m->weather.place, sizeof(m->weather.place), "Home");
+        set_precip(&m->weather, k_precip_evening);
         /* No events and no todos: exercises the empty-state strings. */
         return;
 
@@ -126,6 +142,7 @@ void ml_model_mock(ml_model *m, int variant)
         m->weather.precip_prob  = 15;
         m->weather.is_day       = true;
         snprintf(m->weather.place, sizeof(m->weather.place), "Home");
+        set_precip(&m->weather, k_precip_typical);
 
         add_event(m, "Standup", 10 * 60 + 0, false);
         add_event(m, "Design review", 11 * 60 + 30, false);

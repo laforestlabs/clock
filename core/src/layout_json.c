@@ -47,6 +47,7 @@ static const struct {
     {ML_W_AGENDA,  "agenda"},
     {ML_W_TODO,    "todo"},
     {ML_W_COUNTDOWN, "countdown"},
+    {ML_W_PRECIP,    "precip"},
 };
 
 ml_widget_type ml_widget_type_from_name(const char *name)

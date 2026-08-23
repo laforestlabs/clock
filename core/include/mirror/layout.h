@@ -48,7 +48,8 @@ typedef enum {
     ML_W_ICON,
     ML_W_AGENDA,
     ML_W_TODO,
-    ML_W_COUNTDOWN
+    ML_W_COUNTDOWN,
+    ML_W_PRECIP
 } ml_widget_type;
 
 typedef enum {

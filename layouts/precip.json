@@ -1,0 +1,31 @@
+{
+  "name": "precip",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "date", "id": "date",
+      "rect": [1, 1, 38, 7],
+      "font": "display", "fit": true, "format": "%a %e %b",
+      "color": "#7A8A99", "align": "left" },
+
+    { "type": "text", "id": "place",
+      "rect": [40, 1, 23, 7],
+      "font": "display", "fit": true, "bind": "weather.place",
+      "color": "#5AA0E0", "align": "right" },
+
+    { "type": "line", "id": "rule-top",
+      "rect": [1, 10, 62, 1],
+      "color": "#1E2A33" },
+
+    { "type": "text", "id": "precip-label",
+      "rect": [1, 12, 62, 6],
+      "font": "sans", "fit": true, "text": "PRECIP NEXT 12H",
+      "color": "#8899AA", "align": "left" },
+
+    { "type": "precip", "id": "precip-chart",
+      "rect": [1, 19, 62, 12],
+      "color": "#5AA0E0", "accent": "#2A3B4D" }
+  ]
+}

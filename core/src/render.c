@@ -933,6 +933,58 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 }
 
+/*
+ * Precipitation chance over the next 12 hours, one vertical bar per hour.
+ * Bar height is the 0..100 chance scaled to the box, drawn on a baseline with
+ * faint 50% and 100% reference lines so the scale is readable without labels.
+ * Reads m->weather.precip_hourly directly, like the weather block reads the
+ * current conditions.
+ */
+static void draw_precip_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    const int plot_w = w->rect.w;
+    const int plot_h = w->rect.h;
+    const int base_y = w->rect.y + plot_h - 1;
+
+    const ml_rgb bar = w->color;
+    const ml_rgb ref = secondary(w);
+
+    if (!m->weather.precip_hourly_valid) {
+        /* No forecast yet: just the baseline, so the box reads as an empty
+         * chart rather than a confident flat zero. */
+        ml_canvas_hline(c, w->rect.x, base_y, plot_w, ref);
+        return;
+    }
+
+    /* Reference lines sit behind the bars. The 50% and 100% lines only make
+     * sense when the box is tall enough that they do not crowd the bars. */
+    if (plot_h >= 12) {
+        ml_canvas_hline(c, w->rect.x, w->rect.y, plot_w, ref);
+        ml_canvas_hline(c, w->rect.x, w->rect.y + (plot_h - 1) / 2, plot_w, ref);
+    }
+    ml_canvas_hline(c, w->rect.x, base_y, plot_w, ref);
+
+    for (int i = 0; i < ML_PRECIP_HOURS; i++) {
+        int prob = m->weather.precip_hourly[i];
+        if (prob < 0)   prob = 0;
+        if (prob > 100) prob = 100;
+
+        const int x0 = w->rect.x + (plot_w * i) / ML_PRECIP_HOURS;
+        const int x1 = w->rect.x + (plot_w * (i + 1)) / ML_PRECIP_HOURS;
+        /* A one-pixel gap keeps the hours distinct, but only once the columns
+         * are wide enough to survive losing it. */
+        const int pad = (x1 - x0 >= 4) ? 1 : 0;
+        const int bx0 = x0 + pad;
+        const int bx1 = x1 - pad;
+        if (bx1 <= bx0) continue;
+
+        const int bar_h = (prob * (plot_h - 1) + 99) / 100;
+        if (bar_h <= 0) continue;
+
+        ml_canvas_fill_rect(c, ML_RECT(bx0, base_y - bar_h, bx1 - bx0, bar_h), bar);
+    }
+}
+
 static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     /*
@@ -1129,6 +1181,7 @@ void ml_render_widget(const ml_widget *w, const ml_model *m, ml_canvas *c)
     case ML_W_AGENDA:  draw_agenda_w(w, m, c);  break;
     case ML_W_TODO:    draw_todo_w(w, m, c);    break;
     case ML_W_COUNTDOWN: draw_countdown_w(w, m, c); break;
+    case ML_W_PRECIP:   draw_precip_w(w, m, c); break;
     default: break;
     }
 

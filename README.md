@@ -113,7 +113,14 @@ The four mock variants exist to exercise the paths that break in the field:
 }
 ```
 
-Widget types: `rect`, `line`, `text`, `clock`, `date`, `weather`, `icon`, `agenda`, `todo`.
+Widget types: `rect`, `line`, `text`, `clock`, `date`, `weather`, `icon`, `agenda`,
+`todo`, `countdown`, `precip`.
+
+`precip` plots the precipitation chance over the next 12 hours as a bar chart:
+one bar per hour, height proportional to the 0..100 chance, on a baseline with
+faint 50% and 100% reference lines. It reads `weather.precip_hourly` from the
+model, which Open-Meteo fills from its hourly forecast, so a mirror that has
+not fetched a forecast yet draws just the baseline rather than a flat zero.
 
 Bindings are dotted paths into the model: `weather.temp`, `weather.label`,
 `weather.code`, `now.hour`, `system.rssi`, `counts.events`, and so on. See
