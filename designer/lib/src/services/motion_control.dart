@@ -43,7 +43,7 @@ class MotionControl {
   /// positive Y is down, matching a canvas. Each saturates at ~29 degrees of
   /// tilt; both are 0 before calibration.
   int get tiltXAxis => _axis(_lr);
-  int get tiltYAxis => _axis(-_ud);
+  int get tiltYAxis => _axis(_ud);
 
   static int _axis(double rad) {
     const double maxRad = 0.5; // ~29 degrees saturates the axis
