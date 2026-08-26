@@ -7,12 +7,12 @@
   "widgets": [
     { "type": "clock", "id": "clock",
       "rect": [0, 0, 62, 17],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#00E5FF", "align": "center" },
 
     { "type": "date", "id": "date",
       "rect": [0, 19, 62, 8],
-      "font": "display", "fit": true, "format": "%a %e %b",
+      "font": "display-thin", "fit": true, "format": "%a %e %b",
       "color": "#7A8A99", "align": "center" },
 
     { "type": "line", "id": "rule-left",
@@ -27,22 +27,22 @@
 
     { "type": "text", "id": "temp",
       "rect": [20, 32, 42, 8],
-      "font": "display", "fit": true, "bind": "weather.temp",
+      "font": "display-thin", "fit": true, "bind": "weather.temp",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "conditions",
       "rect": [20, 41, 42, 8],
-      "font": "display", "fit": true, "bind": "weather.label",
+      "font": "display-thin", "fit": true, "bind": "weather.label",
       "color": "#8899AA" },
 
     { "type": "text", "id": "high",
       "rect": [1, 51, 29, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
       "color": "#E06C5A" },
 
     { "type": "text", "id": "low",
       "rect": [32, 51, 29, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
       "color": "#5AA0E0" },
 
     { "type": "line", "id": "divider",
@@ -51,12 +51,12 @@
 
     { "type": "text", "id": "agenda-header",
       "rect": [66, 0, 60, 8],
-      "font": "display", "fit": true, "text": "TODAY",
+      "font": "display-thin", "fit": true, "text": "TODAY",
       "color": "#FF9F43" },
 
     { "type": "agenda", "id": "agenda",
       "rect": [66, 9, 62, 26],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#FFFFFF", "accent": "#66D9EF",
       "max_items": 3, "line_gap": 1, "show_time": true },
 
@@ -66,12 +66,12 @@
 
     { "type": "text", "id": "todo-header",
       "rect": [66, 40, 60, 8],
-      "font": "display", "fit": true, "text": "TODO",
+      "font": "display-thin", "fit": true, "text": "TODO",
       "color": "#FF9F43" },
 
     { "type": "todo", "id": "todo",
       "rect": [66, 49, 62, 15],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#DDDDDD", "accent": "#A0E060",
       "max_items": 2, "line_gap": 0, "hide_done": true }
   ]

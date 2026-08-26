@@ -11,12 +11,12 @@
 
     { "type": "text", "id": "title",
       "rect": [4, 5, 120, 8],
-      "font": "display", "fit": true, "text": "NEW YEAR 2027",
+      "font": "display-thin", "fit": true, "text": "NEW YEAR 2027",
       "color": "#FF9F43", "align": "center" },
 
     { "type": "countdown", "id": "countdown",
       "rect": [4, 16, 120, 30],
-      "font": "display", "fit": true, "until": 1798761600,
+      "font": "display-thin", "fit": true, "until": 1798761600,
       "color": "#FFFFFF", "align": "center", "valign": "middle" },
 
     { "type": "line", "id": "rule",
@@ -25,7 +25,7 @@
 
     { "type": "clock", "id": "clock",
       "rect": [4, 52, 120, 10],
-      "font": "display", "fit": true, "format": "%H:%M:%S",
+      "font": "display-thin", "fit": true, "format": "%H:%M:%S",
       "color": "#00E5FF", "align": "center" }
   ]
 }

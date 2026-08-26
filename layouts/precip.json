@@ -7,17 +7,17 @@
   "widgets": [
     { "type": "text", "id": "high",
       "rect": [1, 1, 18, 7],
-      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
       "color": "#E06C5A", "align": "left" },
 
     { "type": "text", "id": "low",
       "rect": [20, 1, 18, 7],
-      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
       "color": "#5AA0E0", "align": "left" },
 
     { "type": "clock", "id": "clock",
       "rect": [40, 1, 23, 7],
-      "font": "display", "fit": true, "format": "%l:%M",
+      "font": "display-thin", "fit": true, "format": "%l:%M",
       "color": "#FFFFFF", "align": "right" },
 
     { "type": "line", "id": "rule-top",

@@ -7,7 +7,7 @@
   "widgets": [
     { "type": "clock", "id": "clock",
       "rect": [0, 0, 64, 16],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#00E5FF", "align": "center" },
 
     { "type": "icon", "id": "wx-icon",
@@ -18,22 +18,22 @@
 
     { "type": "text", "id": "temp",
       "rect": [18, 16, 28, 8],
-      "font": "display", "fit": true, "bind": "weather.temp",
+      "font": "display-thin", "fit": true, "bind": "weather.temp",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "high",
       "rect": [48, 16, 16, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
       "color": "#E06C5A" },
 
     { "type": "text", "id": "conditions",
       "rect": [18, 24, 28, 8],
-      "font": "display", "fit": true, "bind": "weather.label",
+      "font": "display-thin", "fit": true, "bind": "weather.label",
       "color": "#8899AA" },
 
     { "type": "text", "id": "low",
       "rect": [48, 24, 16, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
       "color": "#5AA0E0" }
   ]
 }

@@ -7,12 +7,12 @@
   "widgets": [
     { "type": "text", "id": "status-header",
       "rect": [2, 2, 60, 8],
-      "font": "display", "fit": true, "text": "STATUS",
+      "font": "display-thin", "fit": true, "text": "STATUS",
       "color": "#FF9F43", "align": "left" },
 
     { "type": "clock", "id": "clock",
       "rect": [66, 2, 60, 8],
-      "font": "display", "fit": true, "format": "%H:%M",
+      "font": "display-thin", "fit": true, "format": "%H:%M",
       "color": "#00E5FF", "align": "right" },
 
     { "type": "line", "id": "rule-top",
@@ -45,7 +45,7 @@
 
     { "type": "text", "id": "rssi",
       "rect": [66, 24, 60, 14],
-      "font": "display", "fit": true, "bind": "system.rssi", "format": "%d dBm",
+      "font": "display-thin", "fit": true, "bind": "system.rssi", "format": "%d dBm",
       "color": "#5AA0E0", "align": "left" },
 
     { "type": "text", "id": "events-label",

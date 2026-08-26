@@ -21,17 +21,17 @@
 
     { "type": "date", "id": "weekday",
       "rect": [92, 22, 36, 10],
-      "font": "display", "fit": true, "format": "%A",
+      "font": "display-thin", "fit": true, "format": "%A",
       "color": "#7A8A99", "align": "center" },
 
     { "type": "date", "id": "month",
       "rect": [92, 34, 36, 10],
-      "font": "display", "fit": true, "format": "%B",
+      "font": "display-thin", "fit": true, "format": "%B",
       "color": "#7A8A99", "align": "center" },
 
     { "type": "weather", "id": "wx",
       "rect": [92, 47, 36, 15],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#FFFFFF", "accent": "#66D9EF", "align": "center" }
   ]
 }

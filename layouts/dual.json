@@ -7,7 +7,7 @@
   "widgets": [
     { "type": "clock", "id": "clock",
       "rect": [0, 0, 64, 16],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#00E5FF", "align": "center" },
 
     { "type": "icon", "id": "wx-icon",
@@ -18,17 +18,17 @@
 
     { "type": "text", "id": "temp",
       "rect": [18, 16, 46, 8],
-      "font": "display", "fit": true, "bind": "weather.temp",
+      "font": "display-thin", "fit": true, "bind": "weather.temp",
       "color": "#FFFFFF" },
 
     { "type": "text", "id": "high",
       "rect": [18, 24, 22, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_max", "format": "H%.0f",
       "color": "#E06C5A" },
 
     { "type": "text", "id": "low",
       "rect": [42, 24, 22, 8],
-      "font": "display", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
+      "font": "display-thin", "fit": true, "bind": "weather.temp_min", "format": "L%.0f",
       "color": "#5AA0E0" }
   ]
 }

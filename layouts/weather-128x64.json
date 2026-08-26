@@ -7,12 +7,12 @@
   "widgets": [
     { "type": "date", "id": "date",
       "rect": [2, 2, 60, 8],
-      "font": "display", "fit": true, "format": "%A %e %b",
+      "font": "display-thin", "fit": true, "format": "%A %e %b",
       "color": "#7A8A99", "align": "left" },
 
     { "type": "text", "id": "place",
       "rect": [64, 2, 62, 8],
-      "font": "display", "fit": true, "bind": "weather.place",
+      "font": "display-thin", "fit": true, "bind": "weather.place",
       "color": "#5AA0E0", "align": "right" },
 
     { "type": "line", "id": "rule-top",
@@ -31,7 +31,7 @@
 
     { "type": "weather", "id": "wx-block",
       "rect": [6, 41, 42, 18],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#FFFFFF", "accent": "#66D9EF", "line_gap": 1 },
 
     { "type": "rect", "id": "card-right",
@@ -45,7 +45,7 @@
 
     { "type": "text", "id": "wind",
       "rect": [59, 26, 63, 12],
-      "font": "display", "fit": true, "bind": "weather.wind_kph", "format": "%.0f kph",
+      "font": "display-thin", "fit": true, "bind": "weather.wind_kph", "format": "%.0f kph",
       "color": "#FFFFFF", "align": "left" },
 
     { "type": "line", "id": "rule-mid",
@@ -59,7 +59,7 @@
 
     { "type": "text", "id": "humidity",
       "rect": [59, 52, 63, 9],
-      "font": "display", "fit": true, "bind": "weather.humidity_pct", "format": "%.0f%%",
+      "font": "display-thin", "fit": true, "bind": "weather.humidity_pct", "format": "%.0f%%",
       "color": "#FFFFFF", "align": "left" }
   ]
 }

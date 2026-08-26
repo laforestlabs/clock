@@ -12,7 +12,7 @@
 
     { "type": "date", "id": "date",
       "rect": [0, 24, 64, 8],
-      "font": "display", "fit": true, "format": "%a %e %b",
+      "font": "display-thin", "fit": true, "format": "%a %e %b",
       "color": "#7A8A99", "align": "center" }
   ]
 }

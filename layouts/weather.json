@@ -7,12 +7,12 @@
   "widgets": [
     { "type": "date", "id": "date",
       "rect": [0, 0, 40, 7],
-      "font": "display", "fit": true, "format": "%a %e %b",
+      "font": "display-thin", "fit": true, "format": "%a %e %b",
       "color": "#7A8A99", "align": "left" },
 
     { "type": "text", "id": "place",
       "rect": [40, 0, 24, 7],
-      "font": "display", "fit": true, "bind": "weather.place",
+      "font": "display-thin", "fit": true, "bind": "weather.place",
       "color": "#5AA0E0", "align": "right" },
 
     { "type": "icon", "id": "wx-icon",
@@ -23,7 +23,7 @@
 
     { "type": "weather", "id": "wx-block",
       "rect": [22, 8, 42, 24],
-      "font": "display", "fit": true,
+      "font": "display-thin", "fit": true,
       "color": "#FFFFFF", "accent": "#66D9EF", "line_gap": 1 }
   ]
 }
