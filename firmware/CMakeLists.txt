@@ -19,4 +19,4 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # the app image descriptor and is what /api/status, the BLE pong and the OTA
 # filename report. Never reuse a version for a different build: two builds
 # that share a version are indistinguishable on the board and over OTA.
-project(smart_mirror VERSION 0.2.19)
+project(smart_mirror VERSION 0.2.20)
