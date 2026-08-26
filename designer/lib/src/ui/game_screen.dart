@@ -488,6 +488,14 @@ class _GameScreenState extends State<GameScreen>
   // act on it. This is the fix: as long as the Focus wrapping the body is the
   // primary focus, arrows never escape to move focus between widgets.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    // The body Focus is only the gamepad while it is the primary focus. A
+    // child control (the veneer slider, LED switch, or a dropdown) that has
+    // focus owns its keys, so hand them back instead of consuming arrows and
+    // space as game input.
+    if (FocusManager.instance.primaryFocus != node) {
+      return KeyEventResult.ignored;
+    }
+
     // Consume arrow keys on every event type, including KeyRepeatEvent.
     // A held arrow key produces KeyDown then a stream of KeyRepeatEvents;
     // returning ignored for those lets Flutter's directional focus traversal

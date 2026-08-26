@@ -23,6 +23,19 @@ const double _wideBreakpoint = 900;
 /// menu, so the actions row cannot overflow on a phone.
 const double _appBarBreakpoint = 600;
 
+/// Whether the keyboard focus is currently inside an editable text region:
+/// a TextField/TextFormField, or any other widget built on [EditableText].
+///
+/// Kept separate from the workspace key handler so a focused field owns its
+/// caret. Without this guard, backspace and delete would delete the selected
+/// widget instead of a character, the arrows would nudge it instead of moving
+/// the caret, and Ctrl+Z would undo the layout instead of the text.
+bool hasTextEditingFocus() {
+  final context = FocusManager.instance.primaryFocus?.context;
+  return context != null &&
+      context.findAncestorWidgetOfExactType<EditableText>() != null;
+}
+
 class WorkspaceScreen extends StatefulWidget {
   const WorkspaceScreen({super.key, required this.engine});
 
@@ -239,8 +252,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       return KeyEventResult.ignored;
     }
 
-    final shift = HardwareKeyboard.instance.isShiftPressed;
     final control = HardwareKeyboard.instance.isControlPressed;
+    if (hasTextEditingFocus()) {
+      // Saving has no meaning inside a text field, so it stays available while
+      // typing; every other shortcut is handed back to the field.
+      if (control && event.logicalKey == LogicalKeyboardKey.keyS) {
+        _save();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    final shift = HardwareKeyboard.instance.isShiftPressed;
     final step = shift ? 5 : 1;
 
     // Holding control turns the arrows into a resize, growing right and down.
@@ -272,7 +295,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         return KeyEventResult.handled;
     }
 
-    if (HardwareKeyboard.instance.isControlPressed) {
+    if (control) {
       if (event.logicalKey == LogicalKeyboardKey.keyZ) {
         shift ? _c.redo() : _c.undo();
         return KeyEventResult.handled;
