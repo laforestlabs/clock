@@ -254,6 +254,20 @@ esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)
         return ESP_ERR_INVALID_ARG;
     }
 
+    /* Refuse a layout authored for a different panel geometry. It would render
+     * clipped, and half the widgets silently vanishing is worse than a clear
+     * rejection. The designer blocks this before pushing; this is the
+     * device-side backstop for a hand-edited or third-party layout. */
+    if (candidate->w != panel_width() || candidate->h != panel_height()) {
+        if (diag != NULL) {
+            ml_diag_add(diag, "layout is %dx%d but this panel is %dx%d",
+                        candidate->w, candidate->h,
+                        panel_width(), panel_height());
+        }
+        heap_caps_free(candidate);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     lock();
     s_layout = *candidate;
     unlock();

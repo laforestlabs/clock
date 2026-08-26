@@ -16,9 +16,10 @@ import '../controller.dart';
 import 'handles.dart';
 
 class PanelView extends StatefulWidget {
-  const PanelView({super.key, required this.controller});
+  const PanelView({super.key, required this.controller, this.readOnly = false});
 
   final DesignerController controller;
+  final bool readOnly;
 
   @override
   State<PanelView> createState() => _PanelViewState();
@@ -227,62 +228,68 @@ class _PanelViewState extends State<PanelView> {
           constrained: false,
           minScale: 1,
           maxScale: 1,
-          child: MouseRegion(
-            cursor: _cursor,
-            onHover: (event) =>
-                _setHover(_selectionHandles?.hitTest(event.localPosition)),
-            onExit: (_) => _setHover(null),
-            // GestureDetector does not expose the pointer-down position, and by
-            // the time a pan is recognised the pointer has already left the
-            // handle. This records where the press actually landed.
-            child: Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (event) => _pressLocal = event.localPosition,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: _onTapDown,
-                onPanStart: _onPanStart,
-                onPanUpdate: _onPanUpdate,
-                onPanEnd: _onPanEnd,
-                onPanCancel: _endGesture,
-                child: SizedBox(
-                  width: w,
-                  height: h,
-                  child: Stack(
-                    children: <Widget>[
-                      // In its own layer so dragging a selection around does
-                      // not re-rasterise the emitter field underneath.
-                      RepaintBoundary(
-                        child: CustomPaint(
-                          size: Size(w, h),
-                          isComplex: true,
-                          painter: _PanelPainter(
-                            image: _c.image,
-                            frame: _c.frame,
-                            zoom: _c.zoom,
-                            ledPixels: _c.ledPixels,
-                            veneer: _c.veneer,
-                            canvasWidth: _c.doc.width,
-                            canvasHeight: _c.doc.height,
-                          ),
+          child: widget.readOnly
+              ? SizedBox(width: w, height: h, child: _paintPanel(w, h))
+              : MouseRegion(
+                  cursor: _cursor,
+                  onHover: (event) =>
+                      _setHover(_selectionHandles?.hitTest(event.localPosition)),
+                  onExit: (_) => _setHover(null),
+                  // GestureDetector does not expose the pointer-down position, and by
+                  // the time a pan is recognised the pointer has already left the
+                  // handle. This records where the press actually landed.
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (event) => _pressLocal = event.localPosition,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: _onTapDown,
+                      onPanStart: _onPanStart,
+                      onPanUpdate: _onPanUpdate,
+                      onPanEnd: _onPanEnd,
+                      onPanCancel: _endGesture,
+                      child: SizedBox(
+                        width: w,
+                        height: h,
+                        child: Stack(
+                          children: <Widget>[
+                            _paintPanel(w, h),
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: _ChromePainter(
+                                  zoom: _c.zoom,
+                                  selection: selection,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: _ChromePainter(
-                            zoom: _c.zoom,
-                            selection: selection,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
         );
       },
+    );
+  }
+
+  /// The emitter field in its own layer, so dragging a selection around does
+  /// not re-rasterise the emitters underneath.
+  Widget _paintPanel(double w, double h) {
+    return RepaintBoundary(
+      child: CustomPaint(
+        size: Size(w, h),
+        isComplex: true,
+        painter: _PanelPainter(
+          image: _c.image,
+          frame: _c.frame,
+          zoom: _c.zoom,
+          ledPixels: _c.ledPixels,
+          veneer: _c.veneer,
+          canvasWidth: _c.doc.width,
+          canvasHeight: _c.doc.height,
+        ),
+      ),
     );
   }
 }

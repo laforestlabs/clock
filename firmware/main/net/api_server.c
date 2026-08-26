@@ -93,7 +93,7 @@ static esp_err_t handle_get_status(httpd_req_t *req)
              wifi_is_connected() ? "true" : "false",
              wifi_rssi(),
              (unsigned long long)(esp_timer_get_time() / 1000000),
-             esc_name, layout.w, layout.h,
+             esc_name, panel_width(), panel_height(),
              (unsigned)panel_get_brightness());
 
     httpd_resp_set_type(req, "application/json");

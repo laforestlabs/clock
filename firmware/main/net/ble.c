@@ -244,11 +244,12 @@ static void cmd_ping(void)
 
     /* The version token is the app image version (esp_app_get_description),
      * not the render core version: it is what the phone shows next to the
-     * firmware update, and an OTA must be verifiable. The app uses the
-     * pong's IP for the WiFi OTA upload. */
+     * firmware update, and an OTA must be verifiable. The app uses the pong's
+     * IP for the WiFi OTA upload, and its width/height as the panel geometry,
+     * so those must be the hardware size, not the stored layout's. */
     send_status("pong %s %s %s %d %d",
                 esp_app_get_description()->version, wifi_ip(),
-                layout.name, layout.w, layout.h);
+                layout.name, panel_width(), panel_height());
 }
 
 static void cmd_get_config(void)

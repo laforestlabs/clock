@@ -115,6 +115,8 @@ Future<BlePermissionGate> ensureBlePermissions() async {
 class MirrorConnection extends ChangeNotifier {
   static const String _lastIdKey = 'last_ble_device_id';
   static const String _lastNameKey = 'last_ble_device_name';
+  static const String _lastWidthKey = 'last_panel_width';
+  static const String _lastHeightKey = 'last_panel_height';
 
   MirrorConnectionStatus _status = MirrorConnectionStatus.disconnected;
   MirrorConnectionStatus get status => _status;
@@ -131,6 +133,26 @@ class MirrorConnection extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
+  int? _lastPanelWidth;
+  int? _lastPanelHeight;
+
+  /// The last panel size the mirror reported, remembered across launches so
+  /// stock layouts stay filtered to the right hardware after a disconnect.
+  int? get lastPanelWidth => _lastPanelWidth;
+  int? get lastPanelHeight => _lastPanelHeight;
+
+  /// The panel size to target right now: the live mirror when connected,
+  /// otherwise the last remembered size. 0 means unknown.
+  int get panelWidth {
+    final w = _pong?.width ?? 0;
+    return w > 0 ? w : (_lastPanelWidth ?? 0);
+  }
+
+  int get panelHeight {
+    final h = _pong?.height ?? 0;
+    return h > 0 ? h : (_lastPanelHeight ?? 0);
+  }
+
   // Watches the link so a dropped connection (mirror rebooted, powered off,
   // walked out of range) is reflected in the UI instead of showing a stale
   // "connected".
@@ -141,6 +163,24 @@ class MirrorConnection extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final id = prefs.getString(_lastIdKey);
     return id != null && id.isNotEmpty;
+  }
+
+  /// Populates the remembered panel size from prefs, for startup before any
+  /// connection exists.
+  Future<void> loadLastPanelSize() async {
+    final prefs = await SharedPreferences.getInstance();
+    _lastPanelWidth = prefs.getInt(_lastWidthKey);
+    _lastPanelHeight = prefs.getInt(_lastHeightKey);
+  }
+
+  /// Records [width]x[height] as the panel size the mirror last reported.
+  Future<void> rememberPanelSize(int width, int height) async {
+    if (width <= 0 || height <= 0) return;
+    _lastPanelWidth = width;
+    _lastPanelHeight = height;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastWidthKey, width);
+    await prefs.setInt(_lastHeightKey, height);
   }
 
   /// Connect to a device found by a scan.
@@ -200,6 +240,7 @@ class MirrorConnection extends ChangeNotifier {
       final pong = await session.ping();
       _session = session;
       _pong = BlePong.parse(pong);
+      await rememberPanelSize(_pong?.width ?? 0, _pong?.height ?? 0);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastIdKey, id);
       await prefs.setString(_lastNameKey, name);

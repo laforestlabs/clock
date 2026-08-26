@@ -35,14 +35,21 @@ import '../services/mirror_lan.dart';
 import 'ble_prompt.dart';
 
 class MirrorScreen extends StatefulWidget {
-  const MirrorScreen(
-      {super.key, required this.controller, required this.connection});
+  const MirrorScreen({
+    super.key,
+    required this.controller,
+    required this.connection,
+    this.simplified = false,
+  });
 
   final DesignerController controller;
 
   /// The app-scoped BLE link, owned by the workspace so it survives this
   /// screen being pushed and popped.
   final MirrorConnection connection;
+
+  /// Trimmed deployment surface: BLE only, no LAN, bundled firmware only.
+  final bool simplified;
 
   @override
   State<MirrorScreen> createState() => _MirrorScreenState();
@@ -58,6 +65,10 @@ class _MirrorScreenState extends State<MirrorScreen> {
   bool _scanning = false;
   String? _bleUnavailable;
   bool _bleBusy = false;
+
+  /// Bundled firmware version, loaded only in simplified mode for the
+  /// "Update to latest" button.
+  BundledFirmware? _bundled;
 
   // Live panel brightness (0..255) and whether the device follows the
   // layout. Null until the connected mirror answers "get brightness", which
@@ -89,6 +100,14 @@ class _MirrorScreenState extends State<MirrorScreen> {
     if (_connection.session != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _loadBrightness());
     }
+    if (widget.simplified) _loadBundledVersion();
+  }
+
+  /// Loads the bundled firmware for the simplified "Update to latest" button.
+  Future<void> _loadBundledVersion() async {
+    final bundled = await loadBundledFirmware();
+    if (!mounted) return;
+    setState(() => _bundled = bundled);
   }
 
   @override
@@ -245,9 +264,23 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
+  /// A layout whose canvas differs from the mirror's panel would render
+  /// clipped or rejected on the device. Block the push and point at a fix.
+  void _toastSizeMismatch(int w, int h) {
+    _toast('Not pushed: this layout is ${_c.doc.width}x${_c.doc.height}, '
+        'but your mirror is ${w}x$h. Open a ${w}x$h layout or resize the '
+        'canvas.');
+  }
+
   Future<void> _pushLayoutBle() async {
     final session = _connection.session;
     if (session == null) return;
+    final pong = _connection.pong;
+    if (pong != null && pong.width > 0 && pong.height > 0 &&
+        (_c.doc.width != pong.width || _c.doc.height != pong.height)) {
+      _toastSizeMismatch(pong.width, pong.height);
+      return;
+    }
     setState(() => _bleBusy = true);
     try {
       final status = await session.pushLayout(_c.exportJson());
@@ -374,6 +407,12 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   Future<void> _pushLayoutLan(int index) async {
     final device = _lanDevices[index];
+    final status = _lanStatuses[index];
+    if (status != null && status.width > 0 && status.height > 0 &&
+        (_c.doc.width != status.width || _c.doc.height != status.height)) {
+      _toastSizeMismatch(status.width, status.height);
+      return;
+    }
     setState(() => _lanBusy[index] = true);
     try {
       final result = await MirrorLan(device.ip).putLayout(_c.exportJson());
@@ -417,6 +456,22 @@ class _MirrorScreenState extends State<MirrorScreen> {
       return;
     }
     await _updateFirmware(ip, deviceVersion: _connection.pong?.version ?? '');
+  }
+
+  /// Bundled-only firmware update: no file or URL source, no source dialog.
+  Future<void> _updateFirmwareLatest() async {
+    final bundled = _bundled ?? await loadBundledFirmware();
+    if (!mounted) return;
+    if (bundled == null) {
+      _toast('No firmware bundled with this app');
+      return;
+    }
+    final ip = _connection.pong?.ip;
+    if (ip == null || ip.isEmpty || ip == '0.0.0.0') {
+      _toast('The mirror has no WiFi IP; the phone and mirror must be on the same network');
+      return;
+    }
+    await _uploadAndWait(ip, bundled.bytes, 'bundled v${bundled.version}');
   }
 
   /// Shared OTA flow: prefer the firmware bundled with this app, offering a
@@ -606,9 +661,11 @@ class _MirrorScreenState extends State<MirrorScreen> {
           children: <Widget>[
             _sectionTitle('Bluetooth'),
             _buildBleSection(),
-            const SizedBox(height: 24),
-            _sectionTitle('On this network'),
-            _buildLanSection(),
+            if (!widget.simplified) ...<Widget>[
+              const SizedBox(height: 24),
+              _sectionTitle('On this network'),
+              _buildLanSection(),
+            ],
           ],
         ),
       ),
@@ -676,7 +733,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text('Connected to ${connection.deviceName}'),
-          if (pong != null)
+          if (!widget.simplified && pong != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
@@ -694,25 +751,37 @@ class _MirrorScreenState extends State<MirrorScreen> {
                 icon: const Icon(Icons.send, size: 18),
                 label: const Text('Push layout'),
               ),
-              OutlinedButton.icon(
-                onPressed: _bleBusy ? null : _configure,
-                icon: const Icon(Icons.tune, size: 18),
-                label: const Text('Configure'),
-              ),
-              Tooltip(
-                message: 'Uploads over WiFi, so the phone and mirror must be '
-                    'on the same network',
-                child: OutlinedButton.icon(
-                  onPressed: _bleBusy || !otaReady ? null : _updateFirmwareBle,
+              if (widget.simplified)
+                OutlinedButton.icon(
+                  onPressed: (_bleBusy || _bundled == null)
+                      ? null
+                      : _updateFirmwareLatest,
                   icon: const Icon(Icons.system_update, size: 18),
-                  label: const Text('Update firmware'),
+                  label: Text(_bundled == null
+                      ? 'Update unavailable'
+                      : 'Update to latest (v${_bundled!.version})'),
+                )
+              else ...<Widget>[
+                OutlinedButton.icon(
+                  onPressed: _bleBusy ? null : _configure,
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: const Text('Configure'),
                 ),
-              ),
-              TextButton.icon(
-                onPressed: _bleBusy ? null : _rebootBle,
-                icon: const Icon(Icons.restart_alt, size: 18),
-                label: const Text('Reboot'),
-              ),
+                Tooltip(
+                  message: 'Uploads over WiFi, so the phone and mirror must be '
+                      'on the same network',
+                  child: OutlinedButton.icon(
+                    onPressed: _bleBusy || !otaReady ? null : _updateFirmwareBle,
+                    icon: const Icon(Icons.system_update, size: 18),
+                    label: const Text('Update firmware'),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _bleBusy ? null : _rebootBle,
+                  icon: const Icon(Icons.restart_alt, size: 18),
+                  label: const Text('Reboot'),
+                ),
+              ],
               TextButton(
                 onPressed: _disconnectBle,
                 child: const Text('Disconnect'),
@@ -721,7 +790,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
           ),
           // Brightness is only shown once the mirror answered "get
           // brightness"; old firmware hides the whole control.
-          if (_brightness != null)
+          if (!widget.simplified && _brightness != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Row(
@@ -814,7 +883,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
               contentPadding: EdgeInsets.zero,
               dense: true,
               title: Text(entry.name),
-              subtitle: Text('${entry.rssi} dBm'),
+              subtitle: widget.simplified ? null : Text('${entry.rssi} dBm'),
               trailing: FilledButton(
                 onPressed: _bleBusy ? null : () => _connect(entry),
                 child: const Text('Connect'),

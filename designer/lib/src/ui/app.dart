@@ -11,7 +11,9 @@ import '../controller.dart';
 import '../engine/engine.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
+import '../services/user_view.dart';
 import 'ble_prompt.dart';
+import 'color_field.dart';
 import 'inspector.dart';
 import 'mirror_screen.dart';
 import 'panel_view.dart';
@@ -55,6 +57,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final MirrorConnection _connection = MirrorConnection();
 
   List<StockLayout> _stock = const <StockLayout>[];
+  UserView _view = UserView.defaultView;
+  String? _activeStockPath;
 
   @override
   void initState() {
@@ -78,26 +82,48 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   Future<void> _bootstrap() async {
     final stock = await _repo.stockLayouts();
+    final view = await loadUserView();
+    await _connection.loadLastPanelSize();
     if (!mounted) return;
-    setState(() => _stock = stock);
+    setState(() {
+      _stock = stock;
+      _view = view;
+    });
 
-    // Open the 64x32 clock and weather layout by default, since a single
-    // P2.5-64x32 panel is the reference build. Written as a loop rather than
-    // firstOrNull, which lives in package:collection and is not part of the
-    // core library.
+    // Prefer a stock layout matching the panel the mirror last reported, so
+    // the default never opens at a size the hardware cannot show. With no
+    // remembered size, fall back to the 64x32 reference build ('mini').
+    final panelW = _connection.lastPanelWidth;
+    final panelH = _connection.lastPanelHeight;
     StockLayout? preferred;
-    for (final s in stock) {
-      if (s.name == 'mini') {
-        preferred = s;
-        break;
+    if (panelW != null && panelW > 0 && panelH != null && panelH > 0) {
+      for (final s in stock) {
+        if (s.width == panelW && s.height == panelH) {
+          preferred = s;
+          break;
+        }
+      }
+    }
+    if (preferred == null) {
+      for (final s in stock) {
+        if (s.name == 'mini') {
+          preferred = s;
+          break;
+        }
       }
     }
     preferred ??= stock.isNotEmpty ? stock.first : null;
 
     if (preferred != null) {
+      _activeStockPath = preferred.assetPath;
       await _c.loadJson(await _repo.loadAsset(preferred.assetPath));
     } else {
-      await _c.newLayout();
+      // No stock layouts at all: start on a blank canvas of the last-known
+      // panel size (or the reference build when that is unknown too).
+      await _c.newLayout(
+        width: (panelW != null && panelW > 0) ? panelW : 128,
+        height: (panelH != null && panelH > 0) ? panelH : 64,
+      );
     }
   }
 
@@ -150,6 +176,47 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => MirrorScreen(controller: _c, connection: _connection),
+      ),
+    );
+  }
+
+  void _openMirrorSimplified() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MirrorScreen(
+          controller: _c,
+          connection: _connection,
+          simplified: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setView(UserView view) async {
+    await saveUserView(view);
+    if (mounted) setState(() => _view = view);
+  }
+
+  void _openSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SwitchListTile(
+              title: const Text('Developer mode'),
+              subtitle: const Text(
+                  'Full workspace: widget editing, games, and firmware tools'),
+              value: false,
+              onChanged: (v) {
+                if (!v) return;
+                Navigator.of(context).pop();
+                _setView(UserView.developer);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -233,16 +300,20 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _openStock(StockLayout layout) async {
+    _activeStockPath = layout.assetPath;
     await _c.loadJson(await _repo.loadAsset(layout.assetPath));
     _toast('Opened ${layout.name}');
   }
 
-  /// Stock presets that match the currently connected panel. With no
-  /// connected panel (or one whose size the pong does not report) every
-  /// preset stays visible.
+  /// Stock presets that match the panel the mirror reported: the live pong
+  /// while connected, otherwise the last remembered size. Only when neither
+  /// is known does every preset stay visible.
   List<StockLayout> get _visibleStock {
-    final pong = _connection.pong;
-    return stockLayoutsForPanel(_stock, pong?.width ?? 0, pong?.height ?? 0);
+    return stockLayoutsForPanel(
+      _stock,
+      _connection.panelWidth,
+      _connection.panelHeight,
+    );
   }
 
   // -------------------------------------------------------------- keyboard
@@ -317,12 +388,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return _view == UserView.developer ? _buildDeveloper() : _buildDefault();
+  }
+
+  Widget _buildDeveloper() {
     return Focus(
       focusNode: _keyboardFocus,
       onKeyEvent: _onKey,
       autofocus: true,
       child: AnimatedBuilder(
-        animation: _c,
+        animation: Listenable.merge(<Listenable>[_c, _connection]),
         builder: (context, _) {
           return Scaffold(
             appBar: _buildAppBar(),
@@ -342,6 +417,55 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildDefault() {
+    return AnimatedBuilder(
+      animation: Listenable.merge(<Listenable>[_c, _connection]),
+      builder: (context, _) {
+        final connected =
+            _connection.status == MirrorConnectionStatus.connected;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('My Mirror'),
+            actions: <Widget>[
+              IconButton(
+                tooltip: connected ? 'Mirror connected' : 'Connect to mirror',
+                icon: Icon(
+                  connected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                ),
+                onPressed: _openMirrorSimplified,
+              ),
+              IconButton(
+                tooltip: 'Settings',
+                icon: const Icon(Icons.settings),
+                onPressed: _openSettings,
+              ),
+            ],
+          ),
+          body: Column(
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: _CanvasArea(controller: _c, readOnly: true),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                flex: 2,
+                child: _SimplePanel(
+                  controller: _c,
+                  stock: _visibleStock,
+                  activeStockPath: _activeStockPath,
+                  panelWidth: _connection.panelWidth,
+                  panelHeight: _connection.panelHeight,
+                  onPickStock: _openStock,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -388,6 +512,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           tooltip: 'Mirror',
           icon: const Icon(Icons.bluetooth_searching),
           onPressed: _openMirror,
+        ),
+        IconButton(
+          tooltip: 'Default view',
+          icon: const Icon(Icons.visibility),
+          onPressed: () => _setView(UserView.defaultView),
         ),
         PopupMenuButton<String>(
           onSelected: (choice) {
@@ -488,9 +617,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 }
 
 class _CanvasArea extends StatelessWidget {
-  const _CanvasArea({required this.controller});
+  const _CanvasArea({required this.controller, this.readOnly = false});
 
   final DesignerController controller;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -502,7 +632,7 @@ class _CanvasArea extends StatelessWidget {
       color: const Color(0xFF14181B),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: PanelView(controller: controller),
+        child: PanelView(controller: controller, readOnly: readOnly),
       ),
     );
   }
@@ -565,6 +695,128 @@ class _DiagnosticsBar extends StatelessWidget {
                 style: theme.textTheme.bodySmall),
         ],
       ),
+    );
+  }
+}
+
+/// The simplified user-facing panel: pick a stock layout, edit its literal
+/// text, and recolour the background and widgets. No selection, no geometry.
+class _SimplePanel extends StatelessWidget {
+  const _SimplePanel({
+    required this.controller,
+    required this.stock,
+    required this.activeStockPath,
+    required this.panelWidth,
+    required this.panelHeight,
+    required this.onPickStock,
+  });
+
+  final DesignerController controller;
+  final List<StockLayout> stock;
+  final String? activeStockPath;
+  final int panelWidth;
+  final int panelHeight;
+  final ValueChanged<StockLayout> onPickStock;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final doc = controller.doc;
+        final children = <Widget>[
+          Text('Layout', style: theme.textTheme.titleMedium),
+          if (stock.isEmpty)
+            Text(
+              panelWidth > 0
+                  ? 'No layouts match your mirror (${panelWidth}x$panelHeight).'
+                  : 'Connect to your mirror to see matching layouts.',
+              style: theme.textTheme.bodySmall,
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final s in stock)
+                  ChoiceChip(
+                    label: Text(s.name),
+                    selected: s.assetPath == activeStockPath,
+                    onSelected: (_) => onPickStock(s),
+                  ),
+              ],
+            ),
+          const SizedBox(height: 16),
+          Text('Text', style: theme.textTheme.titleMedium),
+        ];
+
+        var editableText = 0;
+        for (var i = 0; i < doc.widgetCount; i++) {
+          final w = doc.widgetAt(i);
+          if (w == null) continue;
+          final text = w.getString('text');
+          if (w.type != 'text' || text == null) continue;
+          editableText++;
+          children.add(TextFormField(
+            key: ValueKey<String>('simple-text-$i-$text'),
+            initialValue: text,
+            decoration: InputDecoration(
+              labelText: w.id.isNotEmpty ? w.id : 'Text',
+              isDense: true,
+              border: const OutlineInputBorder(),
+            ),
+            onFieldSubmitted: (v) =>
+                controller.updateWidget(i, (w) => w.setString('text', v)),
+          ));
+        }
+        if (editableText == 0) {
+          children.add(Text(
+            'This layout has no editable text.',
+            style: theme.textTheme.bodySmall,
+          ));
+        }
+
+        children
+          ..add(const SizedBox(height: 16))
+          ..add(Text('Colours', style: theme.textTheme.titleMedium))
+          ..add(ColorField(
+            label: 'Background',
+            value: doc.background,
+            onChanged: (v) {
+              doc.background = v ?? '#000000';
+              controller.refresh();
+            },
+          ));
+
+        for (var i = 0; i < doc.widgetCount; i++) {
+          final w = doc.widgetAt(i);
+          if (w == null) continue;
+          final color = w.getString('color');
+          if (color != null) {
+            children.add(ColorField(
+              label: w.id.isNotEmpty ? w.id : w.type,
+              value: color,
+              onChanged: (v) =>
+                  controller.updateWidget(i, (w) => w.setString('color', v)),
+            ));
+          }
+          final accent = w.getString('accent');
+          if (accent != null) {
+            children.add(ColorField(
+              label: '${w.id.isNotEmpty ? w.id : w.type} accent',
+              value: accent,
+              onChanged: (v) =>
+                  controller.updateWidget(i, (w) => w.setString('accent', v)),
+            ));
+          }
+        }
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: children,
+        );
+      },
     );
   }
 }

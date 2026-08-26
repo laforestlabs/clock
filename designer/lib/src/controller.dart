@@ -303,6 +303,14 @@ class DesignerController extends ChangeNotifier {
     await _applyEdit(() => mutate(widget));
   }
 
+  /// Edits the widget at [index] directly, for surfaces without a selection
+  /// (the simplified view). Pushes undo and marks dirty like [updateSelected].
+  Future<void> updateWidget(int index, void Function(LayoutWidget w) mutate) async {
+    final widget = _doc.widgetAt(index);
+    if (widget == null) return;
+    await _applyEdit(() => mutate(widget));
+  }
+
   /// Smallest widget the editor will produce. The engine hit tests against the
   /// rect, so a zero-width widget would be invisible *and* impossible to select
   /// again: it would be lost the moment it was resized away.
