@@ -129,7 +129,7 @@ class LayoutDoc {
       'countdown',
     };
     if (textTypes.contains(type)) {
-      raw['font'] = 'display';
+      raw['font'] = 'display-thin';
       raw['fit'] = true;
     }
     final widget = LayoutWidget(raw);
