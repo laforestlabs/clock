@@ -1828,7 +1828,7 @@ static void test_countdown(void)
     static const char doc[] =
         "{\"canvas\":{\"width\":64,\"height\":16},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"countdown\",\"rect\":[0,0,64,16],"
-        "\"until\":1785501905,\"font\":\"digits16\",\"color\":\"#FFFFFF\"}]}";
+        "\"until\":1785501905,\"font\":\"sans16\",\"color\":\"#FFFFFF\"}]}";
 
     ml_layout l;
     ml_diag   diag;
@@ -1851,7 +1851,7 @@ static void test_countdown(void)
     ml_model_mock(&m, ML_MOCK_TYPICAL);
     ml_canvas_init(&c, l.w, l.h, NULL);
 
-    /* Active target (51:04:05 ahead of the fixed mock now): non-black ink. */
+    /* Active target (2d 03:04:05 ahead of the fixed mock now): non-black ink. */
     ml_render(&l, &m, &c);
     uint8_t *rgb = (uint8_t *)malloc((size_t)l.w * (size_t)l.h * 3);
     ml_canvas_export_rgb888(&c, l.brightness, rgb);

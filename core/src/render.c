@@ -831,10 +831,17 @@ static bool sample_countdown(const ml_widget *w, const ml_model *m,
     int64_t rem = w->until_s - m->now.epoch_s;
     if (rem < 0) rem = 0;
 
-    int64_t h  = rem / 3600;
+    int64_t d  = rem / 86400;
+    int64_t h  = (rem % 86400) / 3600;
     int64_t mi = (rem % 3600) / 60;
     int64_t s  = rem % 60;
-    snprintf(buf, n, "%02d:%02d:%02d", (int)h, (int)mi, (int)s);
+
+    /* Roll hours past 24h into a days field: "2d 03:04:05". Days are
+     * unpadded; the clock keeps its zero-padded HH:MM:SS shape below a day. */
+    if (d > 0)
+        snprintf(buf, n, "%dd %02d:%02d:%02d", (int)d, (int)h, (int)mi, (int)s);
+    else
+        snprintf(buf, n, "%02d:%02d:%02d", (int)h, (int)mi, (int)s);
     return false;
 }
 

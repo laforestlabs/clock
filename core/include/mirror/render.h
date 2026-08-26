@@ -64,10 +64,11 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *      from 3 to 2. Every stock layout's output changes.
  *   9  new "countdown" widget; a layout using it renders differently (or is
  *      skipped) on older builds, so the designer/device version check must warn.
- *  10  new "precip" widget: a 12-hour precipitation chance bar chart. A layout
- *      using it is skipped on older builds, so the version check must warn.
+ *  11  countdown rolls hours into a days field past 24h ("2d 03:04:05"). A
+ *      multi-day countdown renders differently on older builds, so the
+ *      designer/device version check must warn.
  */
-#define ML_RENDER_VERSION 10
+#define ML_RENDER_VERSION 11
 
 #ifdef __cplusplus
 }
