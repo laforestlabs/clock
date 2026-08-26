@@ -60,6 +60,19 @@ static uint64_t         s_last_us;
 static char             s_game_id[24];   /* id of the running game */
 static bool             s_over_sent;     /* "game over" already pushed */
 
+/* Latency diagnostic: the arrival time of the most recent input packet
+ * (written by the BLE host task) and the measured input-to-render delta
+ * (written by the render task). 32-bit microsecond timestamps so each field
+ * is a single aligned store; the wrap-around ~71 min is irrelevant for a
+ * live latency readout. */
+static volatile uint32_t s_last_input_us;
+static volatile uint32_t s_input_to_render_us;
+
+/* The running game's vtable, guarded by s_mutex. Used by the BLE host task
+ * to interpret an input packet's i16 value (button vs axis). */
+static const ml_game_vt *s_active_vt;
+
+
 /* -------------------------------------------------------------- init */
 
 esp_err_t game_runner_init(void)
@@ -114,6 +127,7 @@ void game_runner_request_input(const ml_input_event *e)
 {
     /* A saturated link drops input rather than blocking the NimBLE host
      * task; the phone keeps sending fresh held state every frame anyway. */
+    s_last_input_us = (uint32_t)esp_timer_get_time();
     xQueueSend(s_input_q, e, 0);
 }
 
@@ -163,22 +177,26 @@ bool game_runner_service(void)
 
             s_session = h;
             s_active = true;
+            s_active_vt = vt;
             s_last_us = esp_timer_get_time();
             snprintf(s_game_id, sizeof(s_game_id), "%s", item.id);
             s_over_sent = false;
 
-            /* "game ok <id> <label>..." with the control labels in code
+            /* "game ok <id> <label>:<type>..." with the controls in code
              * order, space-separated; the phone builds its gamepad from
-             * these. Labels are short (<= 16 chars each) and there are at
-             * most 16, so 256 bytes is plenty. */
+             * these. <type> is 'b' (button) or 'a' (axis). Labels are short
+             * (<= 16 chars each) and there are at most 16, so 256 bytes is
+             * plenty. */
             char line[256];
             int n = snprintf(line, sizeof(line), "game ok %s", vt->id);
             for (int i = 0; i < vt->control_count; i++) {
-                const int need = snprintf(NULL, 0, " %s",
-                                          vt->controls[i].label);
+                const char t =
+                    (vt->controls[i].type == ML_INPUT_AXIS) ? 'a' : 'b';
+                const int need = snprintf(NULL, 0, " %s:%c",
+                                          vt->controls[i].label, t);
                 if (n + need >= (int)sizeof(line)) break;
-                n += snprintf(line + n, sizeof(line) - (size_t)n, " %s",
-                              vt->controls[i].label);
+                n += snprintf(line + n, sizeof(line) - (size_t)n, " %s:%c",
+                              vt->controls[i].label, t);
             }
             ble_send_status_line(line);
         } else { /* CMD_STOP */
@@ -189,6 +207,7 @@ bool game_runner_service(void)
             ml_host_destroy(s_session);
             s_session = NULL;
             s_active = false;
+            s_active_vt = NULL;
             s_game_id[0] = '\0';
             s_over_sent = false;
             ble_send_status_line("game stopped");
@@ -218,6 +237,10 @@ void game_runner_render(ml_canvas *out)
     if (dt_ms > 100) dt_ms = 100;
 
     ml_host_step(s_session, dt_ms);
+    if (s_last_input_us != 0) {
+        s_input_to_render_us =
+            (uint32_t)((uint32_t)esp_timer_get_time() - s_last_input_us);
+    }
     /* Tell the phone the game reached its end, once per session. The poll is
      * a pure read of game state; the line rides the same status notification
      * as every other reply, so the app sees it without polling. */
@@ -228,4 +251,22 @@ void game_runner_render(ml_canvas *out)
         ble_send_status_line(line);
     }
     ml_host_render(s_session, out);
+}
+
+ml_input_type game_runner_control_type(uint16_t code)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const ml_game_vt *vt = s_active_vt;
+    ml_input_type type = ML_INPUT_BUTTON;
+    if (vt != NULL && vt->controls != NULL &&
+        code < (uint16_t)vt->control_count) {
+        type = (ml_input_type)vt->controls[code].type;
+    }
+    xSemaphoreGive(s_mutex);
+    return type;
+}
+
+uint32_t game_runner_input_to_render_us(void)
+{
+    return s_input_to_render_us;
 }

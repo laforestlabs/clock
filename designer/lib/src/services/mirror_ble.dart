@@ -150,6 +150,18 @@ class BleSession {
       {Duration timeout = const Duration(seconds: 35)}) async {
     // Personal home use: the nonprofit license covers it.
     await device.connect(mtu: 512, license: License.nonprofit, timeout: timeout);
+    // Ask the central for a fast connection interval. Android HIGH maps to
+    // 11.25-15 ms, which cuts the radio wait for a game input packet from the
+    // 30-50 ms balanced default. The firmware requests the same interval via
+    // ble_gap_update_params, so both ends agree. Not every adapter honours
+    // it; the link still works at whatever interval the central chooses.
+    try {
+      await device.requestConnectionPriority(
+          connectionPriorityRequest: ConnectionPriority.high);
+    } catch (_) {
+      // Unsupported on this platform/adapter; not fatal.
+    }
+
     try {
       final services = await device.discoverServices();
       BluetoothCharacteristic? cmd, data, status, gameIn;
@@ -252,6 +264,25 @@ class BleSession {
     return parseBrightnessStatus(await _sendAndWait('get brightness'));
   }
 
+  /// The mirror's measured input-to-render latency and negotiated
+  /// connection interval, or null when the firmware does not answer the
+  /// command (an older build). See [BleLatency].
+  Future<BleLatency?> getLatency() async {
+    return parseLatencyStatus(await _sendAndWait('get latency'));
+  }
+
+  /// Round-trip time of a command write plus its status notification. A
+  /// proxy for the phone-to-mirror link latency, dominated by the
+  /// connection interval; no clock sync is needed since both timestamps
+  /// live on the phone.
+  Future<Duration> measureRoundTrip() async {
+    final sw = Stopwatch()..start();
+    await _sendAndWait('ping');
+    sw.stop();
+    return sw.elapsed;
+  }
+
+
   /// Set a manual brightness override, or clear it (back to following the
   /// layout) when [value] is null. Returns the device's status line; throws
   /// [BlePushException] with the device's reason on rejection.
@@ -295,17 +326,18 @@ class BleSession {
     await _sendAndWait('game stop');
   }
 
-  /// Stream the full held state to the mirror, one packet per frame.
+  /// Stream the full input state to the mirror, one packet per frame.
   ///
-  /// Deliberately bypasses the with-response write queue: gamepad input must
-  /// never queue behind a layout push. A dead link is surfaced by
-  /// MirrorConnection's connection-state listener, so write failures are
-  /// swallowed here.
-  Future<void> sendGameInput(List<bool> held) async {
+  /// [values] carries one i16 per control in code order: 0/1 for buttons,
+  /// -32768..32767 for axes. Deliberately bypasses the with-response write
+  /// queue so gamepad input never queues behind a layout push. A dead link
+  /// is surfaced by MirrorConnection's connection-state listener, so write
+  /// failures are swallowed here.
+  Future<void> sendGameInput(List<int> values) async {
     final w = _gameIn;
     if (w == null) return;
     try {
-      await w.write(encodeGameInput(held), withoutResponse: true);
+      await w.write(encodeGameInput(values), withoutResponse: true);
     } catch (_) {
       // Link died; MirrorConnection's listener surfaces it.
     }

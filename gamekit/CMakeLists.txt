@@ -22,6 +22,7 @@ if(ESP_PLATFORM)
             examples/tetris/game_tetris.c
             examples/breakout/game_breakout.c
             examples/invaders/game_invaders.c
+            examples/probe/game_probe.c
             fw/game_registry.c
         INCLUDE_DIRS "include" "fw"
         REQUIRES mirror_core

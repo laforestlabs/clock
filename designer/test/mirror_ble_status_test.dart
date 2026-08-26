@@ -48,4 +48,28 @@ void main() {
       expect(parseBrightnessStatus(''), isNull);
     });
   });
+
+  group('parseLatencyStatus', () {
+    test('parses input-to-render and connection interval', () {
+      final l = parseLatencyStatus('latency 12345 15');
+      expect(l, isNotNull);
+      expect(l!.inputToRenderUs, 12345);
+      expect(l.connItvlMs, 15);
+    });
+
+    test('parses a zero connection interval (no link read)', () {
+      final l = parseLatencyStatus('latency 0 0');
+      expect(l, isNotNull);
+      expect(l!.inputToRenderUs, 0);
+      expect(l.connItvlMs, 0);
+    });
+
+    test('rejects old firmware and malformed lines', () {
+      expect(parseLatencyStatus('unknown command'), isNull);
+      expect(parseLatencyStatus('latency 12345'), isNull);
+      expect(parseLatencyStatus('latency abc 15'), isNull);
+      expect(parseLatencyStatus('latency -1 15'), isNull);
+      expect(parseLatencyStatus(''), isNull);
+    });
+  });
 }

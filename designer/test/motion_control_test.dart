@@ -102,5 +102,19 @@ void main() {
       m.addSample(0, 3.0, 9.81);
       expect(m.right, isFalse);
     });
+
+    test('reports zero axes before calibration', () {
+      final m = MotionControl();
+      expect(m.tiltXAxis, 0);
+      expect(m.tiltYAxis, 0);
+    });
+
+    test('maps tilt to signed axis values after calibration', () {
+      final m = MotionControl();
+      calibrate(m);
+      tilt(m, 0, 3.0); // rightward tilt
+      expect(m.tiltXAxis, greaterThan(0));
+      expect(m.tiltYAxis, closeTo(0, 1));
+    });
   });
 }

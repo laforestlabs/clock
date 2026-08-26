@@ -38,6 +38,20 @@ class MotionControl {
   bool get left => _left;
   bool get right => _right;
 
+  /// Controller axis values from the raw filtered tilt, for a game that
+  /// takes analog axes (e.g. the probe diagnostic). Positive X is right,
+  /// positive Y is down, matching a canvas. Each saturates at ~29 degrees of
+  /// tilt; both are 0 before calibration.
+  int get tiltXAxis => _axis(_lr);
+  int get tiltYAxis => _axis(-_ud);
+
+  static int _axis(double rad) {
+    const double maxRad = 0.5; // ~29 degrees saturates the axis
+    final double v = rad / maxRad * 32767.0;
+    return v.clamp(-32768.0, 32767.0).round();
+  }
+
+
   /// One accelerometer sample (x, y, z in m/s², gravity included).
   void addSample(double x, double y, double z) {
     if (!_calibrated) {

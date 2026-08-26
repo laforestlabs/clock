@@ -32,3 +32,28 @@ BleBrightness? parseBrightnessStatus(String line) {
   if (mode != 'auto' && mode != 'manual') return null;
   return BleBrightness(value: value, auto: mode == 'auto');
 }
+
+/// A parsed `latency <input_to_render_us> <conn_itvl_ms>` status line.
+class BleLatency {
+  const BleLatency({required this.inputToRenderUs, required this.connItvlMs});
+
+  /// Time from the most recent input packet's arrival to the frame that
+  /// rendered it, in microseconds, measured on the mirror's own clock.
+  final int inputToRenderUs;
+
+  /// The negotiated BLE connection interval in milliseconds, or 0 when the
+  /// mirror could not read it (e.g. no connection).
+  final int connItvlMs;
+}
+
+/// Parses a "latency ..." status line. Returns null for anything else,
+/// including the "unknown command" an older mirror answers to the new
+/// command, so a newer app keeps working against it.
+BleLatency? parseLatencyStatus(String line) {
+  final parts = line.split(' ');
+  if (parts.length != 3 || parts[0] != 'latency') return null;
+  final us = int.tryParse(parts[1]);
+  final itvl = int.tryParse(parts[2]);
+  if (us == null || itvl == null || us < 0 || itvl < 0) return null;
+  return BleLatency(inputToRenderUs: us, connItvlMs: itvl);
+}

@@ -26,6 +26,7 @@ import '../controller.dart';
 import '../engine/game_engine.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_ble_game.dart';
+import '../services/mirror_ble_status.dart';
 import '../services/mirror_connection.dart';
 import '../services/motion_control.dart';
 
@@ -80,7 +81,7 @@ class _GameScreenState extends State<GameScreen>
   // Held key/touch state per control, sized when a game starts. The screen
   // feeds the full held state every frame, exactly like a controller client
   // would, so holding a key keeps the game moving.
-  List<bool> _held = const <bool>[];
+  List<int> _held = const <int>[];
 
   List<GameInfo> _games = const <GameInfo>[];
   int _gameIndex = 0;
@@ -100,7 +101,9 @@ class _GameScreenState extends State<GameScreen>
   bool _mirrorUnsupported = false;
   bool _mirrorLoading = false;
   int _lastMirrorSendMs = 0;
-
+  Timer? _latencyTimer;
+  BleLatency? _latency;
+  int _roundTripMs = 0;
   _InputMode _inputMode = _InputMode.manual;
   StreamSubscription<AccelerometerEvent>? _motionSub;
 
@@ -143,6 +146,7 @@ class _GameScreenState extends State<GameScreen>
       unawaited(_connection.session?.stopGame());
     }
     _stopMotion();
+    _latencyTimer?.cancel();
     _ticker.stop();
     _keyboardFocus.dispose();
     _engine?.dispose();
@@ -164,7 +168,7 @@ class _GameScreenState extends State<GameScreen>
       _running = true;
       _image = null;
       _frame = null;
-      _held = List<bool>.filled(game.controls.length, false);
+      _held = List<int>.filled(game.controls.length, 0);
     });
     // Restarting (start over) runs while the ticker is already active.
     if (!_ticker.isActive) _ticker.start();
@@ -243,7 +247,7 @@ class _GameScreenState extends State<GameScreen>
       setState(() {
         _mirrorGame = g;
         _mirrorGameOver = false;
-        _held = List<bool>.filled(g.controls.length, false);
+        _held = List<int>.filled(g.controls.length, 0);
       });
       if (_inputMode == _InputMode.motion) _startMotion();
       // The mirror pushes "game over <id>" once the game ends; swap the
@@ -255,7 +259,7 @@ class _GameScreenState extends State<GameScreen>
         setState(() {
           _mirrorGameOver = true;
           for (var i = 0; i < _held.length; i++) {
-            _held[i] = false;
+            _held[i] = 0;
           }
         });
         _ticker.stop();
@@ -263,6 +267,10 @@ class _GameScreenState extends State<GameScreen>
       });
       // Ticker.start returns a TickerFuture; the tick's completion is
       // irrelevant here.
+      // Poll the mirror's latency numbers once a second while a game runs.
+      _latencyTimer?.cancel();
+      _latencyTimer = Timer.periodic(
+          const Duration(seconds: 1), (_) => _refreshLatency());
       if (!_ticker.isActive) unawaited(_ticker.start());
     } on BlePushException catch (e) {
       if (!mounted) return;
@@ -276,6 +284,8 @@ class _GameScreenState extends State<GameScreen>
     final session = _connection.session;
     await _gameOverSub?.cancel();
     _gameOverSub = null;
+    _latencyTimer?.cancel();
+    _latencyTimer = null;
     _ticker.stop();
     setState(() {
       _mirrorGame = null;
@@ -294,14 +304,19 @@ class _GameScreenState extends State<GameScreen>
       (e) {
         motion.addSample(e.x, e.y, e.z);
         if (!motion.calibrated) return;
-        if (_mirrorGame == null) return;
-        // Directions are not rendered in motion mode, so update the held list
-        // in place without setState; the ticker reads the same list reference
-        // and streams it every 30 ms.
-        _setMirrorHeld('Up', motion.up);
-        _setMirrorHeld('Down', motion.down);
-        _setMirrorHeld('Left', motion.left);
-        _setMirrorHeld('Right', motion.right);
+        final g = _mirrorGame;
+        if (g == null) return;
+        // Motion updates the held list in place without setState; the ticker
+        // and the edge sender read the same list reference.
+        if (g.controls.any((c) => c.isAxis)) {
+          _setMirrorAxis('TiltX', motion.tiltXAxis);
+          _setMirrorAxis('TiltY', motion.tiltYAxis);
+        } else {
+          _setMirrorHeld('Up', motion.up);
+          _setMirrorHeld('Down', motion.down);
+          _setMirrorHeld('Left', motion.left);
+          _setMirrorHeld('Right', motion.right);
+        }
       },
       onError: (Object e) {
         if (!mounted) return;
@@ -313,7 +328,7 @@ class _GameScreenState extends State<GameScreen>
         setState(() {
           _inputMode = _InputMode.manual;
           for (var i = 0; i < _held.length; i++) {
-            _held[i] = false;
+            _held[i] = 0;
           }
         });
         _stopMotion();
@@ -332,11 +347,77 @@ class _GameScreenState extends State<GameScreen>
     final g = _mirrorGame;
     if (g == null) return;
     for (var i = 0; i < g.controls.length && i < _held.length; i++) {
-      if (g.controls[i] == label) {
+      if (g.controls[i].label == label) {
+        _held[i] = value ? 1 : 0;
+        return;
+      }
+    }
+  }
+
+  /// Set an axis control's raw value, -32768..32767. Unlike buttons, an axis
+  /// keeps its full analog range rather than collapsing to 0/1.
+  void _setMirrorAxis(String label, int value) {
+    final g = _mirrorGame;
+    if (g == null) return;
+    for (var i = 0; i < g.controls.length && i < _held.length; i++) {
+      if (g.controls[i].label == label && g.controls[i].isAxis) {
         _held[i] = value;
         return;
       }
     }
+  }
+
+  /// Send the current full input state to the mirror immediately. Edges call
+  /// this on every press/release so a quick tap is never sampled away.
+  void _sendMirrorInput() {
+    final session = _connection.session;
+    if (session == null || _mirrorGame == null) return;
+    unawaited(session.sendGameInput(_held));
+  }
+
+  /// Set a pad button and send the resulting state on the edge, so a tap
+  /// lands as a press then a release even when both happen inside one frame.
+  void _setPad(int controlIndex, int value) {
+    if (controlIndex >= _held.length) return;
+    _held[controlIndex] = value;
+    setState(() {});
+    _sendMirrorInput();
+  }
+
+  /// Poll the mirror's latency numbers while a game runs. Best effort: an
+  /// interleaved "game over" line or a dead link just leaves the readout
+  /// stale for one cycle.
+  Future<void> _refreshLatency() async {
+    final session = _connection.session;
+    if (session == null || _mirrorGame == null) return;
+    try {
+      final lat = await session.getLatency();
+      final rtt = await session.measureRoundTrip();
+      if (!mounted) return;
+      setState(() {
+        _latency = lat;
+        _roundTripMs = rtt.inMilliseconds;
+      });
+    } catch (_) {
+      // Link died or old firmware; the readout stops updating.
+    }
+  }
+
+  Widget _buildLatencyReadout() {
+    final lat = _latency;
+    final parts = <String>[
+      'RTT ${_roundTripMs}ms',
+      if (lat != null) 'conn ${lat.connItvlMs}ms',
+      if (lat != null)
+        'input->render ${(lat.inputToRenderUs / 1000).toStringAsFixed(1)}ms',
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Text(
+        parts.join('  |  '),
+        style: const TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+    );
   }
 
   /// Start over on the mirror: the runner rejects a start while a session is
@@ -358,12 +439,14 @@ class _GameScreenState extends State<GameScreen>
   void _onTick(Duration elapsed) {
     final mirrorGame = _mirrorGame;
     if (mirrorGame != null) {
-      // Controller mode: stream the full held state, throttled to one
-      // packet per 30 ms so a 60 fps ticker does not flood the link.
+      // Controller mode: press/release edges are sent immediately by the pad
+      // handlers, so the ticker only keeps a slow heartbeat as loss recovery.
+      // A held button keeps moving on the mirror without any resend: the game
+      // retains the press until a release arrives.
       final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastMirrorSendMs >= 30) {
+      if (now - _lastMirrorSendMs >= 100) {
         _lastMirrorSendMs = now;
-        unawaited(_connection.session?.sendGameInput(_held));
+        _sendMirrorInput();
       }
       return;
     }
@@ -381,7 +464,7 @@ class _GameScreenState extends State<GameScreen>
     // which is the contract the runtime's held-input tests pin down.
     final game = _games[_gameIndex];
     for (var i = 0; i < game.controls.length; i++) {
-      final held = i < _held.length && _held[i];
+      final held = i < _held.length && _held[i] != 0;
       engine.button(playerId: 1, code: i, value: held ? 1 : 0);
     }
 
@@ -421,7 +504,7 @@ class _GameScreenState extends State<GameScreen>
     if (event.logicalKey == LogicalKeyboardKey.space) {
       final shoot = _controlIndexForLabel('Shoot');
       if (shoot != null) {
-        if (shoot < _held.length) _held[shoot] = pressed;
+        if (shoot < _held.length) _held[shoot] = pressed ? 1 : 0;
       } else if (pressed) {
         _startGame();
       }
@@ -433,7 +516,7 @@ class _GameScreenState extends State<GameScreen>
     // reorders its controls keeps working.
     final control = _controlIndexFor(event.logicalKey);
     if (control != null) {
-      if (control < _held.length) _held[control] = pressed;
+      if (control < _held.length) _held[control] = pressed ? 1 : 0;
       return KeyEventResult.handled;
     }
 
@@ -683,11 +766,16 @@ class _GameScreenState extends State<GameScreen>
       return _gameOverBanner('Game Over', _restartMirrorGame);
     }
 
-    return _inputMode == _InputMode.motion
+    final gamepad = _inputMode == _InputMode.motion
         ? _buildMotionGamepad(game)
         : _buildGamepad(game);
+    return Column(
+      children: <Widget>[
+        _buildLatencyReadout(),
+        Expanded(child: gamepad),
+      ],
+    );
   }
-
   /// A landscape gamepad with movement under the left thumb and action
   /// buttons under the right thumb.
   Widget _buildGamepad(MirrorGame game) {
@@ -695,7 +783,7 @@ class _GameScreenState extends State<GameScreen>
 
     int indexOf(String label) {
       for (var i = 0; i < controls.length; i++) {
-        if (controls[i] == label) return i;
+        if (controls[i].label == label) return i;
       }
       return -1;
     }
@@ -705,11 +793,11 @@ class _GameScreenState extends State<GameScreen>
     final left = indexOf('Left');
     final right = indexOf('Right');
 
-    // Anything that is not a direction renders as a fire button.
+    // Anything that is not a direction or an axis renders as a fire button.
     const directions = <String>{'Up', 'Down', 'Left', 'Right'};
     final extras = <int>[
       for (var i = 0; i < controls.length; i++)
-        if (!directions.contains(controls[i])) i,
+        if (!directions.contains(controls[i].label) && !controls[i].isAxis) i,
     ];
 
     return SafeArea(
@@ -808,7 +896,9 @@ class _GameScreenState extends State<GameScreen>
     const directions = <String>{'Up', 'Down', 'Left', 'Right'};
     final extras = <int>[
       for (var i = 0; i < game.controls.length; i++)
-        if (!directions.contains(game.controls[i])) i,
+        if (!directions.contains(game.controls[i].label) &&
+            !game.controls[i].isAxis)
+          i,
     ];
     return SafeArea(
       child: Center(
@@ -838,15 +928,17 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  /// One gamepad button: tap down presses, tap up/cancel releases. The
-  /// pressed visual follows the held state.
+  /// One gamepad button: pointer down presses, pointer up/cancel releases.
+  /// A raw Listener (not a GestureDetector) fires on the pointer event itself,
+  /// with no gesture-arena or tap-deadline delay, and sends on every edge so a
+  /// quick tap lands as a press then a release.
   Widget _padButton(
     MirrorGame game,
     int controlIndex, {
     double size = 88,
   }) {
-    final pressed = controlIndex < _held.length && _held[controlIndex];
-    final label = game.controls[controlIndex];
+    final pressed = controlIndex < _held.length && _held[controlIndex] != 0;
+    final label = game.controls[controlIndex].label;
     final Widget child = switch (label) {
       'Up' => Icon(Icons.keyboard_arrow_up, size: size * .52),
       'Down' => Icon(Icons.keyboard_arrow_down, size: size * .52),
@@ -857,17 +949,11 @@ class _GameScreenState extends State<GameScreen>
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
     };
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() {
-        if (controlIndex < _held.length) _held[controlIndex] = true;
-      }),
-      onTapUp: (_) => setState(() {
-        if (controlIndex < _held.length) _held[controlIndex] = false;
-      }),
-      onTapCancel: () => setState(() {
-        if (controlIndex < _held.length) _held[controlIndex] = false;
-      }),
+      onPointerDown: (_) => _setPad(controlIndex, 1),
+      onPointerUp: (_) => _setPad(controlIndex, 0),
+      onPointerCancel: (_) => _setPad(controlIndex, 0),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 70),
         width: size,
@@ -994,7 +1080,7 @@ class _GameScreenState extends State<GameScreen>
   void _releaseAll() {
     setState(() {
       for (var i = 0; i < _held.length; i++) {
-        _held[i] = false;
+        _held[i] = 0;
       }
     });
   }
@@ -1051,7 +1137,7 @@ class _GameScreenState extends State<GameScreen>
     final controls = _games[_gameIndex].controls;
     for (var i = 0; i < controls.length && i < _held.length; i++) {
       if (controls[i] == label) {
-        _held[i] = value;
+        _held[i] = value ? 1 : 0;
         return;
       }
     }

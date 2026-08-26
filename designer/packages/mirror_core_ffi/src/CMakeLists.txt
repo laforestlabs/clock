@@ -99,6 +99,7 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_GAMEKIT}/examples/tetris/game_tetris.c"
     "${MIRROR_GAMEKIT}/examples/breakout/game_breakout.c"
     "${MIRROR_GAMEKIT}/examples/invaders/game_invaders.c"
+    "${MIRROR_GAMEKIT}/examples/probe/game_probe.c"
     "${MIRROR_GAMEKIT}/ffi/game_ffi.c"
 )
 

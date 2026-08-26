@@ -45,6 +45,17 @@ bool game_runner_service(void);
 /* Step the active session by the wall time since the last call and draw it
  * into out (sized panel_width() x panel_height()). No-op when idle. */
 void game_runner_render(ml_canvas *out);
+/* The ml_input_type of control [code] in the running game, or
+ * ML_INPUT_BUTTON when no game is running or the code is unknown. Used by
+ * ble.c to interpret an input packet's i16 value: a button is 0/1, an axis
+ * is -32768..32767. Safe from any task. */
+ml_input_type game_runner_control_type(uint16_t code);
+
+/* Microseconds from the most recent input packet arrival to the last
+ * rendered game frame. 0 while no game is running. A diagnostic for input
+ * latency, read by the BLE "get latency" command. Safe from any task. */
+uint32_t game_runner_input_to_render_us(void);
+
 
 #ifdef __cplusplus
 }

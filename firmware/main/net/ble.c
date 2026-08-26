@@ -434,6 +434,23 @@ static void cmd_get_brightness(void)
                 mirror_config_brightness() >= 0 ? "manual" : "auto");
 }
 
+static void cmd_get_latency(void)
+{
+    struct ble_gap_conn_desc desc;
+    uint32_t conn_itvl_ms = 0;
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE &&
+        ble_gap_conn_find(s_conn_handle, &desc) == 0) {
+        /* conn_itvl is in 1.25 ms units. */
+        conn_itvl_ms = (uint32_t)desc.conn_itvl * 5u / 4u;
+    }
+    /* input_to_render is the render task's measured input-to-pixel delta;
+     * conn_itvl_ms is the negotiated radio interval. Both are diagnostics
+     * for the phone's latency readout. */
+    send_status("latency %lu %lu",
+                (unsigned long)game_runner_input_to_render_us(),
+                (unsigned long)conn_itvl_ms);
+}
+
 static void cmd_set_brightness(const char *arg)
 {
     if (strcmp(arg, "auto") == 0) {
@@ -488,6 +505,8 @@ static void handle_cmd(char *line)
         cmd_get_config();
     } else if (strcmp(line, "get brightness") == 0) {
         cmd_get_brightness();
+    } else if (strcmp(line, "get latency") == 0) {
+        cmd_get_latency();
     } else if (strncmp(line, "set brightness ", 15) == 0) {
         cmd_set_brightness(line + 15);
     } else if (strcmp(line, "reboot") == 0) {
@@ -588,9 +607,11 @@ static int status_read_cb(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 /*
- * game_in: one write per frame carrying the phone's full held state,
- * little-endian. byte 0 is the control count (1..16, 0 = all released),
- * then per control u8 code + i16 value (0/1). Max packet 49 bytes. Any
+ * game_in: one write carrying the phone's full input state, little-endian.
+ * byte 0 is the control count (1..16, 0 = all released), then per control
+ * u8 code + i16 value. A button's value is 0/1; an axis's is -32768..32767.
+ * The type is resolved from the running game (game_runner_control_type)
+ * rather than trusted from a byte on the wire. Max packet 49 bytes. Any
  * other shape is a protocol violation and is dropped, matching the Dart
  * writer in mirror_ble_game.dart.
  */
@@ -619,7 +640,8 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         const uint16_t code = p[1 + 3 * i];
         const int16_t raw =
             (int16_t)(p[2 + 3 * i] | ((int16_t)p[3 + 3 * i] << 8));
-        const int16_t value = raw ? 1 : 0;
+        const ml_input_type type = game_runner_control_type(code);
+        const int16_t value = (type == ML_INPUT_AXIS) ? raw : (raw ? 1 : 0);
         /* seq/tick left 0: the runtime stamps the host tick and games never
          * read seq. */
         ml_input_event e = {
@@ -628,7 +650,7 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
             .code = code,
             .value = value,
             .tick = 0,
-            .type = ML_INPUT_BUTTON,
+            .type = type,
         };
         game_runner_request_input(&e);
     }
@@ -722,6 +744,32 @@ static void advertise(void)
     }
 }
 
+/*
+ * Ask the phone's central for a fast connection interval. The central owns
+ * the final decision, but Android honours a peripheral's parameter update,
+ * and the app also requests ConnectionPriority.high, so both ends agree on a
+ * short interval. Without this a game input packet waits up to one whole
+ * interval (30-50 ms at Android's balanced default) before the radio sends
+ * it. The mirror is mains-powered and the phone only connects when actively
+ * controlling, so the higher radio duty is a fair trade.
+ */
+static void request_fast_conn_params(uint16_t conn_handle)
+{
+    struct ble_gap_upd_params params = {
+        .itvl_min = 6,               /* 7.5 ms */
+        .itvl_max = 12,              /* 15 ms */
+        .latency = 0,
+        .supervision_timeout = 200,  /* 2 s, in 10 ms units */
+        .min_ce_len = 0,
+        .max_ce_len = 0,
+    };
+    const int rc = ble_gap_update_params(conn_handle, &params);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "connection param update request failed: %d", rc);
+    }
+}
+
+
 static int gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
@@ -731,6 +779,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "connected (handle %u)", s_conn_handle);
+            request_fast_conn_params(s_conn_handle);
         } else {
             /* Connect attempt failed; keep advertising. */
             advertise();

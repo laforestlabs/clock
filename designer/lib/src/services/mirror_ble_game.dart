@@ -3,14 +3,15 @@
 // The wire format is defined in firmware/main/net/ble.c:
 //
 //   game list          -> "games <id>[,<id>...]" (empty list: "games")
-//   game start <id>    -> "game ok <id> <label>..." | "game error <why>"
+//   game start <id>    -> "game ok <id> <label>:<type>..."
 //   game stop          -> "game stopped" | "game error no game"
 //   game over <id>     -> pushed when the running game reaches its end
 //
 // Gamepad input rides a separate characteristic (gameInUuid in
-// mirror_ble.dart), one write per frame carrying the full held state,
-// little-endian: byte 0 is the control count (1..16, 0 = all released),
-// then per control u8 code + i16 value (0/1). Max packet 49 bytes.
+// mirror_ble.dart), one write per frame carrying the full input state,
+// little-endian: byte 0 is the control count (1..16, 0 = all released), then
+// per control u8 code + i16 value. A button's value is 0/1, an axis's is
+// -32768..32767. Max packet 49 bytes.
 
 import 'dart:typed_data';
 
@@ -28,25 +29,52 @@ List<String>? parseGameList(String line) {
       .toList(growable: false);
 }
 
-/// A game the mirror can run, with the control labels for the gamepad.
+/// What kind of input a game control expects.
+enum MirrorControlType { button, axis }
+
+/// One control the gamepad renders.
+class MirrorControl {
+  const MirrorControl(this.label, this.type);
+
+  final String label;
+  final MirrorControlType type;
+
+  bool get isAxis => type == MirrorControlType.axis;
+}
+
+/// A game the mirror can run, with the controls for the gamepad.
 class MirrorGame {
   const MirrorGame(this.id, this.controls);
 
   /// The mirror's stable game id, e.g. "snake".
   final String id;
 
-  /// Control labels in code order, e.g. ["Up", "Down", "Left", "Right"].
-  /// The gamepad renders exactly these.
-  final List<String> controls;
+  /// Controls in code order, e.g. Up, Down, Left, Right.
+  final List<MirrorControl> controls;
 }
 
-/// Parses a `game ok <id> <label>...` status line. Returns null for anything
-/// else, including "game error ..." (the caller surfaces those separately)
-/// and old firmware's "unknown command".
+/// Parses a `game ok <id> <label>:<type>...` status line. Returns null for
+/// anything else, including "game error ..." (the caller surfaces those
+/// separately) and old firmware's "unknown command".
+///
+/// A token with no `:t` suffix (old firmware) is a button; new firmware
+/// appends `:b` for button and `:a` for axis.
 MirrorGame? parseGameOk(String line) {
   final parts = line.split(' ');
   if (parts.length < 3 || parts[0] != 'game' || parts[1] != 'ok') return null;
-  return MirrorGame(parts[2], parts.sublist(3));
+  final controls = <MirrorControl>[];
+  for (final tok in parts.sublist(3)) {
+    final idx = tok.lastIndexOf(':');
+    if (idx > 0 && idx == tok.length - 2) {
+      final label = tok.substring(0, idx);
+      final t = tok.substring(idx + 1);
+      controls.add(MirrorControl(label,
+          t == 'a' ? MirrorControlType.axis : MirrorControlType.button));
+    } else {
+      controls.add(MirrorControl(tok, MirrorControlType.button));
+    }
+  }
+  return MirrorGame(parts[2], controls);
 }
 
 /// Parses a `game over <id>` status line into the game's id. Returns null
@@ -59,18 +87,19 @@ String? parseGameOver(String line) {
   return parts[2];
 }
 
-/// Encodes the full held state as one game_in packet: [held][i] is whether
-/// control code i is pressed. The count byte is the number of controls, so
-/// an empty list encodes to an empty packet (all released).
-Uint8List encodeGameInput(List<bool> held) {
-  final count = held.length;
+/// Encodes the full input state as one game_in packet: [values][i] is the
+/// i16 value for control code i (0/1 for buttons, -32768..32767 for axes).
+/// An empty list encodes to an empty packet.
+Uint8List encodeGameInput(List<int> values) {
+  final count = values.length;
   if (count == 0) return Uint8List(0);
   final p = Uint8List(1 + 3 * count);
   p[0] = count;
   for (var i = 0; i < count; i++) {
+    final v = values[i];
     p[1 + 3 * i] = i; // control code
-    p[2 + 3 * i] = held[i] ? 1 : 0;
-    p[3 + 3 * i] = 0; // i16 value, little-endian, high byte
+    p[2 + 3 * i] = v & 0xff; // i16 value, little-endian
+    p[3 + 3 * i] = (v >> 8) & 0xff;
   }
   return p;
 }
