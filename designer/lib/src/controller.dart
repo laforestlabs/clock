@@ -41,6 +41,11 @@ class DesignerController extends ChangeNotifier {
   String? _sourcePath;
   String? get sourcePath => _sourcePath;
 
+  /// User-facing name for [_sourcePath], for the save toast. A content:// URI
+  /// on Android is not something to show a user; this holds the file name.
+  String? _sourceLabel;
+  String? get sourceLabel => _sourceLabel;
+
   bool _dirty = false;
   bool get dirty => _dirty;
 
@@ -178,6 +183,7 @@ class DesignerController extends ChangeNotifier {
     }
 
     _sourcePath = path;
+    _sourceLabel = null;
     _selected = -1;
     _undo.clear();
     _redo.clear();
@@ -191,6 +197,7 @@ class DesignerController extends ChangeNotifier {
   Future<void> newLayout({int width = 128, int height = 64}) async {
     _doc = LayoutDoc.blank(width: width, height: height);
     _sourcePath = null;
+    _sourceLabel = null;
     _selected = -1;
     _undo.clear();
     _redo.clear();
@@ -204,8 +211,9 @@ class DesignerController extends ChangeNotifier {
   /// preserved instead of being dropped on save.
   String exportJson() => _doc.encode();
 
-  void markSaved(String path) {
+  void markSaved(String path, {String? label}) {
     _sourcePath = path;
+    _sourceLabel = label;
     _dirty = false;
     notifyListeners();
   }

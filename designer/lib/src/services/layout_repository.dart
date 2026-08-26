@@ -7,7 +7,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/services.dart' show AssetManifest, rootBundle;
+import 'package:flutter/services.dart' show AssetManifest, MethodChannel, rootBundle;
+
+/// Android's `file_selector` has no save dialog, so "Save As" routes through
+/// ACTION_CREATE_DOCUMENT in MainActivity.kt instead.
+const MethodChannel _saveChannel = MethodChannel(
+  'com.example.mirror_designer/file_io',
+);
 
 class StockLayout {
   const StockLayout(this.name, this.assetPath, this.width, this.height);
@@ -87,29 +93,61 @@ class LayoutRepository {
     return (json: await picked.readAsString(), path: picked.path);
   }
 
-  /// Saves to a path already known. Returns false if there is no path yet.
-  Future<bool> saveTo(String path, String contents) async {
+  /// Saves to a location already known. Returns false if the write fails.
+  Future<bool> saveTo(String location, String contents) async {
+    // Android "Save As" hands back a content:// URI rather than a file path;
+    // dart:io cannot write to those, so it goes back through the platform.
+    if (Platform.isAndroid && location.startsWith('content://')) {
+      return await _saveChannel.invokeMethod<bool>(
+            'saveTo',
+            <String, String>{'uri': location, 'contents': contents},
+          ) ??
+          false;
+    }
+
     try {
-      await File(path).writeAsString(contents);
+      await File(location).writeAsString(contents);
       return true;
     } on FileSystemException {
       return false;
     }
   }
 
-  /// Prompts for a location. Returns the chosen path, or null if cancelled.
-  Future<String?> saveAs(String suggestedName, String contents) async {
-    final location = await getSaveLocation(
-      suggestedName: suggestedName.endsWith('.json')
-          ? suggestedName
-          : '$suggestedName.json',
+  /// Prompts for a location and writes [contents] there. Returns null if the
+  /// user cancels. `location` is the opaque token to pass back to [saveTo];
+  /// `label` is the user-facing name shown in the save confirmation.
+  Future<({String location, String label})?> saveAs(
+    String suggestedName,
+    String contents,
+  ) async {
+    final name = suggestedName.endsWith('.json')
+        ? suggestedName
+        : '$suggestedName.json';
+
+    if (Platform.isAndroid) {
+      final chosen = await _saveChannel.invokeMapMethod<String, String>(
+        'saveAs',
+        <String, String>{
+          'suggestedName': name,
+          'contents': contents,
+          'mimeType': 'application/json',
+        },
+      );
+      if (chosen == null) return null;
+      final uri = chosen['uri'];
+      if (uri == null) return null;
+      return (location: uri, label: chosen['name'] ?? name);
+    }
+
+    final loc = await getSaveLocation(
+      suggestedName: name,
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(label: 'layout', extensions: <String>['json']),
       ],
     );
-    if (location == null) return null;
+    if (loc == null) return null;
 
-    await File(location.path).writeAsString(contents);
-    return location.path;
+    await File(loc.path).writeAsString(contents);
+    return (location: loc.path, label: loc.path);
   }
 }

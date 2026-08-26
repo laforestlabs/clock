@@ -111,8 +111,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     if (!forceAs && path != null) {
       final ok = await _repo.saveTo(path, contents);
       if (ok) {
-        _c.markSaved(path);
-        _toast('Saved to $path');
+        final label = _c.sourceLabel;
+        _c.markSaved(path, label: label);
+        _toast('Saved to ${label ?? path}');
         return;
       }
       // Fall through to Save As when the original path is not writable, which
@@ -121,8 +122,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
     final chosen = await _repo.saveAs(_c.doc.name, contents);
     if (chosen == null) return;
-    _c.markSaved(chosen);
-    _toast('Saved to $chosen');
+    _c.markSaved(chosen.location, label: chosen.label);
+    _toast('Saved to ${chosen.label}');
   }
 
   void _toast(String message) {

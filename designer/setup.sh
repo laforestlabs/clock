@@ -83,6 +83,15 @@ scaffold "$DESIGNER_DIR/packages/mirror_core_ffi" "plugin_ffi" "mirror_core_ffi"
 info "Scaffolding the app"
 scaffold "$DESIGNER_DIR" "" "mirror_designer"
 
+# "Save As" uses ACTION_CREATE_DOCUMENT because file_selector has no save
+# support on Android. MainActivity.kt is ours; install it over the stub that
+# `flutter create` generated (and regenerates) so the fix survives a fresh
+# checkout. Guarded so `./setup.sh linux` without android is still safe.
+if [ -d "$DESIGNER_DIR/android" ]; then
+  cp "$DESIGNER_DIR/tool/MainActivity.kt" \
+     "$DESIGNER_DIR/android/app/src/main/kotlin/com/example/mirror_designer/MainActivity.kt"
+fi
+
 # The generated plugin ships a placeholder .c and matching Dart bindings that
 # reference functions our core does not have. Left in place they break the
 # build, so remove them; src/CMakeLists.txt is ours and points at core/.
