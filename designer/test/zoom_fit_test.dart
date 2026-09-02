@@ -1,9 +1,9 @@
 // Zoom fit: the preview fills its window instead of sitting at a fixed size.
 //
-// Zoom is a whole-number pixel multiplier, so "fit" means the largest whole
-// multiplier that still shows the entire panel. These pin the arithmetic, that
-// the tighter axis is the one that decides, and the handover between following
-// the window and holding a manual choice.
+// "Fit" means the multiplier that fills the tighter axis exactly, so the panel
+// uses every pixel of its box. These pin the arithmetic, that the tighter axis
+// is the one that decides, and the handover between following the window and
+// holding a manual choice.
 //
 // The two widget tests at the end cover the other half: that the view measures
 // itself and reports it, without which the arithmetic would never run at all.
@@ -79,11 +79,13 @@ void main() {
     expect(c.zoom, 5);
   }, skip: skip);
 
-  test('fit rounds down, so the panel never overflows its box', () async {
+  test('fit fills the tighter axis exactly, never overflowing its box',
+      () async {
     final c = await boot(_doc64x32);
-    // Both axes give 10.9375, which must not become 11.
+    // Both axes give 10.9375, which fills both exactly rather than wasting
+    // the fraction a whole-number multiplier would leave behind.
     c.reportViewport(const ui.Size(700, 350));
-    expect(c.zoom, 10);
+    expect(c.zoom, 10.9375);
     expect(64 * c.zoom, lessThanOrEqualTo(700));
     expect(32 * c.zoom, lessThanOrEqualTo(350));
   }, skip: skip);

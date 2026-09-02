@@ -36,6 +36,21 @@ enum _TouchMode { vertical, horizontal, compass }
 /// How the mirror game is controlled: the on-screen gamepad or phone tilt.
 enum _InputMode { manual, motion }
 
+/// The largest zoom that shows a [canvasWidth]x[canvasHeight] game inside a
+/// [maxWidth]x[maxHeight] box, filling the tighter axis exactly. Never below 1,
+/// so a game never gets shrunk past one screen pixel per cell.
+double fitGameZoom({
+  required double maxWidth,
+  required double maxHeight,
+  required int canvasWidth,
+  required int canvasHeight,
+}) {
+  final zw = maxWidth / canvasWidth;
+  final zh = maxHeight / canvasHeight;
+  final zoom = zw < zh ? zw : zh;
+  return zoom < 1 ? 1 : zoom;
+}
+
 /// A game running on a simulated panel.
 class GameScreen extends StatefulWidget {
   const GameScreen({
@@ -978,9 +993,8 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  /// The canvas area: computes an integer zoom that fills the available space,
-  /// then draws the game at that zoom with the same LED + veneer paint path
-  /// the layout preview uses.
+  /// The canvas area: fits the game into the available space, then draws it at
+  /// that zoom with the same LED + veneer paint path the layout preview uses.
   Widget _buildCanvasArea() {
     final engine = _engine;
     if (engine == null || _image == null) {
@@ -1007,18 +1021,21 @@ class _GameScreenState extends State<GameScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final zw = (constraints.maxWidth / cw).floor();
-        final zh = (constraints.maxHeight / ch).floor();
-        var zoom = zw < zh ? zw : zh;
-        if (zoom < 1) zoom = 1;
+        // Fill the tighter axis exactly, like the layout preview: a
+        // whole-number multiplier leaves dead space on a phone's screen.
+        final zoom = fitGameZoom(
+          maxWidth: constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
+          canvasWidth: cw,
+          canvasHeight: ch,
+        );
 
         final w = cw * zoom;
         final h = ch * zoom;
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => _handleTouch(
-              d.localPosition, true, Size(w.toDouble(), h.toDouble())),
+          onTapDown: (d) => _handleTouch(d.localPosition, true, Size(w, h)),
           onTapUp: (_) => _releaseAll(),
           onTapCancel: () => _releaseAll(),
           onPanEnd: (_) => _releaseAll(),
@@ -1028,14 +1045,14 @@ class _GameScreenState extends State<GameScreen>
               alignment: Alignment.center,
               children: <Widget>[
                 SizedBox(
-                  width: w.toDouble(),
-                  height: h.toDouble(),
+                  width: w,
+                  height: h,
                   child: CustomPaint(
                     isComplex: true,
                     painter: _GamePainter(
                       image: _image,
                       frame: _frame,
-                      zoom: zoom.toDouble(),
+                      zoom: zoom,
                       ledPixels: _c.ledPixels,
                       veneer: _c.veneer,
                       canvasWidth: cw,

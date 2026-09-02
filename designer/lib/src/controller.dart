@@ -76,10 +76,10 @@ class DesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Zoom is a whole-number pixel multiplier. It fills the window by default and
-  // re-fits when the window or the panel size changes. Touching the zoom
-  // controls pins it to that choice instead, until the user asks to fit again,
-  // so a deliberate close-up is never yanked away by a stray resize.
+  // Zoom is a pixel multiplier. It fills the window by default and re-fits when
+  // the window or the panel size changes. Touching the zoom controls pins it
+  // to that choice instead, until the user asks to fit again, so a deliberate
+  // close-up is never yanked away by a stray resize.
   static const double minZoom = 1;
   static const double maxZoom = 24;
 
@@ -117,7 +117,7 @@ class DesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The largest whole multiplier that still shows the entire panel.
+  /// The largest zoom that still shows the entire panel.
   double _fitZoom() {
     if (_viewport.width <= 0 || _viewport.height <= 0) return _zoom;
     if (_doc.width <= 0 || _doc.height <= 0) return _zoom;
@@ -126,10 +126,13 @@ class DesignerController extends ChangeNotifier {
         ? _viewport.width / _doc.width
         : _viewport.height / _doc.height;
 
-    // Rounded down, never up, so that nothing is ever cut off. Fractional
-    // multipliers are refused outright: the painter samples nearest neighbour,
-    // and half-pixel LED edges are the blurring this whole scheme avoids.
-    return fit.floorToDouble().clamp(minZoom, maxZoom).toDouble();
+    // The tighter axis fills its box exactly. A whole-number multiplier leaves
+    // up to nearly a full pixel-width of dead space, which is most of a
+    // phone's screen. Fractional zoom is safe: the emitter path draws
+    // anti-aliased discs that scale continuously, and the plain-bitmap
+    // fallback only runs at zooms below 3, where a nearest-neighbour stretch
+    // is still better than the wasted room.
+    return fit.clamp(minZoom, maxZoom).toDouble();
   }
 
   /// Whether the zoom moved. Notifying is left to the caller so that a re-render

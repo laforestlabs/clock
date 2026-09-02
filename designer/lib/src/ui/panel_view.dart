@@ -223,8 +223,8 @@ class _PanelViewState extends State<PanelView> {
 
         return InteractiveViewer(
           // Panning is for phones, where the panel at a usable zoom is wider
-          // than the screen. Scale stays at 1 because zoom is an integer
-          // control; a fractional scale would reintroduce blurring.
+          // than the screen. Scale stays at 1 because zoom lives in the
+          // child's size; an extra pinch scale would stack on top of it.
           constrained: false,
           minScale: 1,
           maxScale: 1,
