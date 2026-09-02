@@ -12,6 +12,7 @@ import '../engine/engine.dart';
 import '../model/field_schema.dart';
 import '../model/layout.dart';
 import 'color_field.dart';
+import 'datetime_field.dart';
 
 /// A glyph scale for display: whole multiples without a decimal point, the
 /// fractions Fit derives with one.
@@ -360,7 +361,7 @@ class _Field extends StatelessWidget {
           }),
         );
       case FieldKind.datetime:
-        return _DateTimeField(
+        return DateTimeField(
           label: spec.label,
           help: spec.help,
           value: widget.getInt(spec.key),
@@ -417,58 +418,6 @@ class _TextField extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
       onFieldSubmitted: onChanged,
-    );
-  }
-}
-class _DateTimeField extends StatelessWidget {
-  const _DateTimeField({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-    this.help,
-  });
-
-  final String label;
-  final int? value;
-  final String? help;
-  final ValueChanged<int> onChanged;
-
-  static String _two(int n) => n.toString().padLeft(2, '0');
-
-  @override
-  Widget build(BuildContext context) {
-    final d = value == null
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(value! * 1000);
-    final text = d == null
-        ? 'Not set'
-        : '${d.year}-${_two(d.month)}-${_two(d.day)} '
-            '${_two(d.hour)}:${_two(d.minute)}';
-
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      title: Text(text),
-      subtitle: Text(help == null ? label : '$label: $help'),
-      onTap: () async {
-        final now = DateTime.now();
-        final initial = (d != null && d.isAfter(now)) ? d : now;
-        final date = await showDatePicker(
-          context: context,
-          initialDate: initial,
-          firstDate: now,
-          lastDate: DateTime(2100),
-        );
-        if (date == null || !context.mounted) return;
-        final time = await showTimePicker(
-          context: context,
-          initialTime: TimeOfDay.now(),
-        );
-        if (time == null) return;
-        final dt =
-            DateTime(date.year, date.month, date.day, time.hour, time.minute);
-        onChanged(dt.millisecondsSinceEpoch ~/ 1000);
-      },
     );
   }
 }

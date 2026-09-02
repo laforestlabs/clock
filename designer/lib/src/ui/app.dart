@@ -9,10 +9,12 @@ import 'package:flutter/services.dart';
 
 import '../controller.dart';
 import '../engine/engine.dart';
+import '../model/layout.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
 import '../services/user_view.dart';
 import 'ble_prompt.dart';
+import 'datetime_field.dart';
 import 'color_field.dart';
 import 'inspector.dart';
 import 'mirror_screen.dart';
@@ -699,8 +701,14 @@ class _DiagnosticsBar extends StatelessWidget {
   }
 }
 
-/// The simplified user-facing panel: pick a stock layout, edit its literal
-/// text, and recolour the background and widgets. No selection, no geometry.
+/// The simplified user-facing panel: pick a stock layout, then tune the few
+/// inputs a stock layout actually exposes. No selection, no geometry.
+///
+/// Rather than mirror every widget's colour and text field, it promotes a
+/// small fixed set: the background, the dominant foreground ("main") colour,
+/// at most one accent, up to two literal text strings, and a target time when
+/// the layout is a countdown. Everything else stays editable in the developer
+/// view.
 class _SimplePanel extends StatelessWidget {
   const _SimplePanel({
     required this.controller,
@@ -747,36 +755,39 @@ class _SimplePanel extends StatelessWidget {
                   ),
               ],
             ),
-          const SizedBox(height: 16),
-          Text('Text', style: theme.textTheme.titleMedium),
         ];
 
-        var editableText = 0;
-        for (var i = 0; i < doc.widgetCount; i++) {
-          final w = doc.widgetAt(i);
-          if (w == null) continue;
-          final text = w.getString('text');
-          if (w.type != 'text' || text == null) continue;
-          editableText++;
-          children.add(TextFormField(
-            key: ValueKey<String>('simple-text-$i-$text'),
-            initialValue: text,
-            decoration: InputDecoration(
-              labelText: w.id.isNotEmpty ? w.id : 'Text',
-              isDense: true,
-              border: const OutlineInputBorder(),
-            ),
-            onFieldSubmitted: (v) =>
-                controller.updateWidget(i, (w) => w.setString('text', v)),
-          ));
-        }
-        if (editableText == 0) {
+        // Display text: at most two literal text widgets, in paint order.
+        final texts = literalTextWidgets(doc);
+        children
+          ..add(const SizedBox(height: 16))
+          ..add(Text('Text', style: theme.textTheme.titleMedium));
+        if (texts.isEmpty) {
           children.add(Text(
             'This layout has no editable text.',
             style: theme.textTheme.bodySmall,
           ));
+        } else {
+          for (final entry in texts.take(2)) {
+            final text = entry.widget.getString('text')!;
+            children.add(TextFormField(
+              key: ValueKey<String>('simple-text-${entry.index}-$text'),
+              initialValue: text,
+              decoration: InputDecoration(
+                labelText:
+                    entry.widget.id.isNotEmpty ? entry.widget.id : 'Text',
+                isDense: true,
+                border: const OutlineInputBorder(),
+              ),
+              onFieldSubmitted: (v) => controller.updateWidget(
+                entry.index,
+                (w) => w.setString('text', v),
+              ),
+            ));
+          }
         }
 
+        // Colours: background, then at most a main and an accent colour.
         children
           ..add(const SizedBox(height: 16))
           ..add(Text('Colours', style: theme.textTheme.titleMedium))
@@ -789,27 +800,44 @@ class _SimplePanel extends StatelessWidget {
             },
           ));
 
-        for (var i = 0; i < doc.widgetCount; i++) {
-          final w = doc.widgetAt(i);
-          if (w == null) continue;
-          final color = w.getString('color');
-          if (color != null) {
-            children.add(ColorField(
-              label: w.id.isNotEmpty ? w.id : w.type,
-              value: color,
-              onChanged: (v) =>
-                  controller.updateWidget(i, (w) => w.setString('color', v)),
+        final main = mainColourTarget(doc);
+        if (main != null) {
+          children.add(ColorField(
+            label: 'Main colour',
+            value: main.widget.getString('color'),
+            onChanged: (v) => controller.updateWidget(
+              main.index,
+              (w) => w.setString('color', v),
+            ),
+          ));
+        }
+
+        final accent = accentTarget(doc);
+        if (accent != null) {
+          children.add(ColorField(
+            label: 'Accent',
+            value: accent.widget.getString('accent'),
+            onChanged: (v) => controller.updateWidget(
+              accent.index,
+              (w) => w.setString('accent', v),
+            ),
+          ));
+        }
+
+        // A target time when the layout is a countdown.
+        final countdown = countdownTarget(doc);
+        if (countdown != null) {
+          children
+            ..add(const SizedBox(height: 16))
+            ..add(Text('Countdown', style: theme.textTheme.titleMedium))
+            ..add(DateTimeField(
+              label: 'Target time',
+              value: countdown.widget.getInt('until'),
+              onChanged: (v) => controller.updateWidget(
+                countdown.index,
+                (w) => w.setInt('until', v),
+              ),
             ));
-          }
-          final accent = w.getString('accent');
-          if (accent != null) {
-            children.add(ColorField(
-              label: '${w.id.isNotEmpty ? w.id : w.type} accent',
-              value: accent,
-              onChanged: (v) =>
-                  controller.updateWidget(i, (w) => w.setString('accent', v)),
-            ));
-          }
         }
 
         return ListView(
@@ -819,4 +847,63 @@ class _SimplePanel extends StatelessWidget {
       },
     );
   }
+}
+
+/// Literal text widgets in paint order: `text` widgets carrying a `text`
+/// value rather than a model `bind`. These are the strings a user types.
+List<({int index, LayoutWidget widget})> literalTextWidgets(LayoutDoc doc) {
+  final result = <({int index, LayoutWidget widget})>[];
+  for (var i = 0; i < doc.widgetCount; i++) {
+    final w = doc.widgetAt(i);
+    if (w == null || w.type != 'text') continue;
+    if (w.getString('text') == null) continue;
+    result.add((index: i, widget: w));
+  }
+  return result;
+}
+
+/// The widget whose colour the simple view promotes as "main": the largest
+/// non-decorative widget carrying a `color`, ties broken by paint order.
+({int index, LayoutWidget widget})? mainColourTarget(LayoutDoc doc) =>
+    _largestWidgetWith(doc, key: 'color', skipDecoration: true);
+
+/// The widget whose accent the simple view promotes: the largest widget
+/// carrying an `accent`, ties broken by paint order.
+({int index, LayoutWidget widget})? accentTarget(LayoutDoc doc) =>
+    _largestWidgetWith(doc, key: 'accent');
+
+/// The countdown widget whose target time the simple view exposes, if any.
+({int index, LayoutWidget widget})? countdownTarget(LayoutDoc doc) =>
+    _firstWidgetOfType(doc, 'countdown');
+
+({int index, LayoutWidget widget})? _largestWidgetWith(
+  LayoutDoc doc, {
+  required String key,
+  bool skipDecoration = false,
+}) {
+  ({int index, LayoutWidget widget})? best;
+  var bestArea = -1.0;
+  for (var i = 0; i < doc.widgetCount; i++) {
+    final w = doc.widgetAt(i);
+    if (w == null) continue;
+    if (skipDecoration && (w.type == 'rect' || w.type == 'line')) continue;
+    if (w.getString(key) == null) continue;
+    final area = w.rect.width * w.rect.height;
+    if (area > bestArea) {
+      bestArea = area;
+      best = (index: i, widget: w);
+    }
+  }
+  return best;
+}
+
+({int index, LayoutWidget widget})? _firstWidgetOfType(
+  LayoutDoc doc,
+  String type,
+) {
+  for (var i = 0; i < doc.widgetCount; i++) {
+    final w = doc.widgetAt(i);
+    if (w != null && w.type == type) return (index: i, widget: w);
+  }
+  return null;
 }
