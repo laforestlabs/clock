@@ -42,6 +42,8 @@
 #include "nvs.h"
 #include "sdkconfig.h"
 
+#include "mirror/json.h"
+
 #include "net/wifi.h"
 
 static const char *TAG = "prov";
@@ -88,9 +90,20 @@ static int  s_scan_count = 0;
 static bool s_scanning = false;
 static bool s_scan_handler_registered = false;
 
+/* Set when a credential apply (portal or BLE) starts a connect attempt, and
+ * cleared once its outcome is reported. Scopes the wifi-result callback to
+ * the in-flight attempt so ordinary drops never surface as failures. */
+static bool s_attempt_active = false;
+
+/* Transport-agnostic callbacks: provision.c reports scan completion and
+ * connect outcomes through these, so the BLE layer can surface them without
+ * provision.c knowing which transport (if any) is listening. */
+static provision_scan_done_cb_t      s_scan_done_cb = NULL;
+static provision_wifi_result_cb_t    s_wifi_result_cb = NULL;
+
 static void portal_start(void);
 static void dns_stop(void);
-static void scan_start(void);
+static esp_err_t scan_start(void);
 
 /* state */
 
@@ -209,12 +222,29 @@ static const char *reason_string(int reason)
     }
 }
 
+/* Report a connect outcome through s_wifi_result_cb, once per attempt. The
+ * s_attempt_active flag scopes this to the in-flight credential apply so
+ * ordinary station drops in normal operation never surface as failures. */
+static void report_wifi_result(bool connected, const char *arg)
+{
+    lock_state();
+    const bool active = s_attempt_active;
+    if (active) s_attempt_active = false;
+    unlock_state();
+
+    if (active && s_wifi_result_cb != NULL) {
+        s_wifi_result_cb(connected, arg);
+    }
+}
+
 static void provision_on_wifi(wifi_obs_evt_t evt, int arg)
 {
     if (evt == WIFI_OBS_CONNECTED) {
         s_ever_connected = true;
         set_error(NULL);
         esp_timer_stop(s_watchdog);   /* no-op when not running */
+
+        report_wifi_result(true, wifi_ip());
 
         if (portal_is_active()) {
             ESP_LOGI(TAG, "connected, closing the setup portal in 5 s");
@@ -234,6 +264,9 @@ static void provision_on_wifi(wifi_obs_evt_t evt, int arg)
 
     const char *why = reason_string(arg);
     set_error(why);
+    if (reason_is_terminal(arg)) {
+        report_wifi_result(false, why);
+    }
 
     if (portal) return;   /* the page already shows the failure */
 
@@ -271,6 +304,8 @@ static void on_watchdog(void *arg)
     if (!error_is_set()) {
         set_error("could not reach the network in time");
     }
+    report_wifi_result(false, "could not reach the network in time");
+
     if (!portal_is_active()) {
         ESP_LOGW(TAG, "no address after %d s, opening the setup portal",
                  CONFIG_MIRROR_CONNECT_TIMEOUT_S);
@@ -564,6 +599,57 @@ static int form_value(const char *body, const char *key, char *out, size_t outsz
     return -1;
 }
 
+/* Validate and apply credentials: persist, start the connect, arm the
+ * watchdog. Shared by the portal's POST handler and the BLE "wifi" push so
+ * the two front-ends cannot diverge. The connect outcome is reported
+ * asynchronously through report_wifi_result(). Returns ESP_OK, or
+ * ESP_ERR_INVALID_ARG with a message in err. */
+static esp_err_t apply_creds_and_connect(const char *ssid, const char *pass,
+                                         char *err, size_t errsz)
+{
+    const size_t ssid_len = strlen(ssid);
+    const size_t pass_len = strlen(pass);
+
+    if (ssid_len == 0) {
+        snprintf(err, errsz, "SSID is required");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ssid_len > MAX_SSID_LEN - 1) {
+        snprintf(err, errsz, "SSID too long");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (pass_len > MAX_PASS_LEN - 1) {
+        snprintf(err, errsz, "password too long");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    creds_save(ssid, pass);
+    set_error(NULL);
+
+    /* A fresh submission restarts the whole connect/watch/teardown dance. */
+    esp_timer_stop(s_teardown);
+    esp_timer_stop(s_watchdog);
+
+    lock_state();
+    s_attempt_active = true;
+    unlock_state();
+
+    const esp_err_t werr = wifi_connect(ssid, pass);
+    if (werr != ESP_OK) {
+        ESP_LOGE(TAG, "could not start the connection: %s", esp_err_to_name(werr));
+        set_error("could not start the connection");
+        report_wifi_result(false, "could not start the connection");
+    }
+
+    /* Bounded wait: a network that accepts the association but never answers
+     * DHCP otherwise leaves the page stuck on "connecting" forever. */
+    esp_timer_start_once(s_watchdog,
+                         (int64_t)CONFIG_MIRROR_CONNECT_TIMEOUT_S * 1000000);
+
+    ESP_LOGI(TAG, "credentials saved for \"%s\", connecting", ssid);
+    return ESP_OK;
+}
+
 static esp_err_t handle_post_root(httpd_req_t *req)
 {
     char body[MAX_FORM_BODY + 1];
@@ -589,37 +675,14 @@ static esp_err_t handle_post_root(httpd_req_t *req)
 
     char ssid[MAX_SSID_LEN] = "";
     char pass[MAX_PASS_LEN + 1] = "";
-    const int ssid_len = form_value(body, "ssid", ssid, sizeof(ssid));
-    const int pass_len = form_value(body, "pass", pass, sizeof(pass));
+    form_value(body, "ssid", ssid, sizeof(ssid));
+    form_value(body, "pass", pass, sizeof(pass));
 
-    if (ssid_len <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID is required");
+    char err[96];
+    if (apply_creds_and_connect(ssid, pass, err, sizeof(err)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
         return ESP_FAIL;
     }
-    if (ssid_len > MAX_SSID_LEN - 1 || pass_len > MAX_PASS_LEN - 1) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "value too long");
-        return ESP_FAIL;
-    }
-
-    creds_save(ssid, pass);
-    set_error(NULL);
-
-    /* A fresh submission restarts the whole connect/watch/teardown dance. */
-    esp_timer_stop(s_teardown);
-    esp_timer_stop(s_watchdog);
-
-    esp_err_t err = wifi_connect(ssid, pass);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "could not start the connection: %s", esp_err_to_name(err));
-        set_error("could not start the connection");
-    }
-
-    /* Bounded wait: a network that accepts the association but never answers
-     * DHCP otherwise leaves the page stuck on "connecting" forever. */
-    esp_timer_start_once(s_watchdog,
-                         (int64_t)CONFIG_MIRROR_CONNECT_TIMEOUT_S * 1000000);
-
-    ESP_LOGI(TAG, "credentials saved for \"%s\", connecting", ssid);
 
     /* Serve the same page again; its poller picks up the new state. */
     return handle_get_root(req);
@@ -628,16 +691,7 @@ static esp_err_t handle_post_root(httpd_req_t *req)
 static esp_err_t handle_post_forget(httpd_req_t *req)
 {
     (void)req;
-
-    creds_clear();
-    wifi_forget();
-    set_error(NULL);
-
-    /* The portal stays open with nothing saved. Also cancel a pending
-     * teardown: the owner asked to stay in setup, not to go online. */
-    esp_timer_stop(s_teardown);
-
-    ESP_LOGI(TAG, "saved credentials cleared");
+    provision_forget();
     return handle_get_root(req);
 }
 
@@ -747,13 +801,14 @@ static httpd_config_t server_config(void)
 /* ------------------------------------------------------- wifi scanning */
 
 /* Start a background scan if none is running. The result arrives on
- * WIFI_EVENT_SCAN_DONE and is copied into s_scan_results. */
-static void scan_start(void)
+ * WIFI_EVENT_SCAN_DONE and is copied into s_scan_results. Returns ESP_OK when
+ * a scan is running or was started, or the underlying error on failure. */
+static esp_err_t scan_start(void)
 {
     lock_state();
     if (s_scanning) {
         unlock_state();
-        return;
+        return ESP_OK;
     }
     s_scanning = true;
     s_scan_count = 0;
@@ -771,7 +826,9 @@ static void scan_start(void)
         lock_state();
         s_scanning = false;
         unlock_state();
+        return err;
     }
+    return ESP_OK;
 }
 
 static void on_scan_done(void *arg, esp_event_base_t base,
@@ -845,6 +902,10 @@ static void on_scan_done(void *arg, esp_event_base_t base,
     }
 
     if (recs != NULL) free(recs);
+
+    /* Notify any transport (the BLE layer) that a fresh snapshot is ready.
+     * Called after unlock, so the callback can safely read the results. */
+    if (s_scan_done_cb != NULL) s_scan_done_cb();
 }
 
 /* captive-portal dns */
@@ -1138,4 +1199,176 @@ esp_err_t provision_start(void)
     esp_timer_start_once(s_watchdog,
                          (int64_t)CONFIG_MIRROR_CONNECT_TIMEOUT_S * 1000000);
     return ESP_OK;
+}
+
+/* ------------------------------------------------------- public API */
+
+bool provision_has_creds(void)
+{
+    lock_state();
+    const bool has = s_has_creds;
+    unlock_state();
+    return has;
+}
+
+const char *provision_saved_ssid(void)
+{
+    /* s_ssid only changes when a credential apply runs on the commit task;
+     * copy it under the lock so a concurrent apply cannot tear the read. */
+    static char out[MAX_SSID_LEN];
+    lock_state();
+    snprintf(out, sizeof(out), "%s", s_ssid);
+    unlock_state();
+    return out;
+}
+
+/* Extract a string token's decoded bytes, preserving non-ASCII as raw UTF-8.
+ * Unlike ml_json_str (which folds into the ASCII bitmap font), SSIDs and
+ * passphrases are arbitrary UTF-8 and must round-trip byte-for-byte: folding
+ * "ó" into '?' would break the association. */
+static bool str_utf8(const ml_json *j, int tok, char *out, size_t cap)
+{
+    if (!j || tok < 0 || tok >= j->count || !out || cap == 0) return false;
+    const ml_json_tok *t = &j->toks[tok];
+    if (t->type != ML_JSON_STRING) return false;
+
+    size_t w = 0;
+    for (int i = t->start; i < t->end && w + 1 < cap; i++) {
+        const char c = j->src[i];
+        if (c != '\\' || i + 1 >= t->end) {
+            out[w++] = c;
+            continue;
+        }
+
+        i++;
+        switch (j->src[i]) {
+        case 'n':  out[w++] = '\n'; break;
+        case 't':  out[w++] = '\t'; break;
+        case 'r':  out[w++] = '\r'; break;
+        case 'b':  out[w++] = '\b'; break;
+        case 'f':  out[w++] = '\f'; break;
+        case '"':  out[w++] = '"';  break;
+        case '\\': out[w++] = '\\'; break;
+        case '/':  out[w++] = '/';  break;
+        case 'u': {
+            if (i + 4 >= t->end) { out[w++] = '?'; break; }
+            int cp = 0;
+            for (int k = 1; k <= 4; k++) {
+                const char h = j->src[i + k];
+                int d;
+                if (h >= '0' && h <= '9')      d = h - '0';
+                else if (h >= 'a' && h <= 'f') d = h - 'a' + 10;
+                else if (h >= 'A' && h <= 'F') d = h - 'A' + 10;
+                else d = -1;
+                if (d < 0) { cp = -1; break; }
+                cp = cp * 16 + d;
+            }
+            i += 4;
+            if (cp < 0) { out[w++] = '?'; break; }
+            /* Dart emits raw UTF-8, so this path is for hand-written JSON. */
+            if (cp < 0x80) {
+                out[w++] = (char)cp;
+            } else if (cp < 0x800) {
+                if (w + 2 < cap) {
+                    out[w++] = (char)(0xC0 | (cp >> 6));
+                    out[w++] = (char)(0x80 | (cp & 0x3F));
+                }
+            } else if (w + 3 < cap) {
+                out[w++] = (char)(0xE0 | (cp >> 12));
+                out[w++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                out[w++] = (char)(0x80 | (cp & 0x3F));
+            }
+            break;
+        }
+        default:
+            out[w++] = j->src[i];
+            break;
+        }
+    }
+    out[w] = '\0';
+    return true;
+}
+
+esp_err_t provision_apply_json(const char *json, size_t len,
+                               char *err, size_t errsz)
+{
+    if (json == NULL || len == 0) {
+        snprintf(err, errsz, "empty config");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ml_json_tok toks[8];
+    ml_json j;
+    const int n = ml_json_parse(&j, json, len, toks, 8);
+    if (n < 0 || j.count == 0 || j.toks[0].type != ML_JSON_OBJECT) {
+        snprintf(err, errsz, "expected a JSON object");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char ssid[MAX_SSID_LEN] = "";
+    char pass[MAX_PASS_LEN + 1] = "";
+
+    int t = ml_json_member(&j, 0, "ssid");
+    if (t < 0) {
+        snprintf(err, errsz, "SSID is required");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!str_utf8(&j, t, ssid, sizeof(ssid))) {
+        snprintf(err, errsz, "SSID must be a string");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* pass is optional: an absent or empty password means an open network. */
+    t = ml_json_member(&j, 0, "pass");
+    if (t >= 0 && !str_utf8(&j, t, pass, sizeof(pass))) {
+        snprintf(err, errsz, "password must be a string");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return apply_creds_and_connect(ssid, pass, err, errsz);
+}
+
+esp_err_t provision_forget(void)
+{
+    creds_clear();
+    wifi_forget();
+    set_error(NULL);
+
+    /* Cancel a pending portal teardown: the owner asked to stay in setup. */
+    esp_timer_stop(s_teardown);
+
+    /* Reopen the portal so the device is provisionable again. Idempotent:
+     * a no-op when the portal is already up (the page's forget handler). */
+    portal_start();
+
+    ESP_LOGI(TAG, "saved credentials cleared");
+    return ESP_OK;
+}
+
+esp_err_t provision_scan_start(void)
+{
+    return scan_start();
+}
+
+int provision_scan_results(provision_scan_result_t *out, int max)
+{
+    lock_state();
+    const int n = s_scan_count < max ? s_scan_count : max;
+    for (int i = 0; i < n; i++) {
+        memcpy(out[i].ssid, s_scan_results[i].ssid, sizeof(out[i].ssid));
+        out[i].rssi = s_scan_results[i].rssi;
+        out[i].open = s_scan_results[i].open;
+    }
+    unlock_state();
+    return n;
+}
+
+void provision_set_scan_done_cb(provision_scan_done_cb_t cb)
+{
+    s_scan_done_cb = cb;
+}
+
+void provision_set_wifi_result_cb(provision_wifi_result_cb_t cb)
+{
+    s_wifi_result_cb = cb;
 }

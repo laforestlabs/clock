@@ -18,6 +18,8 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'mirror_ble_protocol.dart';
 import 'mirror_ble_game.dart';
 import 'mirror_ble_status.dart';
+import 'mirror_wifi.dart';
+import 'mirror_wifi_status.dart';
 
 /// The BLE stack or adapter is not available (e.g. a desktop without
 /// Bluetooth). The UI shows this as "unavailable" rather than crashing.
@@ -293,6 +295,66 @@ class BleSession {
       throw BlePushException(status.substring('brightness error'.length).trim());
     }
     return status;
+  }
+
+  /// The mirror's WiFi state, or null when the firmware does not answer the
+  /// command (an older build).
+  Future<BleWifiStatus?> getWifi() async {
+    return parseWifiStatus(await _sendAndWait('get wifi'));
+  }
+
+  /// Scan for nearby networks and return them strongest-first. Sends
+  /// "wifi scan" and collects wifi-net lines until the wifi-scan done/error
+  /// terminator. An empty list with no error means the mirror is still
+  /// scanning or found nothing.
+  Future<List<BleWifiNetwork>> scanWifi({
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final nets = <BleWifiNetwork>[];
+    final done = _statusController.stream
+        .firstWhere((l) =>
+            l.startsWith('wifi-scan done') || l.startsWith('wifi-scan error'))
+        .timeout(timeout);
+    final sub = _statusController.stream.listen((line) {
+      final n = parseWifiNet(line);
+      if (n != null) nets.add(n);
+    });
+    try {
+      await _writeCmd('wifi scan');
+      await done;
+    } finally {
+      await sub.cancel();
+    }
+    return nets;
+  }
+
+  /// Push WiFi credentials and return the device's commit status text.
+  /// Throws [BlePushException] with the device's reason on rejection.
+  Future<String> pushWifi(WifiConfig wifi) {
+    return _push('wifi', utf8.encode(jsonEncode(wifi.toJson())));
+  }
+
+  /// Forget the saved network; the mirror reopens its setup portal.
+  Future<String> forgetWifi() => _sendAndWait('wifi forget');
+
+  /// Await the asynchronous connect outcome after a [pushWifi]. Subscribe
+  /// before pushing, then call this. Returns null when no outcome arrives
+  /// within [timeout].
+  Future<BleWifiResult?> awaitWifiResult({
+    Duration timeout = const Duration(seconds: 40),
+  }) async {
+    try {
+      final line = await _statusController.stream
+          .firstWhere((l) =>
+              l.startsWith('wifi connect ok') ||
+              l.startsWith('wifi connect error'))
+          .timeout(timeout);
+      return parseWifiResult(line);
+    } on TimeoutException {
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Ask the mirror to restart. The device answers "reboot ok" first, then

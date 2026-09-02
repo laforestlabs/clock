@@ -54,7 +54,9 @@
 #include "mirror/game.h"
 #include "mirror/json.h"
 #include "mirror/mirror.h"
+#include "net/provision.h"
 #include "net/wifi.h"
+
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
@@ -93,7 +95,8 @@ static const ble_uuid128_t s_chr_game_in = BLE_UUID128_INIT(0x05, UUID_TAIL);
 typedef enum {
     TRANSFER_NONE,
     TRANSFER_LAYOUT,
-    TRANSFER_CONFIG
+    TRANSFER_CONFIG,
+    TRANSFER_WIFI
 } transfer_kind_t;
 
 typedef struct {
@@ -112,6 +115,11 @@ static size_t          s_last_status_len;
 static uint16_t        s_status_handle;
 static uint16_t        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint8_t         s_adv_addr_type;
+/* Set by the "wifi scan" command and cleared when the results are streamed,
+ * so scan-done notifications from the portal's own scans do not emit an
+ * unsolicited network list. Guarded by s_lock. */
+static bool s_wifi_scan_awaiting = false;
+
 
 /*
  * Commit processing (NVS/SPIFFS writes, tzset, provider refresh) runs on a
@@ -280,6 +288,8 @@ static void cmd_begin(const char *arg)
     transfer_kind_t k;
     if (strcmp(kind, "layout") == 0) {
         k = TRANSFER_LAYOUT;
+    } else if (strcmp(kind, "wifi") == 0) {
+        k = TRANSFER_WIFI;
     } else if (strcmp(kind, "config") == 0) {
         k = TRANSFER_CONFIG;
     } else {
@@ -407,6 +417,15 @@ static void commit_task(void *arg)
                 heap_caps_free(parsed);
             }
             send_status("commit ok %d widgets", count);
+        } else if (job.kind == TRANSFER_WIFI) {
+            char err[96];
+            if (provision_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
+                ESP_LOGW(TAG, "wifi commit rejected: %s", err);
+                send_status("commit error %s", err);
+                heap_caps_free((void *)job.buf);
+                continue;
+            }
+            send_status("commit ok");
         } else {   /* TRANSFER_CONFIG */
             char err[96];
             if (mirror_config_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
@@ -496,6 +515,79 @@ static void cmd_reboot(void)
     esp_restart();
 }
 
+static void cmd_get_wifi(void)
+{
+    char esc_ssid[96];
+    json_escape(esc_ssid, sizeof(esc_ssid), provision_saved_ssid());
+    send_status("wifi {\"saved\":%s,\"ssid\":\"%s\",\"ip\":\"%s\","
+                "\"connected\":%s}",
+                provision_has_creds() ? "true" : "false",
+                esc_ssid, wifi_ip(),
+                wifi_is_connected() ? "true" : "false");
+}
+
+static void cmd_wifi_scan(void)
+{
+    lock();
+    s_wifi_scan_awaiting = true;
+    unlock();
+
+    if (provision_scan_start() != ESP_OK) {
+        lock();
+        s_wifi_scan_awaiting = false;
+        unlock();
+        send_status("wifi-scan error could not start");
+        return;
+    }
+    send_status("wifi-scan start");
+}
+
+static void cmd_wifi_forget(void)
+{
+    if (provision_forget() != ESP_OK) {
+        send_status("wifi forget error");
+        return;
+    }
+    send_status("wifi forget ok");
+}
+
+/* provision.c invokes these on the event-loop task. send_status locks
+ * internally, so both are safe to call off the BLE host task. */
+
+static void ble_wifi_scan_done_cb(void)
+{
+    lock();
+    const bool awaiting = s_wifi_scan_awaiting;
+    s_wifi_scan_awaiting = false;
+    unlock();
+    if (!awaiting) return;
+
+    /* PSRAM, not internal RAM: the DMA-capable internal pool is what the BT
+     * controller and panel DMA both need, and this buffer is only used
+     * transiently by the event-loop task. */
+    provision_scan_result_t *results = heap_caps_malloc(
+        24 * sizeof(provision_scan_result_t), MALLOC_CAP_SPIRAM);
+    if (results == NULL) {
+        send_status("wifi-scan done 0");
+        return;
+    }
+    const int n = provision_scan_results(results, 24);
+    for (int i = 0; i < n; i++) {
+        char esc[96];
+        json_escape(esc, sizeof(esc), results[i].ssid);
+        send_status("wifi-net {\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+                    esc, results[i].rssi, results[i].open ? "true" : "false");
+    }
+    send_status("wifi-scan done %d", n);
+    heap_caps_free(results);
+}
+
+static void ble_wifi_result_cb(bool connected, const char *arg)
+{
+    send_status(connected ? "wifi connect ok %s" : "wifi connect error %s",
+                arg);
+}
+
 /* Parse and run one command line. Commands are the ASCII protocol described
  * at the top of the file. */
 static void handle_cmd(char *line)
@@ -506,6 +598,12 @@ static void handle_cmd(char *line)
         cmd_get_config();
     } else if (strcmp(line, "get brightness") == 0) {
         cmd_get_brightness();
+    } else if (strcmp(line, "get wifi") == 0) {
+        cmd_get_wifi();
+    } else if (strcmp(line, "wifi scan") == 0) {
+        cmd_wifi_scan();
+    } else if (strcmp(line, "wifi forget") == 0) {
+        cmd_wifi_forget();
     } else if (strcmp(line, "get latency") == 0) {
         cmd_get_latency();
     } else if (strncmp(line, "set brightness ", 15) == 0) {
@@ -863,7 +961,10 @@ esp_err_t ble_init(void)
     if (s_lock == NULL) return ESP_ERR_NO_MEM;
 
     s_status_lock = xSemaphoreCreateMutex();
-    if (s_status_lock == NULL) return ESP_ERR_NO_MEM;
+    /* Forward the provisioning module's scan-completion and connect-outcome
+     * notifications to the phone over the status characteristic. */
+    provision_set_scan_done_cb(ble_wifi_scan_done_cb);
+    provision_set_wifi_result_cb(ble_wifi_result_cb);
 
     /* Same naming convention as the setup access point (build_ap_ssid):
      * last four hex digits of the STA MAC, so several mirrors in one house
