@@ -12,6 +12,7 @@ import '../engine/engine.dart';
 import '../model/layout.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
+import '../services/panel_orientation.dart';
 import '../services/user_view.dart';
 import 'ble_prompt.dart';
 import 'datetime_field.dart';
@@ -20,6 +21,7 @@ import 'inspector.dart';
 import 'mirror_screen.dart';
 import 'panel_view.dart';
 import 'game_screen.dart';
+import 'settings_screen.dart';
 import 'widget_list.dart';
 const double _wideBreakpoint = 900;
 
@@ -85,8 +87,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Future<void> _bootstrap() async {
     final stock = await _repo.stockLayouts();
     final view = await loadUserView();
+    final flipped = await loadPanelFlip180();
     await _connection.loadLastPanelSize();
     if (!mounted) return;
+    _c.flip180 = flipped;
     setState(() {
       _stock = stock;
       _view = view;
@@ -200,24 +204,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   void _openSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            SwitchListTile(
-              title: const Text('Developer mode'),
-              subtitle: const Text(
-                  'Full workspace: widget editing, games, and firmware tools'),
-              value: false,
-              onChanged: (v) {
-                if (!v) return;
-                Navigator.of(context).pop();
-                _setView(UserView.developer);
-              },
-            ),
-          ],
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
+          controller: _c,
+          view: _view,
+          onViewChanged: _setView,
         ),
       ),
     );
@@ -543,6 +535,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               case 'redo':
                 _c.redo();
                 break;
+              case 'settings':
+                _openSettings();
+                break;
               default:
                 final match = _stock.where((s) => s.assetPath == choice);
                 if (match.isNotEmpty) _openStock(match.first);
@@ -565,6 +560,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               const PopupMenuItem<String>(value: 'undo', child: Text('Undo')),
               const PopupMenuItem<String>(value: 'redo', child: Text('Redo')),
             ],
+            const PopupMenuDivider(),
+            const PopupMenuItem<String>(value: 'settings', child: Text('Settings')),
           ],
         ),
       ],

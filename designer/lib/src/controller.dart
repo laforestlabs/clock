@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 
 import 'engine/engine.dart';
 import 'model/layout.dart';
+import 'services/panel_orientation.dart';
 
 class DesignerController extends ChangeNotifier {
   DesignerController(this._engine);
@@ -63,6 +64,17 @@ class DesignerController extends ChangeNotifier {
 
   bool _tempF = true;
   bool get tempF => _tempF;
+
+  /// Whether the preview is drawn upside down (rotated 180 degrees). A
+  /// view-layer transform: the engine and the layout coordinates stay
+  /// upright, so editing keeps working; only the drawing is mirrored.
+  bool _flip180 = false;
+  bool get flip180 => _flip180;
+  set flip180(bool value) {
+    if (_flip180 == value) return;
+    _flip180 = value;
+    notifyListeners();
+  }
 
   /// Wood veneer diffusion as a percentage. Applied by the view as scatter
   /// around the emitters, never by the engine: the veneer sits in front of the
@@ -420,6 +432,11 @@ class DesignerController extends ChangeNotifier {
     _tempF = on;
     _engine.setTempF(on);
     await _refresh();
+  }
+
+  Future<void> setFlip180(bool on) async {
+    flip180 = on;
+    await savePanelFlip180(on);
   }
 
   Future<void> setBrightnessOverride(int? value) async {

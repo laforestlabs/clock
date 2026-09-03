@@ -7,6 +7,7 @@
 // by the engine, so the pixels underneath stay exactly what the hardware
 // would show.
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -47,25 +48,42 @@ class _PanelViewState extends State<PanelView> {
 
   DesignerController get _c => widget.controller;
 
-  /// Maps a pointer position to a canvas pixel coordinate.
-  Offset _toCanvas(Offset local) => Offset(
-        local.dx / _c.zoom,
-        local.dy / _c.zoom,
+  /// Maps a pointer position to a canvas pixel coordinate in the layout's own
+  /// (upright) space. With the preview flipped 180 degrees the mapping is
+  /// inverted, so editing still lands on the widget the pointer is over.
+  Offset _toCanvas(Offset local) {
+    final cx = local.dx / _c.zoom;
+    final cy = local.dy / _c.zoom;
+    if (!_c.flip180) return Offset(cx, cy);
+    return Offset(
+      (_c.doc.width - 1 - cx).clamp(0, _c.doc.width - 1).toDouble(),
+      (_c.doc.height - 1 - cy).clamp(0, _c.doc.height - 1).toDouble(),
+    );
+  }
+
+  /// A widget rect translated to screen space, honouring the flip.
+  Rect _toScreen(Rect r) {
+    if (!_c.flip180) {
+      return Rect.fromLTWH(
+        r.left * _c.zoom,
+        r.top * _c.zoom,
+        r.width * _c.zoom,
+        r.height * _c.zoom,
       );
+    }
+    return Rect.fromLTWH(
+      (_c.doc.width - r.right) * _c.zoom,
+      (_c.doc.height - r.bottom) * _c.zoom,
+      r.width * _c.zoom,
+      r.height * _c.zoom,
+    );
+  }
 
   /// Handles for the current selection, or null when nothing is selected.
   SelectionHandles? get _selectionHandles {
     final index = _c.selected;
     if (index < 0 || index >= _c.widgetInfo.length) return null;
-    final r = _c.widgetInfo[index].rect;
-    return SelectionHandles(
-      Rect.fromLTWH(
-        r.left * _c.zoom,
-        r.top * _c.zoom,
-        r.width * _c.zoom,
-        r.height * _c.zoom,
-      ),
-    );
+    return SelectionHandles(_toScreen(_c.widgetInfo[index].rect));
   }
 
   void _onTapDown(TapDownDetails details) {
@@ -259,6 +277,9 @@ class _PanelViewState extends State<PanelView> {
                                 painter: _ChromePainter(
                                   zoom: _c.zoom,
                                   selection: selection,
+                                  flip180: _c.flip180,
+                                  canvasWidth: _c.doc.width,
+                                  canvasHeight: _c.doc.height,
                                 ),
                               ),
                             ),
@@ -288,6 +309,7 @@ class _PanelViewState extends State<PanelView> {
           veneer: _c.veneer,
           canvasWidth: _c.doc.width,
           canvasHeight: _c.doc.height,
+          flip180: _c.flip180,
         ),
       ),
     );
@@ -303,6 +325,7 @@ class _PanelPainter extends CustomPainter {
     required this.veneer,
     required this.canvasWidth,
     required this.canvasHeight,
+    required this.flip180,
   });
 
   final ui.Image? image;
@@ -321,13 +344,25 @@ class _PanelPainter extends CustomPainter {
   final int canvasWidth;
   final int canvasHeight;
 
+  /// Whether the frame is drawn upside down (rotated 180 degrees).
+  final bool flip180;
+
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.save();
+    if (flip180) {
+      canvas.translate(size.width, size.height);
+      canvas.rotate(math.pi);
+    }
+
     final bounds = Offset.zero & size;
     canvas.drawRect(bounds, Paint()..color = const Color(0xFF000000));
 
     final img = image;
-    if (img == null) return;
+    if (img == null) {
+      canvas.restore();
+      return;
+    }
 
     // Calibrated so 100% is what 50% meant before the slider was rebased:
     // the diffusion strength is half the slider value.
@@ -359,10 +394,12 @@ class _PanelPainter extends CustomPainter {
         canvas.drawImageRect(img, src, dst, paint);
         canvas.restore();
       }
+      canvas.restore();
       return;
     }
 
     _paintLed(canvas, img, bounds, v);
+    canvas.restore();
   }
 
   /// The panel as a field of point sources. Each lit cell is a disc smaller
@@ -442,16 +479,26 @@ class _PanelPainter extends CustomPainter {
       old.ledPixels != ledPixels ||
       old.veneer != veneer ||
       old.canvasWidth != canvasWidth ||
-      old.canvasHeight != canvasHeight;
+      old.canvasHeight != canvasHeight ||
+      old.flip180 != flip180;
 }
 
 /// Editor chrome: the selection outline and its resize handles. Kept off the
 /// panel painter so dragging a selection does not re-rasterise the emitters.
 class _ChromePainter extends CustomPainter {
-  _ChromePainter({required this.zoom, required this.selection});
+  _ChromePainter({
+    required this.zoom,
+    required this.selection,
+    required this.flip180,
+    required this.canvasWidth,
+    required this.canvasHeight,
+  });
 
   final double zoom;
   final Rect? selection;
+  final bool flip180;
+  final int canvasWidth;
+  final int canvasHeight;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -460,9 +507,11 @@ class _ChromePainter extends CustomPainter {
   }
 
   void _paintSelection(Canvas canvas, Rect r) {
+    final left = flip180 ? canvasWidth - r.right : r.left;
+    final top = flip180 ? canvasHeight - r.bottom : r.top;
     final scaled = Rect.fromLTWH(
-      r.left * zoom,
-      r.top * zoom,
+      left * zoom,
+      top * zoom,
       r.width * zoom,
       r.height * zoom,
     );
@@ -502,5 +551,9 @@ class _ChromePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ChromePainter old) =>
-      old.zoom != zoom || old.selection != selection;
+      old.zoom != zoom ||
+      old.selection != selection ||
+      old.flip180 != flip180 ||
+      old.canvasWidth != canvasWidth ||
+      old.canvasHeight != canvasHeight;
 }
