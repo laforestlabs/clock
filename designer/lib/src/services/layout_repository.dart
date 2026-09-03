@@ -7,10 +7,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/services.dart' show AssetManifest, MethodChannel, rootBundle;
+import 'package:flutter/services.dart'
+    show AssetManifest, MethodChannel, MissingPluginException, PlatformException, rootBundle;
 
 /// Android's `file_selector` has no save dialog, so "Save As" routes through
-/// ACTION_CREATE_DOCUMENT in MainActivity.kt instead.
+/// ACTION_CREATE_DOCUMENT in MainActivity.kt instead. The same channel also
+/// routes "Open" through ACTION_OPEN_DOCUMENT so the document URI survives for
+/// a later in-place Save.
 const MethodChannel _saveChannel = MethodChannel(
   'com.example.mirror_designer/file_io',
 );
@@ -85,12 +88,33 @@ class LayoutRepository {
   Future<String> loadAsset(String assetPath) => rootBundle.loadString(assetPath);
 
   /// Opens a layout from disk. Returns null if the user cancelled.
-  Future<({String json, String path})?> openFile() async {
+  Future<({String json, String path, String? label})?> openFile() async {
+    if (Platform.isAndroid) {
+      // `file_selector` copies the chosen document into the app cache and
+      // returns that path, so saving to it would update the copy and leave
+      // the original untouched. Ask MainActivity for the document URI instead,
+      // so a later Save writes back through the Storage Access Framework.
+      try {
+        final chosen = await _saveChannel.invokeMapMethod<String, String>('openFile');
+        if (chosen == null) return null; // user cancelled
+        final uri = chosen['uri'];
+        final contents = chosen['contents'];
+        if (uri != null && contents != null) {
+          return (json: contents, path: uri, label: chosen['name']);
+        }
+      } on MissingPluginException {
+        // Fall through to `file_selector`, for example in a test harness
+        // without MainActivity.
+      } on PlatformException {
+        // Fall through to `file_selector`.
+      }
+    }
+
     const typeGroup = XTypeGroup(label: 'layout', extensions: <String>['json']);
     final file = await openFiles(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
     if (file.isEmpty) return null;
     final picked = file.first;
-    return (json: await picked.readAsString(), path: picked.path);
+    return (json: await picked.readAsString(), path: picked.path, label: null);
   }
 
   /// Saves to a location already known. Returns false if the write fails.

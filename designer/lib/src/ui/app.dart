@@ -142,7 +142,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Future<void> _open() async {
     final picked = await _repo.openFile();
     if (picked == null) return;
-    await _c.loadJson(picked.json, path: picked.path);
+    await _c.loadJson(picked.json, path: picked.path, label: picked.label);
   }
 
   Future<void> _save({bool forceAs = false}) async {

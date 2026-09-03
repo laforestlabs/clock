@@ -10,11 +10,13 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
 
-/// The bare Flutter activity, plus the native half of "Save As".
+/// The bare Flutter activity, plus the native half of "Open" and "Save As".
 ///
 /// `file_selector` has no save support on Android, so the Dart side routes
 /// saves through this channel and the Storage Access Framework
 /// (`ACTION_CREATE_DOCUMENT`) provides the dialog that `getSaveLocation` cannot.
+/// Open goes through `ACTION_OPEN_DOCUMENT` for the same reason: it keeps the
+/// document URI so a later Save can write back to the file that was opened.
 ///
 /// This file is the source of truth; designer/setup.sh installs it over the
 /// stub that `flutter create` generates for the (gitignored) android/ tree.
@@ -22,10 +24,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     private companion object {
         const val CHANNEL = "com.example.mirror_designer/file_io"
         const val SAVE_REQUEST_CODE = 0x5A9
+        const val OPEN_REQUEST_CODE = 0x5A8
     }
-
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSaveContents: String? = null
+    private var pendingOpenResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -41,6 +44,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
                 val mimeType = call.argument<String>("mimeType") ?: "application/json"
                 launchSaveAs(suggestedName, contents, mimeType, result)
             }
+
+            "openFile" -> launchOpen(result)
 
             "saveTo" -> {
                 val uriString = call.argument<String>("uri")
@@ -80,9 +85,29 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
         }
     }
 
+    private fun launchOpen(result: MethodChannel.Result) {
+        pendingOpenResult = result
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+        }
+
+        try {
+            startActivityForResult(intent, OPEN_REQUEST_CODE)
+        } catch (e: Exception) {
+            pendingOpenResult = null
+            result.error("launch_failed", e.message, null)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == SAVE_REQUEST_CODE) {
             handleSaveResult(resultCode, data)
+            return
+        }
+        if (requestCode == OPEN_REQUEST_CODE) {
+            handleOpenResult(resultCode, data)
             return
         }
         super.onActivityResult(requestCode, resultCode, data)
@@ -113,6 +138,46 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
             result.success(mapOf("uri" to uri.toString(), "name" to queryDisplayName(uri)))
         } catch (e: Exception) {
             result.error("write_failed", e.message, null)
+        }
+    }
+
+    private fun handleOpenResult(resultCode: Int, data: Intent?) {
+        val result = pendingOpenResult ?: return
+        pendingOpenResult = null
+
+        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null) {
+            result.success(null)
+            return
+        }
+
+        try {
+            persistPermission(uri)
+            val contents = readUriContents(uri)
+            if (contents == null) {
+                result.error("read_failed", "Could not read the chosen document.", null)
+                return
+            }
+            result.success(
+                mapOf(
+                    "uri" to uri.toString(),
+                    "name" to queryDisplayName(uri),
+                    "contents" to contents,
+                ),
+            )
+        } catch (e: Exception) {
+            result.error("read_failed", e.message, null)
+        }
+    }
+
+    private fun readUriContents(uri: Uri): String? {
+        return try {
+            val input = contentResolver.openInputStream(uri) ?: return null
+            input.use { String(it.readBytes(), Charsets.UTF_8) }
+        } catch (e: IOException) {
+            null
+        } catch (e: SecurityException) {
+            null
         }
     }
 

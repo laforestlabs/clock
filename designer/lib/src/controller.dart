@@ -176,7 +176,12 @@ class DesignerController extends ChangeNotifier {
 
   // ---------------------------------------------------------------- loading
 
-  Future<void> loadJson(String source, {String? path, bool markClean = true}) async {
+  Future<void> loadJson(
+    String source, {
+    String? path,
+    String? label,
+    bool markClean = true,
+  }) async {
     try {
       _doc = LayoutDoc.decode(source);
     } on FormatException catch (e) {
@@ -186,7 +191,7 @@ class DesignerController extends ChangeNotifier {
     }
 
     _sourcePath = path;
-    _sourceLabel = null;
+    _sourceLabel = label;
     _selected = -1;
     _undo.clear();
     _redo.clear();
