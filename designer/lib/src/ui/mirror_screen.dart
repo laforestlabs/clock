@@ -100,10 +100,13 @@ class _MirrorScreenState extends State<MirrorScreen> {
   void initState() {
     super.initState();
     _browse();
-    // Re-entering the screen with a live session: refresh the brightness
-    // slider from the device instead of waiting for a new connect.
     if (_connection.session != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadBrightness());
+      // Re-entering with a live session: refresh the brightness slider and
+      // the WiFi control from the device instead of waiting for a new connect.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadBrightness();
+        _loadWifi();
+      });
     }
     if (widget.simplified) _loadBundledVersion();
   }
@@ -143,8 +146,14 @@ class _MirrorScreenState extends State<MirrorScreen> {
     setState(() {
       _scanning = true;
       _bleUnavailable = null;
+      _blePermissionPermanent = false;
       _bleDevices.clear();
     });
+    // A manual scan means the user wants a fresh device list, not the stale
+    // "could not connect" banner left by the launch auto-reconnect to a
+    // remembered mirror that is no longer the board on air. Drop that failed
+    // state here so the results collected below can actually render.
+    _connection.clearFailed();
     try {
       final gate = await ensureBlePermissions();
       if (!mounted) return;
@@ -193,8 +202,9 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _wifi = null;
     });
     _toast('Connected to ${entry.name}');
-    await _loadBrightness();
     await _loadWifi();
+    await _maybePromptWifi();
+    await _loadBrightness();
   }
 
   /// Reconnect to the last remembered mirror after a failed connect.
@@ -208,8 +218,9 @@ class _MirrorScreenState extends State<MirrorScreen> {
         _brightnessAuto = true;
         _wifi = null;
       });
-      await _loadBrightness();
       await _loadWifi();
+      await _maybePromptWifi();
+      await _loadBrightness();
     }
   }
 
@@ -244,6 +255,16 @@ class _MirrorScreenState extends State<MirrorScreen> {
     } catch (e) {
       _handleError(e, 'wifi');
     }
+  }
+
+  /// A freshly connected mirror with no saved network is guided straight into
+  /// WiFi setup; a mirror that already has credentials just shows the normal
+  /// control. [_wifi] stays null until the mirror answers "get wifi", and old
+  /// firmware never does, so this stays quiet on firmware without the command.
+  Future<void> _maybePromptWifi() async {
+    final w = _wifi;
+    if (w == null || w.saved) return;
+    await _wifiSetup();
   }
 
   /// Guided WiFi setup: scan, pick a network, push credentials, and await
@@ -889,9 +910,11 @@ class _MirrorScreenState extends State<MirrorScreen> {
               ),
             ],
           ),
-          // WiFi: shown only once the mirror answered "get wifi". A fresh
-          // mirror gets a prominent "Set up WiFi" call to action.
-          if (!widget.simplified && _wifi != null)
+          // WiFi: shown whenever the mirror answered "get wifi", in every
+          // view. Setting up or changing the network is a normal owner task,
+          // not a developer-only one. A fresh mirror gets a prominent "Set up
+          // WiFi" call to action; a configured one offers Change / Forget.
+          if (_wifi != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: _wifi!.saved

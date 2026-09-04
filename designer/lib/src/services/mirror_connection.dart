@@ -274,6 +274,17 @@ class MirrorConnection extends ChangeNotifier {
     await dead?.close();
   }
 
+  /// Drop a stale `failed` connect and its error so a fresh scan's results can
+  /// render. The remembered device is kept, so the next launch still tries to
+  /// reconnect to it; only the transient failure banner goes away. No-op
+  /// unless the last connect attempt actually failed.
+  void clearFailed() {
+    if (_status != MirrorConnectionStatus.failed) return;
+    _status = MirrorConnectionStatus.disconnected;
+    _error = null;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     _stateSub?.cancel();
