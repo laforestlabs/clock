@@ -37,7 +37,6 @@
 #include "esp_bt.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -265,14 +264,15 @@ static void cmd_ping(void)
 
 static void cmd_get_config(void)
 {
-    char esc_tz[128], esc_place[64];
+    char esc_name[50], esc_tz[128], esc_place[64];
+    json_escape(esc_name, sizeof(esc_name), mirror_config_device_name());
     json_escape(esc_tz, sizeof(esc_tz), mirror_config_timezone());
     json_escape(esc_place, sizeof(esc_place), mirror_config_place());
 
-    send_status("config {\"timezone\":\"%s\",\"latitude\":\"%s\","
+    send_status("config {\"name\":\"%s\",\"timezone\":\"%s\",\"latitude\":\"%s\","
                 "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
                 "\"clock12h\":%s,\"temp_unit\":\"%c\"}",
-                esc_tz, mirror_config_latitude(),
+                esc_name, esc_tz, mirror_config_latitude(),
                 mirror_config_longitude(), esc_place,
                 mirror_config_brightness(),
                 mirror_config_clock_12h() ? "true" : "false",
@@ -857,10 +857,20 @@ static void advertise(void)
 {
     int rc;
 
+    /* The owner may have renamed the mirror through a config commit while
+     * the link was up. This runs on the NimBLE host task, on every
+     * advertising restart, so refresh both name copies here: the GAP
+     * characteristic and the packet built below. */
+    const char *cfg_name = mirror_config_device_name();
+    if (strcmp(s_dev_name, cfg_name) != 0) {
+        snprintf(s_dev_name, sizeof(s_dev_name), "%s", cfg_name);
+        ble_svc_gap_device_name_set(s_dev_name);
+    }
+
     struct ble_hs_adv_fields fields = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-    /* The full name (17 chars) plus the 128-bit service UUID (18 bytes)
+    /* The name (up to 24 chars) plus the 128-bit service UUID (18 bytes)
      * overflows the 31-byte advertising payload, so the name rides in the
      * advertising packet and the UUID in the scan response. Phones combine
      * both during discovery, which is all the app's scan filter needs. */
@@ -1020,13 +1030,11 @@ esp_err_t ble_init(void)
     provision_set_scan_done_cb(ble_wifi_scan_done_cb);
     provision_set_wifi_result_cb(ble_wifi_result_cb);
 
-    /* Same naming convention as the setup access point (build_ap_ssid):
-     * last four hex digits of the STA MAC, so several mirrors in one house
-     * do not collide. */
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(s_dev_name, sizeof(s_dev_name), "Smart Mirror-%02X%02X",
-             mac[4], mac[5]);
+    /* The device's identity, owned by config.c: a verb-and-animal name
+     * generated from the station MAC ("Prancing Platypus"), or the owner's
+     * rename from setup. mirror_config_init() has already seeded it. */
+    snprintf(s_dev_name, sizeof(s_dev_name), "%s",
+             mirror_config_device_name());
 
     /* BLE-only on the S3: release the memory the BR/EDR stack would claim. */
     esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);

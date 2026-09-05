@@ -204,6 +204,19 @@ class MirrorConnection extends ChangeNotifier {
         timeout: const Duration(seconds: 10));
   }
 
+  /// Adopt [name] as the remembered display name after a setup rename.
+  /// The device puts the new identity back on air the next time it starts
+  /// advertising (a config commit while connected only lands in NVS and
+  /// the GAP name; the packet is rebuilt on the following advertise), so
+  /// later scans show exactly what the owner typed.
+  Future<void> renameDevice(String name) async {
+    if (name.isEmpty) return;
+    _deviceName = name;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastNameKey, name);
+  }
+
   /// Connect to the mirror and bring up its session. The short [timeout]
   /// only bounds the link establishment; the pong exchange has its own.
   Future<void> connectDevice({

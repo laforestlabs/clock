@@ -51,7 +51,14 @@ class BleScanEntry {
   final int rssi;
 }
 
-/// Scan for devices whose advertised name starts with "Smart Mirror".
+/// Scan for mirrors: devices advertising the mirror GATT service.
+///
+/// The advertised name is an identity, not a marker: a verb-and-animal pair
+/// the device generates from its MAC ("Dashing Dolphin"), or whatever the
+/// owner typed during setup. Discovery therefore keys on the 128-bit service
+/// UUID the firmware places in its scan response; Android concatenates the
+/// scan response into the advertisement record and iOS merges its service
+/// list, so `advertisementData.serviceUuids` carries it on both.
 ///
 /// Throws [BleUnavailableException] when the platform cannot scan.
 Future<List<BleScanEntry>> scanForMirrors({
@@ -80,7 +87,10 @@ Future<List<BleScanEntry>> scanForMirrors({
     }
     for (final r in results) {
       final name = r.device.advName;
-      if (!name.startsWith('Smart Mirror')) continue;
+      if (!r.advertisementData.serviceUuids
+          .any((u) => u.str128 == BleSession.serviceUuid)) {
+        continue;
+      }
       final already = found.any((e) => e.device.remoteId == r.device.remoteId);
       if (!already) found.add(BleScanEntry(r.device, name, r.rssi));
     }

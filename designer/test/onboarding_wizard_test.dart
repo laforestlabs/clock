@@ -1,8 +1,9 @@
 // The guided setup walkthrough, driven end to end with fake device seams:
-// WiFi connect, imprecise location (ZIP → candidate list, raw coordinates,
-// map pin), and the display step's prefills (timezone from the chosen zone,
-// Fahrenheit from the country). No BLE and no network in any of it, which is
-// the whole point of the injected seams on MirrorOnboardingPage.
+// the Name step (keep the generated identity, rename, reject junk), WiFi
+// connect, imprecise location (ZIP → candidate list, raw coordinates, map
+// pin), and the display step's prefills (timezone from the chosen zone,
+// Fahrenheit from the country). No BLE and no network in any of it, which
+// is the whole point of the injected seams on MirrorOnboardingPage.
 
 import 'dart:convert';
 
@@ -60,6 +61,8 @@ void main() {
 
   Finder queryField() => find.widgetWithText(TextField, 'ZIP or city name');
 
+  Finder nameField() => find.widgetWithText(TextField, 'Mirror name');
+
   testWidgets('full walkthrough: WiFi, ZIP search, derived display step',
       (tester) async {
     WifiConfig? pushedWifi;
@@ -86,7 +89,15 @@ void main() {
       ),
     );
 
-    // Step 1: pick the scanned network, type the password, connect.
+    // Step 1: name the mirror, replacing the generated identity that is
+    // pushed with the rest of the config at the end.
+    await tester.enterText(nameField(), 'Kitchen');
+    await tester.pump();
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+
+    // Step 2: pick the scanned network, type the password, connect.
     expect(find.text('Scanning for networks...'), findsNothing);
     await tester.tap(find.text('CafeNet'));
     await tester.pump();
@@ -107,7 +118,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    // Step 2: the ZIP resolves to a candidate list; pick the first hit.
+    // Step 3: the ZIP resolves to a candidate list; pick the first hit.
     expect(find.textContaining('Weather is fetched for a point'), findsOne);
     await tester.enterText(queryField(), '94105');
     await tester.pump();
@@ -130,7 +141,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    // Step 3: timezone prefilled from America/Los_Angeles, Fahrenheit
+    // Step 4: timezone prefilled from America/Los_Angeles, Fahrenheit
     // prefilled from the US; the owner switches to a 24-hour clock.
     expect(find.text('Los Angeles'), findsOne);
     await tester.tap(find.text('24-hour clock'));
@@ -139,6 +150,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(pushedConfig, isNotNull);
+    expect(pushedConfig!['name'], 'Kitchen');
     expect(pushedConfig!['timezone'], 'PST8PDT,M3.2.0,M11.1.0');
     expect(pushedConfig!['latitude'], '37.77493');
     expect(pushedConfig!['longitude'], '-122.41942');
@@ -163,6 +175,11 @@ void main() {
         },
       ),
     );
+    // Step 1: leave the name alone (empty field, nothing prefilled).
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+
 
     await tester.tap(find.text('Pick on a map instead'));
     await tester.pump();
@@ -196,6 +213,11 @@ void main() {
         },
       ),
     );
+    // Step 1: leave the name alone.
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+
 
     await tester.enterText(queryField(), '48.8584, 2.2945');
     await tester.pump();
@@ -223,6 +245,11 @@ void main() {
         configPush: (json) async => 'unused',
       ),
     );
+    // Step 1: leave the name alone.
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+
     await tester.enterText(queryField(), 'Atlantis');
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Find'));
@@ -246,6 +273,11 @@ void main() {
         },
       ),
     );
+    // Step 1: leave the name alone.
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Celsius'));
@@ -256,6 +288,102 @@ void main() {
       'clock12h': true,
       'temp_unit': 'C',
     });
+  });
+  testWidgets('the prefilled name, kept as-is, pushes no rename',
+      (tester) async {
+    Map<String, dynamic>? pushedConfig;
+    await open(
+      tester,
+      MirrorOnboardingPage(
+        includeWifi: false,
+        currentName: 'Dashing Dolphin',
+        geocode: (q) async => fail('search must not run here'),
+        configPush: (json) async {
+          pushedConfig = json;
+          return 'config ok';
+        },
+      ),
+    );
+
+    // The field starts at the identity the device advertised. Leaving it
+    // untouched must not send a name at all: "unchanged" in the config
+    // JSON, not a rename to the same string.
+    expect(
+      tester.widget<TextField>(nameField()).controller!.text,
+      'Dashing Dolphin',
+    );
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+    await tester.enterText(queryField(), '48.8584, 2.2945');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Find'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(primary('Finish setup'));
+    await tester.pumpAndSettle();
+    expect(pushedConfig, isNotNull);
+    expect(pushedConfig!.containsKey('name'), isFalse);
+  });
+
+  testWidgets('a typed rename rides the config push and the callback',
+      (tester) async {
+    Map<String, dynamic>? pushedConfig;
+    String? renamed;
+    await open(
+      tester,
+      MirrorOnboardingPage(
+        includeWifi: false,
+        currentName: 'Dashing Dolphin',
+        nameApplied: (n) => renamed = n,
+        geocode: (q) async => fail('search must not run here'),
+        configPush: (json) async {
+          pushedConfig = json;
+          return 'config ok';
+        },
+      ),
+    );
+
+    await tester.enterText(nameField(), 'Hallway');
+    await tester.pump();
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+    await tester.enterText(queryField(), '48.8584, 2.2945');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Find'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(primary('Finish setup'));
+    await tester.pumpAndSettle();
+    expect(pushedConfig!['name'], 'Hallway');
+    expect(renamed, 'Hallway');
+  });
+
+  testWidgets('a name with non-printable characters stops at the step',
+      (tester) async {
+    await open(
+      tester,
+      MirrorOnboardingPage(
+        includeWifi: false,
+        geocode: (q) async => fail('search must not run here'),
+        configPush: (json) async => 'never',
+      ),
+    );
+
+    await tester.enterText(nameField(), 'Küche');
+    await tester.pump();
+    await tester.tap(primary('Continue'));
+    await tester.pump();
+    expect(find.text('Name can only contain printable characters'), findsOne);
+    // Still on the name step: the wizard did not page.
+    expect(nameField(), findsOne);
   });
 }
 

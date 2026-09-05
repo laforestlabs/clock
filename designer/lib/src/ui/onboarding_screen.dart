@@ -4,22 +4,25 @@
 // location, so its panel can only ever show placeholders. This page walks the
 // owner through fixing exactly that, one screen per decision:
 //
-//   1. WiFi     — the existing guided scan/pick flow (reused as a form).
-//   2. Location — imprecise on purpose: a ZIP code, a city, or a tap on a
+//   1. Name     — the verb-and-animal identity the device generated for
+//                 itself; the owner keeps it or types a name of their own,
+//                 which is then pushed so the device advertises it.
+//   2. WiFi     — the existing guided scan/pick flow (reused as a form).
+//   3. Location — imprecise on purpose: a ZIP code, a city, or a tap on a
 //                 map. The weather provider needs coordinates, nothing more.
-//   3. Time & units — timezone (prefilled from wherever the location search
+//   4. Time & units — timezone (prefilled from wherever the location search
 //                 found), 12/24-hour clock, Fahrenheit/Celsius (prefilled
 //                 from the country).
 //
-// Steps 2 and 3 prefill from what came before them but never lock the owner
-// in: every prefill is an ordinary editable control. WiFi is skipped when
-// [includeWifi] is false (the device already has credentials and the owner
-// reran setup to fix location or display).
+// The later steps prefill from what came before them but never lock the
+// owner in: every prefill is an ordinary editable control. WiFi is skipped
+// when [includeWifi] is false (the device already has credentials and the
+// owner reran setup to fix its name, location or display).
 //
 // The page talks to the device only through injected callbacks, so the whole
 // walkthrough is widget-testable without a mirror on the other end of the
 // radio. The return value is the device's config commit status, or null when
-// cancelled; a cancelled walkthrough still leaves the WiFi push (step 1)
+// cancelled; a cancelled walkthrough still leaves the WiFi push (step 2)
 // applied, which is what the device needs most.
 
 import 'package:flutter/material.dart';
@@ -35,12 +38,14 @@ import 'wifi_setup_form.dart';
 
 /// The wizard's steps, in order. [wifi] is only included for a device with
 /// no saved network; every run includes the rest.
-enum SetupStep { wifi, location, display }
+enum SetupStep { name, wifi, location, display }
 
 class MirrorOnboardingPage extends StatefulWidget {
   const MirrorOnboardingPage({
     super.key,
     required this.configPush,
+    this.currentName,
+    this.nameApplied,
     this.includeWifi = true,
     this.wifiScan,
     this.wifiPush,
@@ -49,7 +54,7 @@ class MirrorOnboardingPage extends StatefulWidget {
     this.pickOnMap = _showPinPicker,
   });
 
-  /// Whether step 1 (WiFi) is part of this run. When true, the three
+  /// Whether the WiFi step is part of this run. When true, the three
   /// callbacks below are required.
   final bool includeWifi;
 
@@ -64,6 +69,15 @@ class MirrorOnboardingPage extends StatefulWidget {
   /// Push the collected config (a partial MirrorConfig JSON) and return the
   /// device's commit status.
   final Future<String> Function(Map<String, dynamic> json) configPush;
+
+  /// The name the device goes by right now (what it advertised at connect),
+  /// prefilled into the Name step so the owner edits a real starting point
+  /// rather than a blank. Null leaves the field empty.
+  final String? currentName;
+
+  /// Called after a finished run that pushed a rename, with the new name,
+  /// so the caller can update what it shows and remembers.
+  final void Function(String name)? nameApplied;
 
   /// Location lookup seam: [geocodeSearch] on device runs, a fake in tests.
   final Future<List<GeocodeResult>> Function(String query) geocode;
@@ -93,16 +107,22 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   List<SetupStep> get _steps => widget.includeWifi
       ? const <SetupStep>[
+          SetupStep.name,
           SetupStep.wifi,
           SetupStep.location,
           SetupStep.display,
         ]
       : const <SetupStep>[
+          SetupStep.name,
           SetupStep.location,
           SetupStep.display,
         ];
 
   SetupStep get _step => _steps[_stepIndex];
+
+  // -------------------------------------------------------------- name step
+
+  late final TextEditingController _mirrorName;
 
   // ------------------------------------------------------------- wifi step
 
@@ -137,6 +157,7 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
   @override
   void initState() {
     super.initState();
+    _mirrorName = TextEditingController(text: widget.currentName ?? '');
     _tzCustom = TextEditingController();
   }
 
@@ -145,6 +166,7 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     _query.dispose();
     _place.dispose();
     _tzCustom.dispose();
+    _mirrorName.dispose();
     super.dispose();
   }
 
@@ -152,6 +174,16 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   void _next() {
     final was = _step;
+    if (was == SetupStep.name) {
+      final typed = _mirrorName.text.trim();
+      if (typed.isNotEmpty) {
+        final problem = MirrorConfig(name: typed).validate();
+        if (problem != null) {
+          setState(() => _note = problem);
+          return;
+        }
+      }
+    }
     if (_stepIndex >= _steps.length - 1) {
       _finish();
       return;
@@ -323,10 +355,21 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     return _presetTz;
   }
 
+  /// The rename to push, or null when the owner left the field at the
+  /// device's current name (or cleared it): a null name means "unchanged"
+  /// in the config JSON, so an untouched step pushes nothing.
+  String? get _pushedName {
+    final typed = _mirrorName.text.trim();
+    if (typed.isEmpty) return null;
+    if (typed == (widget.currentName?.trim() ?? '')) return null;
+    return typed;
+  }
+
   MirrorConfig _collect() {
     final sel = _selected;
     final place = _place.text.trim();
     return MirrorConfig(
+      name: _pushedName,
       timezone: _timezone,
       latitude: sel?.latitude.toStringAsFixed(5),
       longitude: sel?.longitude.toStringAsFixed(5),
@@ -353,6 +396,8 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
       final status = await widget.configPush(cfg.toJson());
       if (!mounted) return;
       Navigator.of(context).pop(status);
+      final pushed = cfg.name;
+      if (pushed != null) widget.nameApplied?.call(pushed);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -390,6 +435,7 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   Widget _stepHeader() {
     final labels = <SetupStep, String>{
+      SetupStep.name: 'Name',
       SetupStep.wifi: 'WiFi',
       SetupStep.location: 'Location',
       SetupStep.display: 'Time & units',
@@ -445,6 +491,7 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   Widget _stepBody() {
     final content = switch (_step) {
+      SetupStep.name => _nameStep(),
       SetupStep.wifi => _wifiStep(),
       SetupStep.location => _locationStep(),
       SetupStep.display => _displayStep(),
@@ -469,6 +516,34 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
           color: isStatus ? Colors.grey : Theme.of(context).colorScheme.error,
         ),
       ),
+    );
+  }
+
+  // ----------------------------------------------------------- name step
+
+  Widget _nameStep() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text(
+          'A mirror names itself when it wakes up: a verb and an animal, '
+          'the same pair every time. Keep that name or type your own; the '
+          'phone looks the mirror up by it from now on.',
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _mirrorName,
+          maxLength: 24,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+            labelText: 'Mirror name',
+            helperText: 'Broadcast over Bluetooth. Up to 24 characters.',
+            isDense: true,
+            counterText: '',
+          ),
+        ),
+        _noteLine(),
+      ],
     );
   }
 
@@ -721,11 +796,13 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     final isLast = _stepIndex == _steps.length - 1;
 
     final String primaryLabel = switch (step) {
+      SetupStep.name => 'Continue',
       SetupStep.wifi => _wifiOk ? 'Continue' : 'Connect',
       SetupStep.location => 'Continue',
       SetupStep.display => 'Finish setup',
     };
     final bool primaryEnabled = switch (step) {
+      SetupStep.name => !_busy,
       SetupStep.wifi => !_busy && (_wifiOk || _wifiDraft != null),
       SetupStep.location => _busy ? false : _selected != null,
       SetupStep.display => !_busy,

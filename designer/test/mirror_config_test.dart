@@ -16,6 +16,28 @@ void main() {
       );
       expect(cfg.validate(), isNull);
     });
+    test('accepts a personal device name', () {
+      expect(const MirrorConfig(name: 'Kitchen').validate(), isNull);
+      expect(MirrorConfig(name: 'X' * 24).validate(), isNull);
+    });
+
+    test('rejects an empty or whitespace-only device name', () {
+      expect(const MirrorConfig(name: '').validate(), isNotNull);
+      expect(const MirrorConfig(name: '   ').validate(),
+          contains('must not be empty'));
+    });
+
+    test('rejects a device name longer than 24 chars', () {
+      expect(MirrorConfig(name: 'X' * 25).validate(), isNotNull);
+    });
+
+    test('rejects a device name with non-printable characters', () {
+      // The firmware's JSON decoder lands non-ASCII bytes on '?'; the phone
+      // refuses the rename rather than advertise a mangled name.
+      expect(const MirrorConfig(name: 'Küche').validate(), contains('printable'));
+      expect(const MirrorConfig(name: 'a\nb').validate(), contains('printable'));
+    });
+
 
     test('rejects an empty timezone', () {
       expect(const MirrorConfig(timezone: '').validate(), isNotNull);
@@ -260,6 +282,31 @@ void main() {
       expect(tzs, contains('UTC0'));
       expect(tzs, contains('GMT0BST,M3.5.0/1,M10.5.0'));
       expect(tzs, contains('EST5EDT,M3.2.0,M11.1.0'));
+    });
+  });
+
+  group('MirrorConfig name JSON', () {
+    test('toJson carries the name only when set', () {
+      expect(const MirrorConfig().toJson().containsKey('name'), isFalse);
+      expect(const MirrorConfig(name: 'Hallway').toJson()['name'], 'Hallway');
+    });
+
+    test('fromJson reads a name-only object', () {
+      final cfg = MirrorConfig.fromJson(<String, dynamic>{'name': 'Hallway'});
+      expect(cfg, isNotNull);
+      expect(cfg!.name, 'Hallway');
+    });
+
+    test('fromJson round-trips the name with the other fields', () {
+      const cfg = MirrorConfig(name: 'Hallway', timezone: 'UTC0');
+      final back = MirrorConfig.fromJson(cfg.toJson());
+      expect(back, isNotNull);
+      expect(back!.name, 'Hallway');
+      expect(back.timezone, 'UTC0');
+    });
+
+    test('fromJson ignores a non-string name', () {
+      expect(MirrorConfig.fromJson(<String, dynamic>{'name': 7}), isNull);
     });
   });
 }

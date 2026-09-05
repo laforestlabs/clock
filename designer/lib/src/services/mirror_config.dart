@@ -10,6 +10,7 @@
 /// push, which is how a partial update (e.g. coordinates only) is expressed.
 class MirrorConfig {
   const MirrorConfig({
+    this.name,
     this.timezone,
     this.latitude,
     this.longitude,
@@ -19,6 +20,12 @@ class MirrorConfig {
     this.tempF,
   });
 
+  /// The name the mirror broadcasts over Bluetooth and shows in the app's
+  /// scans. The device generates a verb-and-animal identity ("Dashing
+  /// Dolphin") from its MAC until the owner personalises it in setup; null
+  /// here leaves whatever the device already goes by unchanged. Printable
+  /// ASCII, 1..24 chars; the device trims leading and trailing spaces.
+  final String? name;
   final String? timezone;
   final String? latitude;
   final String? longitude;
@@ -40,6 +47,7 @@ class MirrorConfig {
 
   /// Only the non-null fields, which is exactly what the firmware accepts.
   Map<String, dynamic> toJson() => <String, dynamic>{
+        if (name != null) 'name': name,
         if (timezone != null) 'timezone': timezone,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
@@ -50,10 +58,11 @@ class MirrorConfig {
       };
 
   /// Parse a decoded JSON object. Returns null when the object carries none
-  /// of the seven known fields.
+  /// of the eight known fields.
   static MirrorConfig? fromJson(Map<String, dynamic> json) {
     String? str(String key) => json[key] is String ? json[key] as String : null;
 
+    final name = str('name');
     final timezone = str('timezone');
     final latitude = str('latitude');
     final longitude = str('longitude');
@@ -66,7 +75,8 @@ class MirrorConfig {
     final clock12h = json['clock12h'] is bool ? json['clock12h'] as bool : null;
     final tempUnit = str('temp_unit');
     final tempF = tempUnit == 'F' ? true : (tempUnit == 'C' ? false : null);
-    if (timezone == null &&
+    if (name == null &&
+        timezone == null &&
         latitude == null &&
         longitude == null &&
         place == null &&
@@ -76,6 +86,7 @@ class MirrorConfig {
       return null;
     }
     return MirrorConfig(
+      name: name,
       timezone: timezone,
       latitude: latitude,
       longitude: longitude,
@@ -91,8 +102,21 @@ class MirrorConfig {
   /// and shaped like a POSIX TZ string (the only form the firmware's newlib
   /// tzset parses), latitude a number in [-90, 90], longitude a number in
   /// [-180, 180], place at most 23 chars (fits the firmware's
-  /// weather.place[24]), brightness an integer in [0, 255].
+  /// weather.place[24]), brightness an integer in [0, 255], name non-empty
+  /// after trimming, at most 24 chars, printable ASCII only (the firmware's
+  /// JSON decoder would silently land non-ASCII bytes as '?', and the
+  /// advertising packet is size-bound besides).
   String? validate() {
+    if (name != null) {
+      final n = name!.trim();
+      if (n.isEmpty) return 'Name must not be empty';
+      if (n.length > 24) return 'Name is too long (max 24)';
+      for (final c in n.codeUnits) {
+        if (c < 0x20 || c > 0x7E) {
+          return 'Name can only contain printable characters';
+        }
+      }
+    }
     if (timezone != null) {
       final tz = timezone!;
       if (tz.isEmpty) return 'Timezone must not be empty';

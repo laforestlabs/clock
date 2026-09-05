@@ -2,7 +2,8 @@
 // update its firmware.
 //
 // Two ways to reach a mirror:
-//   - Bluetooth (phone): scan for "Smart Mirror-*", connect, push layout or
+//   - Bluetooth (phone): scan for mirrors (found by their advertised GATT
+//     service, not by their name), connect, push layout or
 //     open the configure dialog. The BLE session's pong reports the mirror's
 //     WiFi IP, which is what the phone would use for a firmware upload.
 //   - On this network (desktop): mDNS discovery plus a manual IP field (the
@@ -320,6 +321,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
       MaterialPageRoute(
         builder: (_) => MirrorOnboardingPage(
           includeWifi: includeWifi,
+          currentName: _connection.deviceName,
+          nameApplied: (n) => _connection.renameDevice(n),
           wifiScan: session.scanWifi,
           wifiPush: session.pushWifi,
           wifiAwait: session.awaitWifiResult,
@@ -1185,13 +1188,14 @@ class _MirrorScreenState extends State<MirrorScreen> {
         if (_scanning)
           const Padding(
             padding: EdgeInsets.only(top: 8),
-            child: Text('Scanning for Smart Mirror devices...',
+            child: Text('Scanning for mirrors...',
                 style: TextStyle(color: Colors.grey)),
           )
         else if (_bleDevices.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 8),
-            child: Text('No mirrors found. Scan to look for Smart Mirror devices.',
+            child: Text('No mirrors found. Make sure a mirror is powered '
+                'and within range.',
                 style: TextStyle(color: Colors.grey)),
           )
         else

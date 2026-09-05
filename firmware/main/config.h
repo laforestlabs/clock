@@ -40,6 +40,16 @@ bool mirror_config_clock_12h(void);
 char mirror_config_temp_unit(void);
 
 /*
+ * The name the device broadcasts over Bluetooth and shows in the app.
+ * Without an owner-set override it is generated from the station MAC: a
+ * verb and an animal picked out of the tables in config.c, so every
+ * device gets its own combo ("Prancing Platypus") and the name survives
+ * reboots without being stored anywhere. An owner rename (the "name"
+ * config field, kept in NVS) replaces it until a factory reset.
+ */
+const char *mirror_config_device_name(void);
+
+/*
  * The stored brightness override: -1 when the device follows the layout,
  * 0..255 when the owner set a manual override (over BLE). The panel's live
  * brightness is read with panel_get_brightness().
@@ -72,17 +82,19 @@ void mirror_config_clear_brightness(void);
 esp_err_t mirror_config_factory_reset(void);
 
 /*
- * Apply a partial JSON object: {"timezone","latitude","longitude","place",
- * "brightness","clock12h","temp_unit"}. Every present field is validated, and
- * nothing is persisted or applied unless all of them pass; missing fields are
- * left unchanged.
- * "timezone" must be a POSIX TZ string (the only form newlib's tzset
+ * Apply a partial JSON object: {"name","timezone","latitude","longitude",
+ * "place","brightness","clock12h","temp_unit"}. Every present field is
+ * validated, and nothing is persisted or applied unless all of them pass;
+ * missing fields are left unchanged.
+ * "name" is the new Bluetooth-advertised device name: printable, trimmed,
+ * 1..24 characters. "timezone" must be a POSIX TZ string (the only form newlib's tzset
  * parses; IANA names are rejected rather than silently degrading the clock
  * to UTC). "brightness" is a manual override: an integer 0..255, applied to
  * the panel immediately. "clock12h" is a JSON boolean; "temp_unit" is "F" or
  * "C". On success the changed fields are written to NVS and applied:
  * timezone re-points TZ via setenv/tzset, coordinate or place changes kick a
- * provider refresh so the weather relocates promptly.
+ * provider refresh so the weather relocates promptly, and a name change
+ * takes effect when the device advertises again.
  *
  * On failure returns ESP_ERR_INVALID_ARG and err holds a human message.
  */

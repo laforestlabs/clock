@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "mirror/json.h"
@@ -36,11 +37,14 @@ static const char *TAG = "config";
 #define NVS_KEY_BRIGHTNESS "brightness"
 #define NVS_KEY_CLOCK12H   "clock12h"
 #define NVS_KEY_TEMP_UNIT  "temp_unit"
+#define NVS_KEY_NAME       "name"
 
 /* Validation limits, mirrored exactly in the Dart MirrorConfig.validate(). */
 #define TZ_MAX_LEN    63   /* POSIX TZ strings are short; 63 keeps snprintf
                             * margins generous */
 #define PLACE_MAX_LEN 23   /* fits ml_weather.place[24] */
+#define NAME_MAX_LEN  24   /* fits the 31-byte BLE advertising packet next
+                            * to the flags field, with room to spare */
 
 /* Buffers for the formatted values. Latitude/longitude are stored as the
  * decimal strings the provider URL wants; 16 bytes covers any value the
@@ -48,11 +52,16 @@ static const char *TAG = "config";
 #define TZ_BUF_LEN    (TZ_MAX_LEN + 1)
 #define PLACE_BUF_LEN (PLACE_MAX_LEN + 1)
 #define COORD_BUF_LEN 16
+#define NAME_BUF_LEN  (NAME_MAX_LEN + 1)
 
 static char        s_tz[TZ_BUF_LEN];
 static char        s_lat[COORD_BUF_LEN];
 static char        s_lon[COORD_BUF_LEN];
 static char        s_place[PLACE_BUF_LEN];
+/* The owner's Bluetooth name, "" while the device still goes by the
+ * generated verb-and-animal identity below. */
+static char        s_name[NAME_BUF_LEN];
+static char        s_auto_name[NAME_BUF_LEN];
 /* -1 means "follow the layout"; 0..255 is a manual override. */
 static int         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
 /* Display settings; Kconfig values are the factory defaults, see the "Display"
@@ -163,6 +172,76 @@ static void load_temp_unit(nvs_handle_t h)
     }
 }
 
+/* ------------------------------------------------------ device name */
+
+/*
+ * The factory identity: a verb and an animal, picked by hashing the
+ * station MAC. Every device gets its own combo, it is stable across
+ * reboots and reflashes, and nothing is stored until the owner renames
+ * the mirror. 64 x 64 combos, so two mirrors in one home collide about
+ * once in four thousand pairings, and the setup wizard's rename is the
+ * escape hatch. Words stay at 11 characters or fewer so "Verb Animal"
+ * always fits NAME_MAX_LEN (longest live combo: 10 + space + 10).
+ */
+static const char *const s_name_verbs[] = {
+    "Bouncing", "Charming", "Chasing", "Clicking",
+    "Coasting", "Cracking", "Crunching", "Cycling",
+    "Dancing", "Dashing", "Drifting", "Dreaming",
+    "Drizzling", "Echoing", "Flashing", "Flipping",
+    "Floating", "Flying", "Frolicking", "Galloping",
+    "Gazing", "Gleaming", "Gliding", "Glowing",
+    "Greeting", "Hopping", "Hovering", "Hurrying",
+    "Hushing", "Jumping", "Leaping", "Lingering",
+    "Marching", "Meandering", "Mingling", "Moseying",
+    "Napping", "Painting", "Paddling", "Perching",
+    "Pouncing", "Prancing", "Racing", "Rambling",
+    "Rattling", "Riding", "Roaming", "Rolling",
+    "Romping", "Running", "Sailing", "Scooting",
+    "Scratching", "Skipping", "Sliding", "Sneaking",
+    "Soaring", "Spinning", "Splashing", "Sprinting",
+    "Strutting", "Swinging", "Tumbling", "Twirling",
+};
+
+static const char *const s_name_animals[] = {
+    "Alligator", "Alpaca", "Antelope", "Anteater",
+    "Badger", "Bandicoot", "Barracuda", "Beaver",
+    "Bison", "Buffalo", "Butterfly", "Camel",
+    "Cheetah", "Chimpanzee", "Chinchilla", "Cormorant",
+    "Cougar", "Coyote", "Crane", "Dolphin",
+    "Donkey", "Dragonfly", "Eagle", "Echidna",
+    "Elephant", "Ferret", "Finch", "Flamingo",
+    "Frog", "Gazelle", "Gecko", "Giraffe",
+    "Gopher", "Gorilla", "Hedgehog", "Heron",
+    "Hippo", "Horse", "Hyena", "Impala",
+    "Jackal", "Jaguar", "Kangaroo", "Kingfisher",
+    "Koala", "Lemur", "Leopard", "Llama",
+    "Magpie", "Mallard", "Manatee", "Meerkat",
+    "Moose", "Ocelot", "Octopus", "Okapi",
+    "Opossum", "Orca", "Ostrich", "Otter",
+    "Panther", "Penguin", "Wombat", "Zebra",
+};
+
+static void build_auto_name(void)
+{
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+    /* FNV-1a: the multiply avalanches the six bytes, so two boards that
+     * share an OUI prefix still land on unrelated words. Two disjoint
+     * six-bit slices of the hash choose the verb and the animal. */
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 6; i++) {
+        h ^= mac[i];
+        h *= 16777619u;
+    }
+    const size_t nverbs = sizeof(s_name_verbs) / sizeof(s_name_verbs[0]);
+    const size_t nanimals =
+        sizeof(s_name_animals) / sizeof(s_name_animals[0]);
+    snprintf(s_auto_name, sizeof(s_auto_name), "%s %s",
+             s_name_verbs[(h >> 16) % nverbs],
+             s_name_animals[(h >> 26) % nanimals]);
+}
+
 esp_err_t mirror_config_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -179,6 +258,10 @@ esp_err_t mirror_config_init(void)
     load_key(h, NVS_KEY_LAT,   s_lat,   sizeof(s_lat),   CONFIG_MIRROR_LATITUDE);
     load_key(h, NVS_KEY_LON,   s_lon,   sizeof(s_lon),   CONFIG_MIRROR_LONGITUDE);
     load_key(h, NVS_KEY_PLACE, s_place, sizeof(s_place), CONFIG_MIRROR_PLACE_NAME);
+    /* Computed before the override load: an absent NVS key leaves "" in
+     * s_name, and "" means "go by the generated name". */
+    build_auto_name();
+    load_key(h, NVS_KEY_NAME, s_name, sizeof(s_name), "");
     load_brightness(h);
     load_clock12h(h);
     load_temp_unit(h);
@@ -196,6 +279,11 @@ const char *mirror_config_timezone(void)  { return s_tz; }
 const char *mirror_config_latitude(void)  { return s_lat; }
 const char *mirror_config_longitude(void) { return s_lon; }
 const char *mirror_config_place(void)     { return s_place; }
+
+const char *mirror_config_device_name(void)
+{
+    return s_name[0] != '\0' ? s_name : s_auto_name;
+}
 
 bool mirror_config_clock_12h(void)
 {
@@ -261,6 +349,7 @@ esp_err_t mirror_config_factory_reset(void)
         snprintf(s_lat,   sizeof(s_lat),   "%s", CONFIG_MIRROR_LATITUDE);
         snprintf(s_lon,   sizeof(s_lon),   "%s", CONFIG_MIRROR_LONGITUDE);
         snprintf(s_place, sizeof(s_place), "%s", CONFIG_MIRROR_PLACE_NAME);
+        s_name[0] = '\0';   /* the generated identity takes over again */
         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
         s_clock_12h  = CLOCK12H_DEFAULT != 0;
         s_temp_unit  = TEMP_UNIT_DEFAULT;
@@ -364,13 +453,51 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     char   new_lat[COORD_BUF_LEN] = "";
     char   new_lon[COORD_BUF_LEN] = "";
     char   new_place[PLACE_BUF_LEN] = "";
+    char   new_name[NAME_BUF_LEN] = "";
     int    new_brightness = -1;
     bool   new_clock_12h = CLOCK12H_DEFAULT != 0;
     char   new_temp_unit = TEMP_UNIT_DEFAULT;
-    bool   have_tz = false, have_lat = false, have_lon = false, have_place = false;
+    bool   have_name = false, have_tz = false, have_lat = false, have_lon = false, have_place = false;
     bool   have_brightness = false, have_clock12h = false, have_temp_unit = false;
 
-    int t = ml_json_member(&j, 0, "timezone");
+    int t = ml_json_member(&j, 0, "name");
+    if (t >= 0) {
+        /* The advertised name. ml_json_str decodes non-ASCII to '?' (its
+         * contract serves the panel's bitmap fonts), and the Dart side
+         * rejects non-printable text before pushing, mirroring the IANA
+         * timezone lesson; the control-character sweep here is the
+         * device's own guard for stray bytes. */
+        char raw_name[NAME_BUF_LEN];
+        if (!ml_json_str(&j, t, raw_name, sizeof(raw_name))) {
+            fail(err, errsz, "name must be a string");
+            return ESP_ERR_INVALID_ARG;
+        }
+        const size_t rlen = strlen(raw_name);
+        size_t b = 0;
+        while (b < rlen && (raw_name[b] == ' ' || raw_name[b] == '\t')) b++;
+        size_t e = rlen;
+        while (e > b && (raw_name[e - 1] == ' ' || raw_name[e - 1] == '\t')) e--;
+        if (e == b) {
+            fail(err, errsz, "name must not be empty");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (e - b > NAME_MAX_LEN) {
+            fail(err, errsz, "name is too long (max 24)");
+            return ESP_ERR_INVALID_ARG;
+        }
+        for (size_t i = b; i < e; i++) {
+            const unsigned char c = (unsigned char)raw_name[i];
+            if (c < 0x20 || c == 0x7F) {
+                fail(err, errsz, "name has unprintable characters");
+                return ESP_ERR_INVALID_ARG;
+            }
+        }
+        memcpy(new_name, raw_name + b, e - b);
+        new_name[e - b] = '\0';
+        have_name = true;
+    }
+
+    t = ml_json_member(&j, 0, "timezone");
     if (t >= 0) {
         if (!ml_json_str(&j, t, new_tz, sizeof(new_tz))) {
             fail(err, errsz, "timezone must be a string");
@@ -463,7 +590,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     }
 
     /* Nothing named: a no-op, not an error. */
-    if (!have_tz && !have_lat && !have_lon && !have_place &&
+    if (!have_name && !have_tz && !have_lat && !have_lon && !have_place &&
         !have_brightness && !have_clock12h && !have_temp_unit) {
         fail(err, errsz, "no known fields");
         return ESP_ERR_INVALID_ARG;
@@ -480,15 +607,18 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
                                   new_clock_12h != s_clock_12h;
     const bool temp_unit_changed = have_temp_unit &&
                                    new_temp_unit != s_temp_unit;
+    const bool name_changed = have_name && strcmp(new_name, s_name) != 0;
 
     if (tz_changed || lat_changed || lon_changed || place_changed ||
-        brightness_changed || clock12h_changed || temp_unit_changed) {
+        brightness_changed || clock12h_changed || temp_unit_changed ||
+        name_changed) {
         nvs_handle_t h;
         esp_err_t nvs_err = nvs_open(NVS_NS, NVS_READWRITE, &h);
         if (nvs_err != ESP_OK) {
             fail(err, errsz, "config storage unavailable");
             return nvs_err;
         }
+        if (name_changed)     nvs_set_str(h, NVS_KEY_NAME, new_name);
         if (tz_changed)     nvs_set_str(h, NVS_KEY_TZ, new_tz);
         if (lat_changed)    nvs_set_str(h, NVS_KEY_LAT, new_lat);
         if (lon_changed)    nvs_set_str(h, NVS_KEY_LON, new_lon);
@@ -511,6 +641,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     }
 
     lock();
+    if (have_name)   memcpy(s_name, new_name, sizeof(s_name));
     if (have_tz)     memcpy(s_tz, new_tz, sizeof(s_tz));
     if (have_lat)    memcpy(s_lat, new_lat, sizeof(s_lat));
     if (have_lon)    memcpy(s_lon, new_lon, sizeof(s_lon));
@@ -519,6 +650,11 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (have_clock12h)   s_clock_12h = new_clock_12h;
     if (have_temp_unit)  s_temp_unit = new_temp_unit;
     unlock();
+
+    if (name_changed) {
+        ESP_LOGI(TAG, "device is now advertised as \"%s\"",
+                 mirror_config_device_name());
+    }
 
     if (tz_changed) {
         ESP_LOGI(TAG, "timezone %s -> %s", mirror_config_timezone(), new_tz);
