@@ -33,6 +33,12 @@ dependencies:
   # Phone accelerometer for motion controls (Android only; the BLE controller
   # path is the only place motion is reachable).
   sensors_plus: ^6.1.0
+  # The setup wizard's location step: a tap-to-pin map in pure Dart, so the
+  # same code runs on phone and desktop, using OpenStreetMap tiles and no API
+  # key to keep the project's zero-credential stance.
+  flutter_map: ^8.3.2
+  # The coordinate type flutter_map passes back to the wizard.
+  latlong2: ^0.10.1
 
 dev_dependencies:
   flutter_test:

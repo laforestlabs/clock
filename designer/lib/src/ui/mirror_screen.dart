@@ -35,6 +35,8 @@ import '../services/mirror_lan.dart';
 import '../services/mirror_wifi.dart';
 import '../services/mirror_wifi_status.dart';
 import 'ble_prompt.dart';
+import 'onboarding_screen.dart';
+import 'wifi_setup_form.dart';
 
 class MirrorScreen extends StatefulWidget {
   const MirrorScreen({
@@ -203,7 +205,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
     });
     _toast('Connected to ${entry.name}');
     await _loadWifi();
-    await _maybePromptWifi();
+    await _maybeRunSetup();
     await _loadBrightness();
   }
 
@@ -219,7 +221,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
         _wifi = null;
       });
       await _loadWifi();
-      await _maybePromptWifi();
+      await _maybeRunSetup();
       await _loadBrightness();
     }
   }
@@ -257,14 +259,15 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
-  /// A freshly connected mirror with no saved network is guided straight into
-  /// WiFi setup; a mirror that already has credentials just shows the normal
-  /// control. [_wifi] stays null until the mirror answers "get wifi", and old
-  /// firmware never does, so this stays quiet on firmware without the command.
-  Future<void> _maybePromptWifi() async {
+  /// A freshly connected mirror with no saved network is guided through the
+  /// setup walkthrough (WiFi, location, time & units); a mirror that already
+  /// has credentials just shows the normal control. [_wifi] stays null until
+  /// the mirror answers "get wifi", and old firmware never does, so this
+  /// stays quiet on firmware without the command.
+  Future<void> _maybeRunSetup() async {
     final w = _wifi;
     if (w == null || w.saved) return;
-    await _wifiSetup();
+    await _runSetup(includeWifi: true);
   }
 
   /// Guided WiFi setup: scan, pick a network, push credentials, and await
@@ -305,6 +308,28 @@ class _MirrorScreenState extends State<MirrorScreen> {
     } finally {
       if (mounted) setState(() => _bleBusy = false);
     }
+  }
+
+  /// Full guided setup as a page: WiFi (when [includeWifi]), location, and
+  /// time & units. The page owns its pushes; this only wires the BLE seams
+  /// and refreshes the controls afterwards.
+  Future<void> _runSetup({required bool includeWifi}) async {
+    final session = _connection.session;
+    if (session == null) return;
+    final status = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => MirrorOnboardingPage(
+          includeWifi: includeWifi,
+          wifiScan: session.scanWifi,
+          wifiPush: session.pushWifi,
+          wifiAwait: session.awaitWifiResult,
+          configPush: session.pushConfig,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (status != null) _toast('Setup complete: $status');
+    await _loadWifi();
   }
 
   /// Forget the saved network; the mirror reopens its setup portal.
@@ -938,6 +963,15 @@ class _MirrorScreenState extends State<MirrorScreen> {
                           onPressed: _bleBusy ? null : _wifiForget,
                           child: const Text('Forget'),
                         ),
+                        // The trimmed phone view has no Configure dialog, so
+                        // the walkthrough is its only setup surface: rerun it
+                        // here to revisit location and time & units later.
+                        if (widget.simplified)
+                          TextButton(
+                            onPressed:
+                                _bleBusy ? null : () => _runSetup(includeWifi: false),
+                            child: const Text('Set up'),
+                          ),
                       ],
                     )
                   : Column(
@@ -947,7 +981,9 @@ class _MirrorScreenState extends State<MirrorScreen> {
                             style: TextStyle(color: Colors.orange)),
                         const SizedBox(height: 4),
                         FilledButton.icon(
-                          onPressed: _bleBusy ? null : _wifiSetup,
+                          onPressed: _bleBusy
+                              ? null
+                              : () => _runSetup(includeWifi: true),
                           icon: const Icon(Icons.wifi_find, size: 18),
                           label: const Text('Set up WiFi'),
                         ),
@@ -1147,7 +1183,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
 /// Guided WiFi setup: scan, pick a network (or type one manually), and enter
 /// a password. Returns the chosen [WifiConfig], or null when cancelled. The
-/// caller pushes the credentials and awaits the connect outcome.
+/// caller pushes the credentials and awaits the connect outcome. The scan and
+/// pick form itself lives in [WifiSetupForm], shared with the setup wizard.
 class _WifiSetupDialog extends StatefulWidget {
   const _WifiSetupDialog({required this.session});
 
@@ -1158,76 +1195,7 @@ class _WifiSetupDialog extends StatefulWidget {
 }
 
 class _WifiSetupDialogState extends State<_WifiSetupDialog> {
-  bool _scanning = true;
-  String? _scanError;
-  List<BleWifiNetwork> _networks = const <BleWifiNetwork>[];
-  String? _selected;
-  bool _selectedOpen = false;
-  bool _manual = false;
-  late final TextEditingController _ssid;
-  late final TextEditingController _pass;
-
-  @override
-  void initState() {
-    super.initState();
-    _ssid = TextEditingController();
-    _pass = TextEditingController();
-    _scan();
-  }
-
-  @override
-  void dispose() {
-    _ssid.dispose();
-    _pass.dispose();
-    super.dispose();
-  }
-
-  Future<void> _scan() async {
-    setState(() {
-      _scanning = true;
-      _scanError = null;
-    });
-    try {
-      final nets = await widget.session.scanWifi();
-      if (!mounted) return;
-      setState(() {
-        _networks = nets;
-        _scanning = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _scanError = e.toString().replaceFirst('Exception: ', '');
-        _scanning = false;
-      });
-    }
-  }
-
-  void _pick(BleWifiNetwork net) {
-    setState(() {
-      _selected = net.ssid;
-      _selectedOpen = net.open;
-      _manual = false;
-      _ssid.text = net.ssid;
-      _pass.text = '';
-    });
-  }
-
-  void _pickManual() {
-    setState(() {
-      _selected = null;
-      _manual = true;
-      _ssid.text = '';
-      _pass.text = '';
-    });
-  }
-
-  bool get _showPassword => _manual || !_selectedOpen;
-
-  void _submit() {
-    Navigator.of(context)
-        .pop(WifiConfig(ssid: _ssid.text.trim(), pass: _pass.text));
-  }
+  WifiConfig? _draft;
 
   @override
   Widget build(BuildContext context) {
@@ -1236,95 +1204,11 @@ class _WifiSetupDialogState extends State<_WifiSetupDialog> {
       content: SizedBox(
         width: 360,
         child: SingleChildScrollView(
-          child: _scanning
-            ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Row(
-                  children: <Widget>[
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 12),
-                    Text('Scanning for networks...'),
-                  ],
-                ),
-              )
-            : _scanError != null
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(_scanError!,
-                          style: const TextStyle(color: Colors.grey)),
-                      const SizedBox(height: 8),
-                      TextButton(onPressed: _scan, child: const Text('Rescan')),
-                    ],
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      if (_networks.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Text('No networks found',
-                              style: TextStyle(color: Colors.grey)),
-                        )
-                      else
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 240),
-                          child: ListView(
-                            shrinkWrap: true,
-                            children: <Widget>[
-                              for (final net in _networks)
-                                ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(
-                                    net.open ? Icons.wifi : Icons.wifi_lock,
-                                    size: 18,
-                                  ),
-                                  title: Text(net.ssid),
-                                  subtitle: Text('${net.rssi} dBm'),
-                                  selected: _selected == net.ssid,
-                                  onTap: () => _pick(net),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.edit, size: 18),
-                        title: const Text('Enter SSID manually'),
-                        selected: _manual,
-                        onTap: _pickManual,
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _ssid,
-                        maxLength: 31,
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(
-                          labelText: 'SSID',
-                          counterText: '',
-                        ),
-                      ),
-                      if (_showPassword)
-                        TextField(
-                          controller: _pass,
-                          maxLength: 63,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Password',
-                            counterText: '',
-                          ),
-                        ),
-                    ],
-                  ),
-            ),
-
+          child: WifiSetupForm(
+            scan: widget.session.scanWifi,
+            onDraft: (c) => setState(() => _draft = c),
+          ),
+        ),
       ),
       actions: <Widget>[
         TextButton(
@@ -1332,7 +1216,8 @@ class _WifiSetupDialogState extends State<_WifiSetupDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _ssid.text.trim().isEmpty ? null : _submit,
+          onPressed:
+              _draft == null ? null : () => Navigator.of(context).pop(_draft),
           child: const Text('Connect'),
         ),
       ],
