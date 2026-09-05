@@ -361,6 +361,29 @@ class BleSession {
   /// drops the connection; the caller should not expect more traffic.
   Future<String> reboot() => _sendAndWait('reboot');
 
+  /// Wipe everything the owner has set on the mirror: the device config
+  /// (location, timezone, display settings, brightness override), the saved
+  /// WiFi credentials, and the stored layout. The device erases its stores,
+  /// answers "factory reset ok", and reboots unprovisioned, dropping the
+  /// link; the caller should not expect more traffic. The generous timeout
+  /// covers the flash erases before the answer. Throws
+  /// [BlePushException] with the device's reason when the reset fails or
+  /// the firmware is too old to know the command.
+  Future<String> factoryReset() async {
+    final line = await _sendAndWait('factory reset',
+        timeout: const Duration(seconds: 15));
+    if (line != 'factory reset ok') {
+      if (line == 'unknown command') {
+        throw BlePushException('this firmware does not support factory reset');
+      }
+      final reason = line.startsWith('factory reset error')
+          ? line.substring('factory reset error'.length).trim()
+          : 'unexpected reply: $line';
+      throw BlePushException(reason);
+    }
+    return line;
+  }
+
   /// The mirror's game ids, or null when the firmware does not support
   /// games (it answers "unknown command" to "game list").
   Future<List<String>?> listGames() async =>

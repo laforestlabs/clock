@@ -13,6 +13,7 @@
  */
 #include "layout_store.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -285,4 +286,31 @@ esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag)
 
     /* Warnings are not failures: the layout still renders. */
     return ESP_OK;
+}
+
+/* remove() outcome carried out of the flash-writer task. */
+typedef struct {
+    esp_err_t err;
+} clear_ctx_t;
+
+static void clear_fn(void *arg)
+{
+    clear_ctx_t *c = arg;
+    if (remove(LAYOUT_FILE) == 0 || errno == ENOENT) {
+        c->err = ESP_OK;   /* gone, or there was never a stored layout */
+    } else {
+        ESP_LOGW(TAG, "could not remove %s (%d)", LAYOUT_FILE, errno);
+        c->err = ESP_FAIL;
+    }
+}
+
+/* SPIFFS writes (including unlink) freeze the cache and need an
+ * internal-DRAM stack: run the removal on the flash-writer task, same as
+ * persist(). */
+esp_err_t layout_store_clear(void)
+{
+    clear_ctx_t ctx = { .err = ESP_FAIL };
+    esp_err_t err = flash_write_run(clear_fn, &ctx);
+    if (err != ESP_OK) return err;
+    return ctx.err;
 }

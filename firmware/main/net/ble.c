@@ -96,7 +96,10 @@ typedef enum {
     TRANSFER_NONE,
     TRANSFER_LAYOUT,
     TRANSFER_CONFIG,
-    TRANSFER_WIFI
+    TRANSFER_WIFI,
+    /* Not a payload transfer: a commit-queue job kind with no buffer,
+     * queued by the "factory reset" command. */
+    TRANSFER_RESET
 } transfer_kind_t;
 
 typedef struct {
@@ -393,6 +396,35 @@ static void commit_task(void *arg)
             continue;
         }
 
+        if (job.kind == TRANSFER_RESET) {
+            /* Factory reset: erase everything the owner set and reboot.
+             * Runs here, not on the host task: it touches SPIFFS and NVS,
+             * and only this task has the stack for it. Order is defensive:
+             * remove the stored layout file first, so a failure leaves
+             * every other byte untouched and the phone can simply retry;
+             * then stop the WiFi retries and blank the driver's own saved
+             * station config; then erase the NVS namespace that holds the
+             * config, the credentials, and the station hint. The reset is
+             * complete the moment the chip comes back with no credentials
+             * and no stored layout: the setup portal opens and the panel
+             * draws the embedded layout. */
+            if (layout_store_clear() != ESP_OK) {
+                send_status("factory reset error stored layout could not be cleared");
+                continue;
+            }
+            wifi_forget();
+            if (mirror_config_factory_reset() != ESP_OK) {
+                send_status("factory reset error config storage could not be erased");
+                continue;
+            }
+            send_status("factory reset ok");
+            /* Same notification flush as cmd_reboot: the chip is gone
+             * right after, taking the link with it. */
+            vTaskDelay(pdMS_TO_TICKS(300));
+            esp_restart();
+            continue;   /* unreachable: esp_restart does not return */
+        }
+
         if (job.kind == TRANSFER_LAYOUT) {
             ml_diag diag;
             ml_diag_reset(&diag);
@@ -515,6 +547,26 @@ static void cmd_reboot(void)
     esp_restart();
 }
 
+/* Factory reset: wipe every owner-set state (config, WiFi credentials,
+ * stored layout) and reboot into the setup portal. The erasing runs on the
+ * commit task; this only queues a buffer-less job. The caller gets no
+ * immediate answer: "factory reset ok/error ..." arrives as the job's
+ * status line, and the link dies with the reboot right after the ok. */
+static void cmd_factory_reset(void)
+{
+    if (s_commit_q == NULL) {
+        /* ble_commit_init() failing at boot is the only way to get here. */
+        send_status("factory reset error busy");
+        return;
+    }
+    const commit_job_t job = { .kind = TRANSFER_RESET, .buf = NULL, .len = 0 };
+    if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
+        send_status("factory reset error busy");
+        return;
+    }
+    ESP_LOGW(TAG, "factory reset queued");
+}
+
 static void cmd_get_wifi(void)
 {
     char esc_ssid[96];
@@ -610,6 +662,8 @@ static void handle_cmd(char *line)
         cmd_set_brightness(line + 15);
     } else if (strcmp(line, "reboot") == 0) {
         cmd_reboot();
+    } else if (strcmp(line, "factory reset") == 0) {
+        cmd_factory_reset();
     } else if (strncmp(line, "begin ", 6) == 0) {
         cmd_begin(line + 6);
     } else if (strcmp(line, "commit") == 0) {

@@ -62,6 +62,16 @@ uint8_t mirror_config_effective_brightness(uint8_t layout_brightness);
 void mirror_config_clear_brightness(void);
 
 /*
+ * Factory reset: erase every key in the device's NVS namespace (config
+ * fields, saved WiFi credentials, the station hint: everything the owner
+ * set) and reload the in-RAM copies from the Kconfig defaults so the live
+ * values match what the next boot will load. Callers reboot the chip
+ * afterwards; this function does not restart or touch the layout store.
+ * Returns ESP_OK when the namespace is gone, or the NVS error.
+ */
+esp_err_t mirror_config_factory_reset(void);
+
+/*
  * Apply a partial JSON object: {"timezone","latitude","longitude","place",
  * "brightness","clock12h","temp_unit"}. Every present field is validated, and
  * nothing is persisted or applied unless all of them pass; missing fields are

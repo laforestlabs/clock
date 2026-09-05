@@ -238,6 +238,39 @@ void mirror_config_clear_brightness(void)
     ESP_LOGI(TAG, "brightness override cleared (follows the layout again)");
 }
 
+esp_err_t mirror_config_factory_reset(void)
+{
+    lock();
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+
+    if (err == ESP_OK) {
+        /* The namespace is gone, including the credentials and the station
+         * hint that other modules keep here. Reload the in-RAM copies from
+         * the Kconfig defaults (the same values the seeding contract in
+         * mirror_config_init() produces on a virgin device) so a caller
+         * that reboots immediately never serves a stale value in the
+         * window before the restart. */
+        snprintf(s_tz,    sizeof(s_tz),    "%s", CONFIG_MIRROR_TIMEZONE);
+        snprintf(s_lat,   sizeof(s_lat),   "%s", CONFIG_MIRROR_LATITUDE);
+        snprintf(s_lon,   sizeof(s_lon),   "%s", CONFIG_MIRROR_LONGITUDE);
+        snprintf(s_place, sizeof(s_place), "%s", CONFIG_MIRROR_PLACE_NAME);
+        s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
+        s_clock_12h  = CLOCK12H_DEFAULT != 0;
+        s_temp_unit  = TEMP_UNIT_DEFAULT;
+        ESP_LOGW(TAG, "factory reset: NVS namespace \"%s\" erased", NVS_NS);
+    }
+
+    unlock();
+    return err;
+}
+
 static void fail(char *err, size_t errsz, const char *msg)
 {
     if (err != NULL && errsz > 0) snprintf(err, errsz, "%s", msg);

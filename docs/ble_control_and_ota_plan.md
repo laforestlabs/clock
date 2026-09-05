@@ -23,7 +23,9 @@ Firmware (ESP-IDF 5.5.2, target esp32s3, board Freenove FNK0085 / N16R8):
   `5f1b3c2a-9e74-4f6d-8a2b-1c3d5e7f9a01`, characteristics `...02` (cmd),
   `...03` (data), `...04` (status, notify + read). ASCII protocol:
   `ping`, `get config`, `begin <layout|config> <len>`, data chunks, `commit`,
-  `abort`. Bounds: `MAX_CMD_LEN 63`, `MAX_PAYLOAD 32768`, `MAX_STATUS_LEN 256`.
+  `abort`, `factory reset` (erase config, WiFi credentials and the stored
+  layout, then reboot unprovisioned; replies `factory reset ok|error ...`).
+  Bounds: `MAX_CMD_LEN 63`, `MAX_PAYLOAD 32768`, `MAX_STATUS_LEN 256`.
   One connection, no pairing (deliberate; same trust model as the open setup
   portal). `pong` replies `pong <version> <ip> <layout> <w> <h>`.
 - `firmware/main/net/api_server.c`: LAN API on the station interface:

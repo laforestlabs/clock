@@ -38,6 +38,14 @@ void layout_store_snapshot(ml_layout *out);
  */
 esp_err_t layout_store_apply(const char *json, size_t len, ml_diag *diag);
 
+/*
+ * Factory reset: delete the stored layout file so the next boot falls back
+ * to the embedded layout. Returns ESP_OK when nothing is stored or the
+ * file is gone, ESP_FAIL when the delete failed. Runs the removal on the
+ * flash-writer task (SPIFFS writes need an internal-DRAM stack).
+ */
+esp_err_t layout_store_clear(void);
+
 #ifdef __cplusplus
 }
 #endif

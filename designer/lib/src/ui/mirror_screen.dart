@@ -776,6 +776,108 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
+  /// Confirm twice (consequences dialog, then an explicit per-item
+  /// acknowledgement), wipe the mirror, and drop the session: the device
+  /// reboots unprovisioned and the BLE link dies with it, same as a reboot.
+  Future<void> _factoryResetBle() async {
+    final session = _connection.session;
+    if (session == null) return;
+    final confirmed = await _confirmFactoryReset(
+        _connection.deviceName ?? 'the connected mirror');
+    if (!confirmed) return;
+    if (!mounted) return;
+    setState(() => _bleBusy = true);
+    try {
+      await session.factoryReset();
+      _toast('Factory reset: the mirror is rebooting and must be set up '
+          'again');
+      await _disconnectBle();
+    } catch (e) {
+      _handleError(e, 'factory reset');
+    } finally {
+      if (mounted) setState(() => _bleBusy = false);
+    }
+  }
+
+  /// The two confirmation layers for a factory reset. The first spells out
+  /// what is about to happen and what it costs; the second makes the user
+  /// acknowledge the two irreversible consequences item by item before the
+  /// destructive button unlocks. Returns true only when both are cleared.
+  Future<bool> _confirmFactoryReset(String deviceName) async {
+    final theme = Theme.of(context);
+    const consequences = <String>[
+      'Forget its WiFi network and password.',
+      'Lose its location, timezone, clock format, temperature unit, and '
+          'brightness override.',
+      'Lose the layout pushed to it; the panel falls back to the factory '
+          'layout shipped inside the firmware.',
+      'Restart into setup mode, needing to be configured from scratch.',
+    ];
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(Icons.warning_amber_rounded,
+            color: theme.colorScheme.error, size: 36),
+        title: const Text('Factory reset this mirror?'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('You are about to erase everything you have set on '
+                  '"$deviceName". Afterwards the mirror will:'),
+              const SizedBox(height: 10),
+              for (final c in consequences)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text('\u2022'),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(c)),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 6),
+              Text(
+                'This cannot be undone. Nothing survives except the '
+                'firmware itself.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.error,
+              foregroundColor: theme.colorScheme.onError,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return false;
+
+    // Layer two: ticking both acknowledgements is the only thing that
+    // unlocks the final button, so a reflex tap cannot fire the command.
+    final acknowledged = await showDialog<bool>(
+      context: context,
+      builder: (_) => _FactoryResetAckDialog(deviceName: deviceName),
+    );
+    return acknowledged == true;
+  }
+
   /// Poll status until the mirror answers again (it restarts during OTA),
   /// or give up after 60 seconds.
   Future<MirrorStatus?> _waitForReboot(String ip) async {
@@ -927,6 +1029,18 @@ class _MirrorScreenState extends State<MirrorScreen> {
                   onPressed: _bleBusy ? null : _rebootBle,
                   icon: const Icon(Icons.restart_alt, size: 18),
                   label: const Text('Reboot'),
+                ),
+                // The only destructive entry in the cluster, and the one
+                // that cannot be walked back: painted in the theme error
+                // red so it can never be mistaken for the Reboot beside it.
+                FilledButton.icon(
+                  onPressed: _bleBusy ? null : _factoryResetBle,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
+                  ),
+                  icon: const Icon(Icons.delete_forever_outlined, size: 18),
+                  label: const Text('Factory reset'),
                 ),
               ],
               TextButton(
@@ -1598,6 +1712,73 @@ class _DownloadingDialog extends StatelessWidget {
           Text('Downloading firmware...'),
         ],
       ),
+    );
+  }
+}
+
+/// Second confirmation layer for the factory reset: the destructive button
+/// stays disabled until the user has ticked each of the two irreversible
+/// consequences separately, so agreeing is deliberate, not reflexive.
+class _FactoryResetAckDialog extends StatefulWidget {
+  const _FactoryResetAckDialog({required this.deviceName});
+
+  final String deviceName;
+
+  @override
+  State<_FactoryResetAckDialog> createState() => _FactoryResetAckDialogState();
+}
+
+class _FactoryResetAckDialogState extends State<_FactoryResetAckDialog> {
+  bool _eraseAck = false;
+  bool _setupAck = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final confirmed = _eraseAck && _setupAck;
+    return AlertDialog(
+      icon: Icon(Icons.dangerous_outlined,
+          color: theme.colorScheme.error, size: 36),
+      title: const Text('Final confirmation'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('Read each line and tick it to confirm the reset of '
+              '"${widget.deviceName}".'),
+          CheckboxListTile(
+            value: _eraseAck,
+            onChanged: (v) => setState(() => _eraseAck = v ?? false),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('All settings, the WiFi password, and the '
+                'pushed layout will be permanently erased; nothing can be '
+                'recovered.'),
+          ),
+          CheckboxListTile(
+            value: _setupAck,
+            onChanged: (v) => setState(() => _setupAck = v ?? false),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('The mirror restarts as if it were brand new '
+                'and must be set up again from scratch.'),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: confirmed ? () => Navigator.of(context).pop(true) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: theme.colorScheme.error,
+            foregroundColor: theme.colorScheme.onError,
+          ),
+          child: const Text('Erase and factory reset'),
+        ),
+      ],
     );
   }
 }
