@@ -9,7 +9,8 @@ out/
 *.map
 
 # Firmware image bundled into the app for phone-driven OTA. The *.bin rule
-# above would otherwise ignore it; this is a deliberate, committed asset.
+# above would otherwise ignore it; this is a deliberate, committed asset that
+# every Android build refreshes automatically (tools/bundle_firmware.sh).
 !designer/assets/firmware/smart_mirror.bin
 
 # ESP-IDF

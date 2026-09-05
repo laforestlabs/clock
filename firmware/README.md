@@ -189,22 +189,26 @@ DMA. The log reports which pool each allocation landed in at boot.
 
 ## OTA updates
 
-The phone ships the firmware it needs: the app bundles the current image, so
-the normal update is "rebuild the app, then push the bundled firmware". No
-USB cable and no manual file transfer. The image is the app partition binary
-the build produces; `tools/build_ota.sh` builds it and refreshes the copy
-bundled into the app (`designer/assets/firmware/smart_mirror.bin`).
+The phone ships the firmware it needs: the app bundles the image, so the
+normal update is "rebuild the app, then push the bundled firmware". No USB
+cable and no manual file transfer. The bundled copy is
+`designer/assets/firmware/smart_mirror.bin`, refreshed from the sources by
+every Android build: a gradle task (`designer/tool/firmware_bundle.gradle`)
+runs `tools/bundle_firmware.sh`, which incrementally rebuilds the firmware
+before Flutter packs the assets into the APK. A stale bundle is therefore
+not possible, and a machine without ESP-IDF fails the build loudly rather
+than shipping an old image.
 
 The normal loop, with the phone and the mirror on the same WiFi:
 
 1. Bump the version: `project(smart_mirror VERSION x.y.z)` in
    `firmware/CMakeLists.txt`. The version is baked into the image and is what
    the app shows after the update, so a release that changes it is verifiable.
-2. Build and stage: `tools/build_ota.sh`. It builds, refreshes the app's
-   bundled image, and prints the version, size and SHA-256.
-3. Rebuild and install the app on the phone (see `designer/README.md`: build
-   the APK explicitly so a stale one is not installed).
-4. In the app: connect to the mirror over Bluetooth, Update firmware, then
+2. Rebuild and install the app on the phone (see `designer/README.md`: build
+   the APK explicitly so a stale one is not installed). That build stages the
+   current firmware into the APK; run `tools/build_ota.sh` separately if you
+   want the version-named image file, its size and SHA-256 printed.
+3. In the app: connect to the mirror over Bluetooth, Update firmware, then
    confirm **Install vx.y.z**. The app uploads the bundled image over HTTP to
    the mirror's LAN API (`POST /api/ota`), the mirror validates it with
    `esp_ota_end`, switches the boot partition and reboots; the app polls

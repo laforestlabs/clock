@@ -1,0 +1,71 @@
+// Keeps the firmware image bundled into every Android build identical to the
+// firmware sources in the working tree.
+//
+// The generated android/ scaffolding is gitignored, so designer/setup.sh
+// installs this committed file with one `apply from` line in the app build
+// script, the same way it installs tool/MainActivity.kt.
+//
+// How it works: Gradle hashes everything the firmware image is built from
+// (firmware/, core/, gamekit/, the authored fonts/, the embedded default
+// layout, and this wiring) and runs tools/bundle_firmware.sh before
+// compileFlutterBuild*, the task that reads designer/assets/ into the APK.
+// If any of those changed since the staged image was produced, the script
+// rebuilds with ESP-IDF and restages the copy; if nothing changed, the task
+// is up-to-date and costs nothing. There is no longer a manual "run
+// build_ota.sh before the APK" step to forget.
+//
+// A machine without ESP-IDF cannot honour the guarantee, so it fails loudly
+// with instructions. For a deliberate one-off that ships the last staged
+// image instead (offline demo build, CI packaging a committed asset):
+//     flutter build apk -PskipFirmwareBundle
+//
+// Editing fonts/ regenerates core/src/fonts/*.c as the script runs, so the
+// next build after a font change re-runs the task once against the settled
+// tables. One extra incremental build; nothing stale.
+
+def repoDir = new File(rootDir, "../..").canonicalFile
+def bundleScript = new File(repoDir, "tools/bundle_firmware.sh")
+def stagedImage = new File(repoDir, "designer/assets/firmware/smart_mirror.bin")
+
+if (findProperty("skipFirmwareBundle") != null) {
+    logger.warn("syncBundledFirmware skipped (-PskipFirmwareBundle): " +
+        (stagedImage.exists()
+            ? "the APK will bundle the last staged image, ${stagedImage.name}"
+            : "no staged image exists, so asset bundling will fail"))
+} else {
+    def firmwareSources = fileTree(new File(repoDir, "firmware")) {
+        // build/ holds only generated output; sdkconfig.old churns with it.
+        exclude "build/**", "sdkconfig.old"
+    }
+    def coreSources = fileTree(new File(repoDir, "core")) {
+        exclude "**/out/**", "**/build/**"
+    }
+    def gamekitSources = fileTree(new File(repoDir, "gamekit")) {
+        exclude "**/out/**", "**/build/**"
+    }
+    def fontSources = fileTree(new File(repoDir, "fonts")) { include "*.font" }
+
+    def syncFirmware = tasks.register("syncBundledFirmware") {
+        group = "firmware"
+        description = "Rebuild the firmware and stage the copy bundled in assets/firmware/"
+
+        inputs.files(firmwareSources, coreSources, gamekitSources, fontSources)
+        inputs.files(new File(repoDir, "layouts/mini.json"), bundleScript)
+        outputs.file(stagedImage)
+
+        doLast {
+            exec {
+                commandLine "bash", bundleScript.absolutePath
+                workingDir repoDir
+            }
+        }
+    }
+
+    tasks.configureEach { task ->
+        // compileFlutterBuildDebug/Profile/Release is where Flutter reads
+        // designer/assets/ off disk; the image must be staged before it runs.
+        if (task.name.startsWith("compileFlutterBuild")) {
+            task.dependsOn(syncFirmware)
+        }
+    }
+}

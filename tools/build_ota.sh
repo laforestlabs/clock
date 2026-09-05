@@ -10,10 +10,13 @@
 # The version comes from the project() call in firmware/CMakeLists.txt; the
 # same version is baked into the image and reported by the mirror after the
 # update, which is what makes an OTA verifiable end to end.
+#
+# The build and the app's staged image happen via tools/bundle_firmware.sh;
+# Android builds run that staging on their own (see
+# designer/tool/firmware_bundle.gradle), so this script is mostly for --serve.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ESP_IDF="${ESP_IDF:-$HOME/esp/esp-idf-v5.5}"
 
 SERVE=0
 PORT=8000
@@ -45,25 +48,13 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-if [ ! -f "$ESP_IDF/export.sh" ]; then
-    echo "ESP-IDF not found at $ESP_IDF (set ESP_IDF to override)" >&2
-    exit 1
-fi
-. "$ESP_IDF/export.sh" >/dev/null
-
-idf.py -C "$ROOT/firmware" build
+"$ROOT/tools/bundle_firmware.sh"
 
 SRC="$ROOT/firmware/build/smart_mirror.bin"
 OUT_DIR="$ROOT/firmware/build/ota"
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/smart_mirror-$VERSION.bin"
 cp "$SRC" "$OUT"
-
-# Refresh the firmware bundled into the app so the next APK ships this image
-# (the normal phone OTA path: update the app, then push the bundled firmware).
-APP_FW_DIR="$ROOT/designer/assets/firmware"
-mkdir -p "$APP_FW_DIR"
-cp "$SRC" "$APP_FW_DIR/smart_mirror.bin"
 
 SIZE="$(stat -c %s "$OUT")"
 SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"

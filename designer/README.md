@@ -43,8 +43,12 @@ doubt, check the APK timestamp postdates the last edit.
 
 The app also bundles the firmware image for the normal OTA flow
 (`assets/firmware/smart_mirror.bin`, version read from the image itself).
-`tools/build_ota.sh` refreshes that asset after each firmware build, so run it
-before rebuilding the APK when the firmware version has changed.
+Every Android build refreshes that asset before packaging: the gradle task in
+`tool/firmware_bundle.gradle` runs `tools/bundle_firmware.sh`, which rebuilds
+the firmware with ESP-IDF whenever its sources changed. No manual staging
+step remains to forget; a machine without ESP-IDF fails the build with an
+explanation (opt out for one deliberate build with
+`flutter build apk -PskipFirmwareBundle`).
 
 ## Launching it without a terminal
 

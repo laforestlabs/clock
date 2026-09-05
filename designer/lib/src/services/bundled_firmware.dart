@@ -3,9 +3,11 @@
 // mirror.
 //
 // The image is the ESP-IDF app partition binary (firmware/build/smart_mirror.bin),
-// staged into assets/firmware/ by tools/build_ota.sh. Its version is read from
-// the image itself, the ESP-IDF app descriptor, rather than a second file, so
-// the version the UI reports can never drift from the bytes being uploaded.
+// staged into assets/firmware/ by tools/bundle_firmware.sh, which every
+// Android build runs before Flutter packs the assets. Its version is read
+// from the image itself, the ESP-IDF app descriptor, rather than a second
+// file, so the version the UI reports can never drift from the bytes being
+// uploaded.
 
 import 'dart:typed_data';
 

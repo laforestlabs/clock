@@ -92,6 +92,27 @@ if [ -d "$DESIGNER_DIR/android" ]; then
      "$DESIGNER_DIR/android/app/src/main/kotlin/com/example/mirror_designer/MainActivity.kt"
 fi
 
+# Every Android build must bundle the firmware the working tree describes, not
+# whatever copy was staged by hand last. tool/firmware_bundle.gradle registers
+# a gradle task that rebuilds and restages the image before Flutter packs
+# assets, so the apply line below is what makes the guarantee hold; the script
+# it applies is committed, only this one-line wiring lives in the generated
+# scaffolding.
+for gradle_file in "$DESIGNER_DIR/android/app/build.gradle.kts" \
+                   "$DESIGNER_DIR/android/app/build.gradle"; do
+  if [ -f "$gradle_file" ] && ! grep -q firmware_bundle "$gradle_file"; then
+    case "$gradle_file" in
+      *.kts)
+        printf '\n// Installed by setup.sh: bundle the current firmware into every build.\napply(from = "$rootDir/../tool/firmware_bundle.gradle")\n' >> "$gradle_file"
+        ;;
+      *)
+        printf '\n// Installed by setup.sh: bundle the current firmware into every build.\napply from: file("$rootDir/../tool/firmware_bundle.gradle")\n' >> "$gradle_file"
+        ;;
+    esac
+    info "  wired firmware_bundle.gradle into $(basename "$gradle_file")"
+  fi
+done
+
 # The generated plugin ships a placeholder .c and matching Dart bindings that
 # reference functions our core does not have. Left in place they break the
 # build, so remove them; src/CMakeLists.txt is ours and points at core/.
