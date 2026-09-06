@@ -185,8 +185,9 @@ menu "Smart Mirror"
             default 1
             help
                 One P2.5-64x32 gives the 64x32 canvas the default layout is
-                tuned for. Two 64x64 panels side by side instead gives 128x64,
-                which is what layouts/dual-128x64.json expects.
+                tuned for, which is the only size the stock layouts target today.
+                Two 64x64 panels side by side instead gives a 128x64 canvas; the
+                geometry is still a config value even though no preset ships for it.
 
         config MIRROR_PANEL_ROWS
             int "Panels down"

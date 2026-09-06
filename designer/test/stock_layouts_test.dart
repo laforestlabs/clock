@@ -85,16 +85,25 @@ void main() {
       }
     });
 
-    test('larger presets are kept under size-suffixed names', () async {
+    // 64x32 is currently the only panel the hardware supports, so no larger
+    // or size-suffixed preset ships. When other resolutions are released, this
+    // is the test that lets them in and the place the picker's panel-size
+    // filtering (below) starts to matter again.
+    test('ship only 64x32 presets while that is the only supported panel',
+        () async {
       final stock = await LayoutRepository().stockLayouts();
-      final byName = {for (final s in stock) s.name: s};
 
-      expect(byName['single-64x64']?.width, 64);
-      expect(byName['single-64x64']?.height, 64);
-      expect(byName['dual-128x64']?.width, 128);
-      expect(byName['dual-128x64']?.height, 64);
-      expect(byName['quad-128x128']?.height, 128);
-      expect(byName['planner-128x128']?.height, 128);
+      final offSize = stock
+          .where((s) => s.width != 64 || s.height != 32)
+          .map((s) => '${s.name} (${s.width}x${s.height})')
+          .toList();
+
+      expect(
+        offSize,
+        isEmpty,
+        reason: 'every stock preset must target the 64x32 panel, '
+            'but found: ${offSize.join(", ")}',
+      );
     });
   });
 

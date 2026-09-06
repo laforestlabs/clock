@@ -69,7 +69,8 @@ mkdir -p out
 ```
 
 That writes `out/mini-{typical,cold,overflow,evening}.png`, the default 64x32 clock and
-weather layout. Swap in `single`, `dual` or `quad` for the larger canvases. Useful flags:
+weather layout. Swap in `single`, `dual` or `quad` for denser 64x32 arrangements: every
+stock layout targets the 64x32 panel, the only size the hardware ships today. Useful flags:
 
 | Flag | Effect |
 |---|---|
