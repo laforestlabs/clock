@@ -1,16 +1,15 @@
 /*
  * game_rally.c - the reference game.
  *
- * Two paddles, one ball, integer fixed-point physics. It is deliberately the
- * smallest game that is honest about both things this framework exists to solve:
- * the board must fit any panel (it reads the canvas and lays itself out), and
- * two players must share one host (player 1 left, player 2 right, each on its own
- * controller; an absent side falls back to a deterministic AI so a single player
- * is still playable). The state is plain POD, snapshot/restore are a memcpy, and
- * no RNG is read anywhere: the serve is a fixed flat line and all the angle
- * comes from the paddles. That is the whole
- * point: the same binary runs on a 64x32 clock and a 128x128 mirror, one player
- * or two, and the frames are reproducible from a seed.
+ * Two paddles, one ball, integer fixed-point physics. It is the smallest game
+ * that is honest about the two things this framework exists to solve: the board
+ * is authored for a fixed panel (64x32, the size the hardware ships today; the
+ * view letterboxes it onto anything larger), and two players share one host
+ * (player 1 left, player 2 right, each on its own controller; an absent side
+ * falls back to a deterministic AI so a single player is still playable). The
+ * state is plain POD, snapshot/restore are a memcpy, and no RNG is read
+ * anywhere: the serve is a fixed flat line and all the angle comes from the
+ * paddles. One binary, one player or two, frames reproducible from a seed.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +25,11 @@
 #define FX_PX(x) ((int)((x) << FX))
 
 enum { RALLY_UP = 0, RALLY_DOWN = 1 };
+
+/* rally is authored for the one panel the hardware ships: 64x32. The view
+ * letterboxes this fixed board onto any larger panel; on 64x32 it is 1:1. */
+#define RALLY_W 64
+#define RALLY_H 32
 
 typedef struct {
     int16_t panel_w, panel_h;
@@ -52,15 +56,13 @@ static int clampi(int v, int lo, int hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-/* px/tick at the 25ms tick: 1 on a 32px panel, scaling with height. The same
- * px/s as h/16 gave at the old 50ms tick, but in single-pixel steps. */
-static int paddle_speed(int h) { int s = h / 32; return s < 1 ? 1 : s; }
-static int ball_speed(int w)
+/* 1 px/tick at the 25ms tick: the paddle crosses the 32-row board in 32 ticks,
+ * the pace tuned for the 64x32 panel rally targets. */
+static int paddle_speed(void) { return 1; }
+static int ball_speed(void)
 {
-    /* Constant px/tick regardless of panel size, so a 128-wide panel
-     * is no faster than a 64-wide one. The panel width only changes how long
-     * a rally lasts, not how fast the ball flies past you. */
-    (void)w;
+    /* Constant 1 px/tick: the board is a fixed 64x32, so the ball's pace is
+     * fixed too. How long a rally lasts is set by the paddles, not the panel. */
     return 1;
 }
 
@@ -70,7 +72,7 @@ static void serve(rally_state *s, int to)
     s->by = (s->panel_h / 2) << FX;
     /* 0.75 px/tick: 30 px/s at the 25ms tick, the pace the old 1.5 px/tick
      * had at 50ms. */
-    int spd = ball_speed(s->panel_w) * FX_ONE * 3 / 4;
+    int spd = ball_speed() * FX_ONE * 3 / 4;
     int dir = (to == 0) ? -1 : 1;
     s->bvx = dir * spd;
     /* Flat serve straight across the middle: the opening shot is always the
@@ -81,15 +83,19 @@ static void serve(rally_state *s, int to)
 
 static void rally_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
 {
-    (void)ctx;
+    (void)cfg; (void)ctx;
+    /* Authored for the 64x32 panel regardless of the physical panel it lands
+     * on: cfg->panel_w/h is deliberately ignored, and the ML_FIT_LETTERBOX view
+     * scales this fixed board onto anything larger (1:1 on the 64x32 it is
+     * tuned for, which is the only size the hardware currently ships). */
     rally_state *s = state;
     memset(s, 0, sizeof(*s));
-    s->panel_w = (int16_t)cfg->panel_w;
-    s->panel_h = (int16_t)cfg->panel_h;
+    s->panel_w = RALLY_W;
+    s->panel_h = RALLY_H;
     s->paddle_w = 2;
-    s->paddle_h = (int16_t)clampi(s->panel_h / 4, 4, s->panel_h - 2);
-    s->face[0] = 1 + s->paddle_w;          /* left paddle's right face */
-    s->face[1] = s->panel_w - 1 - s->paddle_w; /* right paddle's left face */
+    s->paddle_h = 8;                            /* RALLY_H / 4 */
+    s->face[0] = 1 + s->paddle_w;               /* left paddle's right face */
+    s->face[1] = s->panel_w - 1 - s->paddle_w;  /* right paddle's left face */
 }
 
 static void rally_reset(void *state, ml_game_ctx *ctx)
@@ -144,7 +150,7 @@ static void rally_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
     else return;
     if (e->value) s->held[idx] |= mask;
     else          s->held[idx] &= (uint8_t)~mask;
-    int sp = paddle_speed(s->panel_h);
+    int sp = paddle_speed();
     int dir = 0;
     if (s->held[idx] & 1u) dir -= 1;
     if (s->held[idx] & 2u) dir += 1;
@@ -160,7 +166,7 @@ static void ai_move(rally_state *s, int idx, uint32_t tick)
     int ph = s->paddle_h;
     int target = (int)((s->by >> FX) - ph / 2);
     int dy = target - s->paddle_y[idx];
-    int sp = paddle_speed(s->panel_h) / 2;
+    int sp = paddle_speed() / 2;
     if (sp < 1) {
         /* Half of 1 px/tick, as a pixel step on alternate ticks. */
         if (tick & 1u) return;
@@ -298,7 +304,7 @@ static void rally_restore(void *state, const uint8_t *buf, size_t len)
 
 const ml_game_vt ml_game_rally = {
     .id            = "rally",
-    .pref_w        = 0, .pref_h = 0,
+    .pref_w        = 64, .pref_h = 32, .fit = ML_FIT_LETTERBOX,
     .tick_ms       = 25,
     .max_players   = 2,
     .state_size    = sizeof(rally_state),

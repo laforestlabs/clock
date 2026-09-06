@@ -71,8 +71,8 @@ neither has to know the other's set.
 ```
 const ml_game_vt ml_game_rally = {
     .id        = "rally",
-    .pref_w    = 0, .pref_h = 0,        /* 0 means adaptive */
-    .fit       = ML_FIT_ADAPTIVE,
+    .pref_w    = 64, .pref_h = 32,      /* authored for the 64x32 panel */
+    .fit       = ML_FIT_LETTERBOX,      /* letterboxed onto anything larger */
     .tick_ms   = 33,
     .max_players = 2,
     .state_size  = sizeof(rally_state),
@@ -153,10 +153,11 @@ game portable onto a firmware that has none of those.
 
 ## Arbitrary size: the view
 
-The project already supports 64x32, 64x64, 128x64 and 128x128 from the same
-firmware, because geometry is a config value, not compiled in. Games must do the
-same: the same game binary must play on the tiny clock and the big mirror without
-a rebuild. The `ml_view` is how.
+The panel geometry is a config value in the firmware, not compiled in, so the
+design target is that one game binary plays on any panel, and the `ml_view` is how
+a game reaches that. The hardware ships a single 64x32 panel today and other
+resolutions are a later release; until then a game is authored at 64x32 and the
+view letterboxes it cleanly onto a bigger panel the day one arrives.
 
 A game declares a preferred logical size and a fit mode. The runtime fits the
 logical space into the physical canvas:
@@ -329,7 +330,7 @@ gamekit/
   host/
     game_cli.c    run a game: PNG/ASCII frames, size sweep, replay, N clients
   examples/
-    rally/        a two-player paddle game that adapts to any panel size
+    rally/        a two-player paddle game authored for the 64x32 panel
     snake/        a one-player snake with a d-pad and a growing body
     tetris/       falling blocks: rotate and drop, on a capped field
     breakout/     a paddle, a ball and a wall of bricks, two buttons
@@ -361,11 +362,13 @@ promise the host core makes.
 ### Why the example is a two-player rally
 
 Pong-and-friends is the smallest game that is honest about both of the things
-this framework exists to solve: the board must fit any panel (adaptive view), and
-two players must share one host (multiplayer). The example `rally` gives each
-player a paddle on opposing walls, a ball in integer fixed-point physics, and a
-score drawn with the existing bitmap fonts. It runs on 64x32, 128x64 and 128x128
-from the same binary by reading the canvas size, and it runs single-player (left
+this framework exists to solve: the board is authored for a fixed panel, and two
+players must share one host (multiplayer). The example `rally` gives each player a
+paddle on opposing walls, a ball in integer fixed-point physics, and a score drawn
+with the existing bitmap fonts. It is authored for the 64x32 panel the hardware
+ships today and selects `ML_FIT_LETTERBOX`, so the same binary shows correctly on
+any larger panel the day one is released; the adaptive, read-the-canvas path is
+exemplified by the other games (snake, breakout). It runs single-player (left
 paddle static, right paddle human) and two-player (two keyboard mappings over the
 loopback bus) from the same binary. It is small enough to read in one sitting and
 is the reference for every vtable callback.

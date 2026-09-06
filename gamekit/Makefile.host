@@ -7,7 +7,7 @@
 #
 #   make -f Makefile.host          build game-cli
 #   make -f Makefile.host clean    remove the build
-#   ./build/host/game-cli rally --sizes 64x32,128x64,128x128 --led
+#   ./build/host/game-cli rally --led            # 64x32, the only panel shipped
 
 CC      ?= gcc
 OPT     ?= -O2 -g
