@@ -209,6 +209,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         builder: (_) => SettingsScreen(
           controller: _c,
           view: _view,
+          connection: _connection,
           onViewChanged: _setView,
         ),
       ),

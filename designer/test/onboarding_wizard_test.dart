@@ -73,7 +73,8 @@ void main() {
       MirrorOnboardingPage(
         includeWifi: true,
         wifiScan: () async => const <BleWifiNetwork>[
-          BleWifiNetwork(ssid: 'CafeNet', rssi: -50, open: false),
+          BleWifiNetwork(
+              ssid: 'CafeNet', rssi: -50, security: WifiSecurity.secured),
         ],
         wifiPush: (w) async {
           pushedWifi = w;

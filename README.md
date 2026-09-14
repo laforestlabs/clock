@@ -390,6 +390,13 @@ the preview is the panel. Selection outlines and two-way-mirror dimming are
 drawn by the view layer and never enter the engine's framebuffer, because the
 moment editor chrome lands in those pixels the preview stops being trustworthy.
 
+Panel orientation is the one setting that is genuinely the device's: the
+Settings screen's **Upside down** toggle pushes `flip180` over Bluetooth and
+reads the device's value back when it connects, so the preview shows what a
+panel mounted upside down actually displays. The panel compensates at the last
+step before the shift registers, which is why the golden-image bytes are
+untouched by it.
+
 ## Testing
 
 ```sh

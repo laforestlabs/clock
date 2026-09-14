@@ -36,6 +36,7 @@ static const char *TAG = "config";
 #define NVS_KEY_PLACE "place"
 #define NVS_KEY_BRIGHTNESS "brightness"
 #define NVS_KEY_CLOCK12H   "clock12h"
+#define NVS_KEY_FLIP180    "flip180"
 #define NVS_KEY_TEMP_UNIT  "temp_unit"
 #define NVS_KEY_NAME       "name"
 
@@ -67,6 +68,7 @@ static int         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
 /* Display settings; Kconfig values are the factory defaults, see the "Display"
  * menu. */
 static bool        s_clock_12h;
+static bool        s_flip180;     /* panel mounted upside down */
 static char        s_temp_unit;   /* 'F' or 'C' */
 static SemaphoreHandle_t s_lock;
 
@@ -148,6 +150,27 @@ static void load_clock12h(nvs_handle_t h)
     }
     s_clock_12h = CLOCK12H_DEFAULT != 0;
     if (nvs_set_i32(h, NVS_KEY_CLOCK12H, s_clock_12h ? 1 : 0) == ESP_OK) {
+        nvs_commit(h);
+    }
+}
+
+/* Same seeding contract as load_clock12h, for the panel orientation. There is
+ * no Kconfig default: a device whose key is absent seeds upright, the mount
+ * that needs no compensation. */
+static void load_flip180(nvs_handle_t h)
+{
+    int32_t v;
+    esp_err_t err = nvs_get_i32(h, NVS_KEY_FLIP180, &v);
+    if (err == ESP_OK) {
+        s_flip180 = v != 0;
+        return;
+    }
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "flip180 unreadable (%s), reseeding",
+                 esp_err_to_name(err));
+    }
+    s_flip180 = false;
+    if (nvs_set_i32(h, NVS_KEY_FLIP180, 0) == ESP_OK) {
         nvs_commit(h);
     }
 }
@@ -264,14 +287,16 @@ esp_err_t mirror_config_init(void)
     load_key(h, NVS_KEY_NAME, s_name, sizeof(s_name), "");
     load_brightness(h);
     load_clock12h(h);
+    load_flip180(h);
     load_temp_unit(h);
 
     nvs_close(h);
 
     ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d, "
-             "clock %s, temp %c",
+             "clock %s, temp %c, flip180 %s",
              s_tz, s_lat, s_lon, s_place, s_brightness,
-             s_clock_12h ? "12h" : "24h", s_temp_unit);
+             s_clock_12h ? "12h" : "24h", s_temp_unit,
+             s_flip180 ? "on" : "off");
     return ESP_OK;
 }
 
@@ -289,6 +314,14 @@ bool mirror_config_clock_12h(void)
 {
     lock();
     const bool v = s_clock_12h;
+    unlock();
+    return v;
+}
+
+bool mirror_config_flip180(void)
+{
+    lock();
+    const bool v = s_flip180;
     unlock();
     return v;
 }
@@ -352,6 +385,7 @@ esp_err_t mirror_config_factory_reset(void)
         s_name[0] = '\0';   /* the generated identity takes over again */
         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
         s_clock_12h  = CLOCK12H_DEFAULT != 0;
+        s_flip180    = false;
         s_temp_unit  = TEMP_UNIT_DEFAULT;
         ESP_LOGW(TAG, "factory reset: NVS namespace \"%s\" erased", NVS_NS);
     }
@@ -456,9 +490,11 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     char   new_name[NAME_BUF_LEN] = "";
     int    new_brightness = -1;
     bool   new_clock_12h = CLOCK12H_DEFAULT != 0;
+    bool   new_flip180 = false;
     char   new_temp_unit = TEMP_UNIT_DEFAULT;
     bool   have_name = false, have_tz = false, have_lat = false, have_lon = false, have_place = false;
     bool   have_brightness = false, have_clock12h = false, have_temp_unit = false;
+    bool   have_flip180 = false;
 
     int t = ml_json_member(&j, 0, "name");
     if (t >= 0) {
@@ -577,6 +613,15 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         have_clock12h = true;
     }
 
+    t = ml_json_member(&j, 0, "flip180");
+    if (t >= 0) {
+        if (!ml_json_bool(&j, t, &new_flip180)) {
+            fail(err, errsz, "flip180 must be a boolean");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_flip180 = true;
+    }
+
     t = ml_json_member(&j, 0, "temp_unit");
     if (t >= 0) {
         char unit[2] = "";
@@ -591,7 +636,8 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
 
     /* Nothing named: a no-op, not an error. */
     if (!have_name && !have_tz && !have_lat && !have_lon && !have_place &&
-        !have_brightness && !have_clock12h && !have_temp_unit) {
+        !have_brightness && !have_clock12h && !have_flip180 &&
+        !have_temp_unit) {
         fail(err, errsz, "no known fields");
         return ESP_ERR_INVALID_ARG;
     }
@@ -605,13 +651,14 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
                                     new_brightness != s_brightness;
     const bool clock12h_changed = have_clock12h &&
                                   new_clock_12h != s_clock_12h;
+    const bool flip180_changed = have_flip180 && new_flip180 != s_flip180;
     const bool temp_unit_changed = have_temp_unit &&
                                    new_temp_unit != s_temp_unit;
     const bool name_changed = have_name && strcmp(new_name, s_name) != 0;
 
     if (tz_changed || lat_changed || lon_changed || place_changed ||
-        brightness_changed || clock12h_changed || temp_unit_changed ||
-        name_changed) {
+        brightness_changed || clock12h_changed || flip180_changed ||
+        temp_unit_changed || name_changed) {
         nvs_handle_t h;
         esp_err_t nvs_err = nvs_open(NVS_NS, NVS_READWRITE, &h);
         if (nvs_err != ESP_OK) {
@@ -627,6 +674,9 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
                                             new_brightness);
         if (clock12h_changed) {
             nvs_set_i32(h, NVS_KEY_CLOCK12H, new_clock_12h ? 1 : 0);
+        }
+        if (flip180_changed) {
+            nvs_set_i32(h, NVS_KEY_FLIP180, new_flip180 ? 1 : 0);
         }
         if (temp_unit_changed) {
             char seed[2] = { new_temp_unit, '\0' };
@@ -648,6 +698,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (have_place)  memcpy(s_place, new_place, sizeof(s_place));
     if (have_brightness) s_brightness = new_brightness;
     if (have_clock12h)   s_clock_12h = new_clock_12h;
+    if (have_flip180)    s_flip180 = new_flip180;
     if (have_temp_unit)  s_temp_unit = new_temp_unit;
     unlock();
 
@@ -672,6 +723,11 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     }
     if (have_clock12h) {
         ESP_LOGI(TAG, "clock set to %s", s_clock_12h ? "12-hour" : "24-hour");
+    }
+    if (have_flip180) {
+        panel_set_flip180(new_flip180);
+        ESP_LOGI(TAG, "panel orientation set to %s",
+                 new_flip180 ? "upside down" : "upright");
     }
     if (have_temp_unit) {
         ESP_LOGI(TAG, "temperature unit set to %c", s_temp_unit);

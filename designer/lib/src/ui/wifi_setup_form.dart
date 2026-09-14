@@ -33,7 +33,7 @@ class _WifiSetupFormState extends State<WifiSetupForm> {
   String? _scanError;
   List<BleWifiNetwork> _networks = const <BleWifiNetwork>[];
   String? _selected;
-  bool _selectedOpen = false;
+  WifiSecurity _security = WifiSecurity.secured;
   bool _manual = false;
   late final TextEditingController _ssid;
   late final TextEditingController _pass;
@@ -84,7 +84,7 @@ class _WifiSetupFormState extends State<WifiSetupForm> {
   void _pick(BleWifiNetwork net) {
     setState(() {
       _selected = net.ssid;
-      _selectedOpen = net.open;
+      _security = net.security;
       _manual = false;
       _ssid.text = net.ssid;
       _pass.text = '';
@@ -95,14 +95,13 @@ class _WifiSetupFormState extends State<WifiSetupForm> {
   void _pickManual() {
     setState(() {
       _selected = null;
+      _security = WifiSecurity.secured;
       _manual = true;
       _ssid.text = '';
       _pass.text = '';
     });
     _emitDraft();
   }
-
-  bool get _showPassword => _manual || !_selectedOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -153,11 +152,15 @@ class _WifiSetupFormState extends State<WifiSetupForm> {
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(
-                      net.open ? Icons.wifi : Icons.wifi_lock,
+                      net.security == WifiSecurity.open
+                          ? Icons.wifi
+                          : Icons.wifi_lock,
                       size: 18,
                     ),
                     title: Text(net.ssid),
-                    subtitle: Text('${net.rssi} dBm'),
+                    subtitle: Text(net.security == WifiSecurity.unsupported
+                        ? '${net.rssi} dBm - unsupported security'
+                        : '${net.rssi} dBm'),
                     selected: _selected == net.ssid,
                     onTap: () => _pick(net),
                   ),
@@ -182,15 +185,27 @@ class _WifiSetupFormState extends State<WifiSetupForm> {
             counterText: '',
           ),
         ),
-        if (_showPassword)
-          TextField(
-            controller: _pass,
-            maxLength: 63,
-            obscureText: true,
-            onChanged: (_) => _emitDraft(),
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              counterText: '',
+        TextField(
+          controller: _pass,
+          maxLength: 63,
+          obscureText: true,
+          onChanged: (_) => _emitDraft(),
+          decoration: InputDecoration(
+            labelText: 'Password',
+            counterText: '',
+            // A verified-open network joins with no password, but the verdict
+            // can be wrong, so the field is never hidden.
+            helperText:
+                _security == WifiSecurity.open ? 'Can be left blank' : null,
+          ),
+        ),
+        if (_security == WifiSecurity.unsupported)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'The mirror cannot sign in to enterprise or WPA3-only '
+              'networks; you can still try a password.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),
       ],

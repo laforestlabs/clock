@@ -244,6 +244,8 @@ void app_main(void)
     static ml_layout boot;
     layout_store_snapshot(&boot);
     panel_set_brightness(mirror_config_effective_brightness(boot.brightness));
+    /* Physical mount compensation, also re-applied on every config push. */
+    panel_set_flip180(mirror_config_flip180());
     /* Render before the network comes up, so the panel shows placeholders
      * within a second of power-on instead of staying dark while WiFi
      * associates. */

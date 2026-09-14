@@ -271,12 +271,13 @@ static void cmd_get_config(void)
 
     send_status("config {\"name\":\"%s\",\"timezone\":\"%s\",\"latitude\":\"%s\","
                 "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
-                "\"clock12h\":%s,\"temp_unit\":\"%c\"}",
+                "\"clock12h\":%s,\"temp_unit\":\"%c\",\"flip180\":%s}",
                 esc_name, esc_tz, mirror_config_latitude(),
                 mirror_config_longitude(), esc_place,
                 mirror_config_brightness(),
                 mirror_config_clock_12h() ? "true" : "false",
-                mirror_config_temp_unit());
+                mirror_config_temp_unit(),
+                mirror_config_flip180() ? "true" : "false");
 }
 
 static void cmd_begin(const char *arg)
@@ -627,8 +628,11 @@ static void ble_wifi_scan_done_cb(void)
     for (int i = 0; i < n; i++) {
         char esc[96];
         json_escape(esc, sizeof(esc), results[i].ssid);
-        send_status("wifi-net {\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
-                    esc, results[i].rssi, results[i].open ? "true" : "false");
+        send_status("wifi-net {\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s,"
+                    "\"auth\":\"%s\"}",
+                    esc, results[i].rssi,
+                    results[i].security == PROVISION_SEC_OPEN ? "true" : "false",
+                    provision_security_name(results[i].security));
     }
     send_status("wifi-scan done %d", n);
     heap_caps_free(results);

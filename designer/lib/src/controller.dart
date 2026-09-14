@@ -65,9 +65,10 @@ class DesignerController extends ChangeNotifier {
   bool _tempF = true;
   bool get tempF => _tempF;
 
-  /// Whether the preview is drawn upside down (rotated 180 degrees). A
-  /// view-layer transform: the engine and the layout coordinates stay
-  /// upright, so editing keeps working; only the drawing is mirrored.
+  /// Whether the panel is drawn upside down (rotated 180 degrees). The engine
+  /// and the layout coordinates stay upright, so editing keeps working; only
+  /// the drawing is mirrored. The device rotates its own output to match
+  /// through its flip180 config field, so the preview and the panel agree.
   bool _flip180 = false;
   bool get flip180 => _flip180;
   set flip180(bool value) {

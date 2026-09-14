@@ -24,11 +24,25 @@ esp_err_t provision_init(void);
 /* Boot entry. Either joins the saved network (opening the setup portal if it
  * cannot) or opens the portal directly when nothing is saved. */
 esp_err_t provision_start(void);
+/* How a scanned network authenticates. Drives both what the front-ends show
+ * and whether the owner is expected to type a password. */
+typedef enum {
+    /* No encryption at all: joining needs no password. */
+    PROVISION_SEC_OPEN = 0,
+    /* A mode this firmware can join with a passphrase: WEP, WPA-PSK,
+     * WPA2-PSK and their mixed modes. */
+    PROVISION_SEC_SECURED,
+    /* Encrypted, but not a mode this firmware can join: enterprise/802.1X,
+     * WPA3-only SAE (this build has CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n), OWE,
+     * WAPI, DPP, or an authmode this build does not recognise. */
+    PROVISION_SEC_UNSUPPORTED
+} provision_security_t;
+
 /* One network found by the last scan, strongest first. */
 typedef struct {
-    char   ssid[33];
-    int8_t rssi;
-    bool   open;
+    char                 ssid[33];
+    int8_t               rssi;
+    provision_security_t security;
 } provision_scan_result_t;
 
 /* Called on the event-loop task when a scan completes. */
@@ -65,6 +79,10 @@ esp_err_t provision_scan_start(void);
 /* Copy up to max of the last scan's results (strongest first) into out and
  * return the count copied. */
 int provision_scan_results(provision_scan_result_t *out, int max);
+
+/* Wire name for a security verdict: "open", "secured" or "unsupported". Used
+ * verbatim by the portal JSON and the BLE status line so the two agree. */
+const char *provision_security_name(provision_security_t sec);
 
 /* Install (or clear, with NULL) the scan-done and wifi-result callbacks. */
 void provision_set_scan_done_cb(provision_scan_done_cb_t cb);

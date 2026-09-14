@@ -77,12 +77,21 @@ What happens when the saved network stops working:
 The page also offers "Forget saved network", for handing the device over or
 moving house.
 
-Two things worth knowing before shipping this:
+Points worth knowing before shipping this:
 
 - The station connects with **WPA2-PSK only**. WPA3 SAE is disabled in
   `sdkconfig.defaults`: the driver's SAE negotiation is flaky against
   WPA2/WPA3 transition-mode routers, so transition networks connect over
   their WPA2 half and WPA3-only networks are unsupported.
+- The scan tells the owner three things about each network: open, needs a
+  password, or **unsupported** (enterprise/802.1X, WPA3-only). The open verdict
+  is only believed when the driver reports no cipher at all: ESP-IDF reports
+  enterprise APs that mandate PMF as `WIFI_AUTH_OPEN` while still naming CCMP
+  ciphers ([IDFGH-9885](https://github.com/espressif/esp-idf/issues/11202)),
+  which is what made a password-protected network show no password box. A
+  verdict is also a *hint*, never a lock: the portal and the app always accept a
+  password, because the only thing that really knows a network's password policy
+  is the connect attempt.
 - The setup access point is **open by default** (`MIRROR_AP_PASSWORD` empty)
   and the portal is plain HTTP. For a deployed product, set a WPA2 password
   in menuconfig and print it on the device: on an open setup network, anyone
@@ -129,6 +138,11 @@ Before that the panel deliberately shows placeholders rather than 1970 or a
 confident zero. That is the same "cold" state the designer previews, so it is
 worth checking it looks acceptable.
 
+SNTP is not the only way in. A network that blocks UDP 123 but allows HTTP still
+gets a clock: the first weather fetch reads the `Date` header off the response
+and sets it, and the same log line appears. See "Data providers" for why that
+one request is cleartext.
+
 ## Pins
 
 Defaults are in menuconfig and match `docs/hardware.md`.
@@ -170,6 +184,14 @@ work, but it throws away colour depth, and at the settings a mirror behind
 two-way glass actually runs at there is very little to lose. The phone can
 set a manual override over Bluetooth; it lives in NVS, so it survives reboots
 and layout pushes until it is cleared ("set brightness auto").
+
+**Orientation is a panel transform, not a layout edit.** An upside-down mount is
+compensated in `panel_blit_rgb888`, which rotates the frame 180 degrees in place
+as the last step before the shift registers, alongside the crossed green/blue
+correction. Doing it in the render core would change the bytes the host golden
+tests hash, and editing the layout's coordinates would throw away the layout the
+owner authored. It is a config field (`flip180`), pushed by the phone and read
+back by it, and it applies to every frame — layouts and games alike.
 
 **The panel is initialised before WiFi.** It needs the largest contiguous block
 of DMA-capable internal SRAM in the system, and asking for it before the WiFi
@@ -235,15 +257,22 @@ Notes:
 
 ## Data providers
 
-Weather comes from **Open-Meteo**, fetched directly by the device over plain
-HTTP. No API key and no signup, which matters more than convenience: the mirror
-has no weather credential to expire, leak, or re-provision.
+Weather comes from **Open-Meteo**, fetched directly by the device over HTTPS.
+No API key and no signup, which matters more than convenience: the mirror has no
+weather credential to expire, leak, or re-provision.
 
-HTTP is a deliberate choice. With no TLS certificate to validate there is no
-dependency on the clock, so weather can arrive in parallel with SNTP instead of
-waiting for it, and the TLS handshake is skipped. The cost is that the request
-(including the configured coordinates) is sent in cleartext and could be
-tampered with on the network path.
+The first fetch after a boot whose clock has not synced yet is the one
+exception, and it is forced rather than chosen: there is no RTC, so the clock
+starts at 1970, and certificate validation needs a plausible date, which means
+an HTTPS request issued that early cannot complete. Waiting for SNTP instead
+would mean waiting on UDP 123, the port guest networks most often block. So
+while the clock is unknown the fetch goes out in plaintext, and `http_get` takes
+the time from the response's `Date` header — the one clock source that cannot
+itself require TLS. Every fetch after that is HTTPS with the certificate bundle
+attached. The costs are honest ones: one cleartext request (coordinates
+included) per boot until a clock exists, and a network that blocks UDP 123 and
+plain HTTP both leaves the clock unset, and the clock widgets showing `--:--`,
+until one of them answers.
 
 Set your coordinates in `Smart Mirror > Weather`. The default is central
 London, so it will show you plausible-looking weather for the wrong place if

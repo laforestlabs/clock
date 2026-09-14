@@ -4,8 +4,13 @@
 //
 //   get wifi      -> wifi {"saved":bool,"ssid":"...","ip":"...","connected":bool}
 //   wifi scan     -> wifi-scan start, then one
-//                    wifi-net {"ssid":"...","rssi":N,"open":bool} per network,
-//                    then wifi-scan done <n> | wifi-scan error <why>
+//                    wifi-net {"ssid":"...","rssi":N,"open":bool,
+//                              "auth":"open"|"secured"|"unsupported"} per
+//                    network, then wifi-scan done <n> | wifi-scan error <why>
+//                    Older firmware sends only "open", derived from the
+//                    authmode alone, so it flags enterprise APs and PMF-
+//                    mandating WPA2/WPA3-Enterprise as open; "auth" carries
+//                    the cipher-aware verdict and always wins when present.
 //   (async)       -> wifi connect ok <ip> | wifi connect error <why>
 //   wifi forget   -> wifi forget ok
 
@@ -54,17 +59,36 @@ BleWifiStatus? parseWifiStatus(String line) {
   return BleWifiStatus(saved: saved, ssid: ssid, ip: ip, connected: connected);
 }
 
+/// How a scanned network authenticated, as far as the mirror can tell.
+///
+/// A verdict is a hint for the UI, never a lock: the password field stays
+/// reachable for everything but [open].
+enum WifiSecurity {
+  /// No authentication; the mirror joins with no password.
+  open,
+
+  /// Authenticated. A password is likely needed, but the verdict can be
+  /// wrong, so the field is always editable.
+  secured,
+
+  /// Encrypted in a mode this firmware cannot join: enterprise/802.1X,
+  /// WPA3-only SAE built without SAE support, or the IDF misreport that
+  /// names a PMF-mandating enterprise AP as open. A password can still be
+  /// tried.
+  unsupported,
+}
+
 /// One network from the mirror's scan.
 class BleWifiNetwork {
   const BleWifiNetwork({
     required this.ssid,
     required this.rssi,
-    required this.open,
+    required this.security,
   });
 
   final String ssid;
   final int rssi;
-  final bool open;
+  final WifiSecurity security;
 }
 
 /// Parses a "wifi-net {...}" status line, or null for anything else.
@@ -78,9 +102,27 @@ BleWifiNetwork? parseWifiNet(String line) {
   }
   final ssid = map['ssid'];
   final rssi = map['rssi'];
-  final open = map['open'];
-  if (ssid is! String || rssi is! int || open is! bool) return null;
-  return BleWifiNetwork(ssid: ssid, rssi: rssi, open: open);
+  if (ssid is! String || rssi is! int) return null;
+  final auth = map['auth'];
+  final WifiSecurity security;
+  if (auth is String) {
+    // An unknown verdict means "assume a password is needed": a spurious
+    // prompt costs a blank field, while calling an encrypted network open
+    // leaves the owner no way in at all.
+    if (auth == 'open') {
+      security = WifiSecurity.open;
+    } else if (auth == 'unsupported') {
+      security = WifiSecurity.unsupported;
+    } else {
+      security = WifiSecurity.secured;
+    }
+  } else {
+    // Older firmware sends only the bool, from the authmode alone.
+    final open = map['open'];
+    if (open is! bool) return null;
+    security = open ? WifiSecurity.open : WifiSecurity.secured;
+  }
+  return BleWifiNetwork(ssid: ssid, rssi: rssi, security: security);
 }
 
 /// The network count from a "wifi-scan done <n>" terminator, or null for any

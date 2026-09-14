@@ -53,6 +53,16 @@ void panel_clear(void);
 void    panel_set_brightness(uint8_t brightness);
 uint8_t panel_get_brightness(void);
 
+/*
+ * Physical-mount compensation: true when the panel is installed upside down,
+ * in which case every blit is rotated 180 degrees on the way to the shift
+ * registers. This corrects the hardware, so it covers the whole canvas at
+ * once, the layout frames and the BLE game frames alike; the layout itself is
+ * never mirrored. panel_blit_rgb888 already documents rgb as writable scratch,
+ * which is what the in-place rotation needs.
+ */
+void panel_set_flip180(bool on);
+
 #ifdef __cplusplus
 }
 #endif

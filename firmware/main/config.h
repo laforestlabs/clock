@@ -36,6 +36,10 @@ const char *mirror_config_place(void);
  * ("3:41"), false for 24-hour ("15:41"). */
 bool mirror_config_clock_12h(void);
 
+/* True when the panel is mounted upside down. The panel rotates every frame
+ * 180 degrees to compensate; the stored layout is unaffected. */
+bool mirror_config_flip180(void);
+
 /* 'F' or 'C': the unit temperatures are shown in. */
 char mirror_config_temp_unit(void);
 
@@ -83,15 +87,17 @@ esp_err_t mirror_config_factory_reset(void);
 
 /*
  * Apply a partial JSON object: {"name","timezone","latitude","longitude",
- * "place","brightness","clock12h","temp_unit"}. Every present field is
- * validated, and nothing is persisted or applied unless all of them pass;
+ * "place","brightness","clock12h","flip180","temp_unit"}. Every present field
+ * is validated, and nothing is persisted or applied unless all of them pass;
  * missing fields are left unchanged.
  * "name" is the new Bluetooth-advertised device name: printable, trimmed,
  * 1..24 characters. "timezone" must be a POSIX TZ string (the only form newlib's tzset
  * parses; IANA names are rejected rather than silently degrading the clock
  * to UTC). "brightness" is a manual override: an integer 0..255, applied to
- * the panel immediately. "clock12h" is a JSON boolean; "temp_unit" is "F" or
- * "C". On success the changed fields are written to NVS and applied:
+ * the panel immediately. "clock12h" is a JSON boolean; "flip180" is a JSON
+ * boolean that says the panel is mounted upside down, so every frame is
+ * rotated 180 degrees on the device, applied immediately; "temp_unit" is "F"
+ * or "C". On success the changed fields are written to NVS and applied:
  * timezone re-points TZ via setenv/tzset, coordinate or place changes kick a
  * provider refresh so the weather relocates promptly, and a name change
  * takes effect when the device advertises again.

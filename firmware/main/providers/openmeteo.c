@@ -10,6 +10,7 @@
 #include "mirror/json.h"
 #include "model_store.h"
 #include "net/http_get.h"
+#include "net/sntp_time.h"
 #include "sdkconfig.h"
 #include "netlog.h"
 #include "net/wifi.h"
@@ -90,19 +91,25 @@ static void hourly_precip(const ml_json *j, int hourly, ml_weather *w)
 static esp_err_t openmeteo_refresh(void)
 {
     char url[512];
-    /* Plain HTTP, deliberately: with no TLS certificate to validate there is
-     * no dependency on the clock, so weather arrives in parallel with SNTP
-     * rather than after it. The request and the coordinates are cleartext;
-     * that is the accepted trade. */
+    /* HTTPS by default, and http_get.c attaches the root bundle, so the response
+     * is verified. The exception is the first fetch after a reboot, when the
+     * clock is still unknown: with no RTC and SNTP over UDP 123 blocked - which
+     * is exactly what a restrictive guest network does while leaving 80/443 open
+     * - a handshake would fail its certificate date check. That single fetch
+     * goes out cleartext, and it is the fetch that sets the clock, from its own
+     * Date header. Every fetch after it is HTTPS and validated. The request and
+     * the coordinates leak to the network in that first exchange; that is the
+     * accepted trade for a clock the mirror could not otherwise get. */
+    const char *scheme = sntp_time_is_synced() ? "https" : "http";
     snprintf(url, sizeof(url),
-             "http://api.open-meteo.com/v1/forecast"
+             "%s://api.open-meteo.com/v1/forecast"
              "?latitude=%s&longitude=%s"
              "&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
              "weather_code,is_day,wind_speed_10m"
              "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
              "&hourly=precipitation_probability"
              "&forecast_days=1&forecast_hours=12&timezone=auto",
-             mirror_config_latitude(), mirror_config_longitude());
+             scheme, mirror_config_latitude(), mirror_config_longitude());
 
     size_t len = 0;
     esp_err_t err = http_get(url, NULL, s_body, RESPONSE_CAP, &len, 10000);

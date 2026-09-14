@@ -164,6 +164,14 @@ passes of the frame underneath the discs; the engine's pixels stay untouched.
 Brightness is the opposite case and *is* applied by the engine, because the
 device genuinely scales by it before applying gamma.
 
+**Panel orientation** is a device setting, not a preview trick. The Settings
+screen's *Upside down* toggle pushes `flip180` over Bluetooth and reads the
+mirror's value back when it connects, so what you design against is what an
+upside-down panel shows. The panel rotates the frame at its own last step
+before the shift registers; the view rotates the preview the same way,
+including the pointer mapping, so a click still lands on the widget under the
+cursor.
+
 One more detail that matters: the image is drawn with `FilterQuality.none`. Any
 smoothing turns a 5x7 glyph into grey mush.
 

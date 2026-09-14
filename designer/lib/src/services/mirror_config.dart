@@ -1,5 +1,5 @@
 // Owner-settable device configuration: timezone, coordinates, place label,
-// brightness, clock format and temperature unit.
+// brightness, clock format, temperature unit and panel orientation.
 //
 // These are the fields the firmware keeps in NVS and the phone pushes over
 // Bluetooth. The validation rules here mirror firmware/main/config.c exactly:
@@ -18,6 +18,7 @@ class MirrorConfig {
     this.brightness,
     this.clock12h,
     this.tempF,
+    this.flip180,
   });
 
   /// The name the mirror broadcasts over Bluetooth and shows in the app's
@@ -45,6 +46,12 @@ class MirrorConfig {
   /// unchanged.
   final bool? tempF;
 
+  /// Physical-mount compensation: true when the panel is mounted upside down,
+  /// so the device rotates its own output 180 degrees. A property of the
+  /// hardware, not of the layout, which is why it is a device field and not a
+  /// layout one. Null leaves the device unchanged.
+  final bool? flip180;
+
   /// Only the non-null fields, which is exactly what the firmware accepts.
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (name != null) 'name': name,
@@ -55,10 +62,11 @@ class MirrorConfig {
         if (brightness != null) 'brightness': brightness,
         if (clock12h != null) 'clock12h': clock12h,
         if (tempF != null) 'temp_unit': tempF! ? 'F' : 'C',
+        if (flip180 != null) 'flip180': flip180,
       };
 
   /// Parse a decoded JSON object. Returns null when the object carries none
-  /// of the eight known fields.
+  /// of the nine known fields.
   static MirrorConfig? fromJson(Map<String, dynamic> json) {
     String? str(String key) => json[key] is String ? json[key] as String : null;
 
@@ -75,6 +83,7 @@ class MirrorConfig {
     final clock12h = json['clock12h'] is bool ? json['clock12h'] as bool : null;
     final tempUnit = str('temp_unit');
     final tempF = tempUnit == 'F' ? true : (tempUnit == 'C' ? false : null);
+    final flip180 = json['flip180'] is bool ? json['flip180'] as bool : null;
     if (name == null &&
         timezone == null &&
         latitude == null &&
@@ -82,7 +91,8 @@ class MirrorConfig {
         place == null &&
         brightness == null &&
         clock12h == null &&
-        tempF == null) {
+        tempF == null &&
+        flip180 == null) {
       return null;
     }
     return MirrorConfig(
@@ -94,6 +104,7 @@ class MirrorConfig {
       brightness: brightness,
       clock12h: clock12h,
       tempF: tempF,
+      flip180: flip180,
     );
   }
 

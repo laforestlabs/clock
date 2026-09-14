@@ -12,6 +12,9 @@ static const char *TAG = "panel";
 static Hub75Driver *s_driver = nullptr;
 static int s_width = 0;
 static int s_height = 0;
+/* Physical mount, not a layout property: true when the panel is upside down
+ * and every blit must be rotated 180 degrees to compensate. */
+static bool s_flip180 = false;
 
 static Hub75ShiftDriver shift_driver_from_config()
 {
@@ -152,6 +155,44 @@ extern "C" void panel_blit_rgb888(uint8_t *rgb)
 {
     if (s_driver == nullptr || rgb == nullptr) return;
 
+    /*
+     * A panel mounted upside down shows the whole frame rotated 180 degrees,
+     * so rotate it here, the last step before the shift registers. It lives in
+     * the panel and not in the render core because the core's output has to
+     * stay byte-identical to the host golden images: an installation quirk is
+     * not part of the layout. Reverse the row order, then reverse the pixel
+     * order within each row; reversing rows alone would be a mirror, not a
+     * rotation. 64x32, so this is a few thousand byte moves through one 3-byte
+     * temporary and nothing is allocated.
+     */
+    if (s_flip180) {
+        const size_t row_bytes = (size_t)s_width * 3;
+        uint8_t *top = rgb;
+        uint8_t *bot = rgb + (size_t)(s_height - 1) * row_bytes;
+        while (top < bot) {
+            for (size_t i = 0; i < row_bytes; i++) {
+                const uint8_t tmp = top[i];
+                top[i] = bot[i];
+                bot[i] = tmp;
+            }
+            top += row_bytes;
+            bot -= row_bytes;
+        }
+        for (int y = 0; y < s_height; y++) {
+            uint8_t *l = rgb + (size_t)y * row_bytes;
+            uint8_t *r = l + row_bytes - 3;
+            while (l < r) {
+                for (int c = 0; c < 3; c++) {
+                    const uint8_t tmp = l[c];
+                    l[c] = r[c];
+                    r[c] = tmp;
+                }
+                l += 3;
+                r -= 3;
+            }
+        }
+    }
+
 #if CONFIG_MIRROR_SWAP_GB
     /* This panel's green and blue data lines are crossed at the connector:
      * blue comes out on the green line and vice versa. Compensate here, at
@@ -193,4 +234,11 @@ extern "C" void panel_set_brightness(uint8_t brightness)
 extern "C" uint8_t panel_get_brightness(void)
 {
     return s_driver != nullptr ? s_driver->get_brightness() : 0;
+}
+
+extern "C" void panel_set_flip180(bool on)
+{
+    /* The value lives here, not in the driver, so it is kept even while the
+     * panel is down (MIRROR_NO_PANEL): the next blit picks it up. */
+    s_flip180 = on;
 }

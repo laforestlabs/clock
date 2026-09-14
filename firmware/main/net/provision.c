@@ -81,9 +81,9 @@ static SemaphoreHandle_t s_lock;
 /* Networks seen by the last scan, strongest first. Guarded by s_lock. */
 #define MAX_SCAN_RESULTS 24
 typedef struct {
-    char   ssid[33];
-    int8_t rssi;
-    bool   open;
+    char                 ssid[33];
+    int8_t               rssi;
+    provision_security_t security;
 } scan_entry_t;
 static scan_entry_t s_scan_results[MAX_SCAN_RESULTS];
 static int  s_scan_count = 0;
@@ -406,6 +406,10 @@ static const char PORTAL_PAGE[] =
     "<button type=\"button\" id=\"showpw\">Show</button>"
     "</div>"
     "<div class=\"hint\" id=\"passhint\" hidden>Open network, no password needed.</div>"
+    "<div class=\"hint\" id=\"unsupportedhint\" hidden>This looks like an "
+    "enterprise (sign-in) or WPA3-only network, which the mirror cannot join. "
+    "You can still try a password, but a network that needs a web sign-in "
+    "will not work.</div>"
     "<button type=\"submit\" id=\"go\" disabled>Connect</button>"
     "<div>"
     "<button type=\"button\" class=\"secondary\" id=\"rescan\" hidden>Rescan</button>"
@@ -420,6 +424,7 @@ static const char PORTAL_PAGE[] =
     "var scanstate=document.getElementById('scanstate');"
     "var manual=document.getElementById('manual'),mssid=document.getElementById('manualssid');"
     "var pass=document.getElementById('pass'),passhint=document.getElementById('passhint');"
+    "var unsupportedhint=document.getElementById('unsupportedhint');"
     "var showpw=document.getElementById('showpw'),go=document.getElementById('go');"
     "var rescan=document.getElementById('rescan'),forget=document.getElementById('forget');"
     "var st=document.getElementById('status'),hssid=document.getElementById('ssid');"
@@ -429,7 +434,8 @@ static const char PORTAL_PAGE[] =
     "var ph=document.createElement('option');ph.value='';"
     "ph.textContent='Select a network';sel.appendChild(ph);"
     "list.forEach(function(n){var o=document.createElement('option');"
-    "o.value=n.ssid;o.textContent=n.ssid+(n.open?'  (open)':'');"
+    "o.value=n.ssid;o.textContent=n.ssid+(n.open?'  (open)':"
+    "(n.auth==='unsupported'?'  (unsupported security)':''));"
     "sel.appendChild(o);});"
     "var oth=document.createElement('option');oth.value=OTHER;"
     "oth.textContent='Other (type the name)';sel.appendChild(oth);"
@@ -440,11 +446,12 @@ static const char PORTAL_PAGE[] =
     "sel.value=OTHER;manual.hidden=false;mssid.value=saved;update();}"
     "function update(){var v=sel.value,n=null;"
     "for(var i=0;i<nets.length;i++){if(nets[i].ssid===v)n=nets[i];}"
-    "var open=n?n.open:false;"
-    "manual.hidden=(v!==OTHER);passhint.hidden=!open;pass.disabled=open;"
+    "var open=n?n.open:false,unsup=!!(n&&n.auth==='unsupported');"
+    "manual.hidden=(v!==OTHER);passhint.hidden=!open;unsupportedhint.hidden=!unsup;"
     "if(open)pass.value='';"
     "if(n){netinfo.hidden=false;"
-    "netinfo.textContent='Signal '+n.rssi+' dBm'+(n.open?', open network':'');}"
+    "netinfo.textContent='Signal '+n.rssi+' dBm'+(n.open?', open network':"
+    "(n.auth==='unsupported'?', unsupported security':''));}"
     "else{netinfo.hidden=true;}"
     "go.disabled=(v===''||(v===OTHER&&mssid.value==='')||"
     "(n&&!n.open&&pass.value===''));}"
@@ -476,8 +483,7 @@ static const char PORTAL_PAGE[] =
     "st.className='';st.textContent='';};x.send();}"
     "setInterval(poll,1500);poll();"
     "form.onsubmit=function(){"
-    "if(sel.value===OTHER){hssid.value=mssid.value;}else{hssid.value=sel.value;}"
-    "if(pass.disabled)pass.value='';};"
+    "if(sel.value===OTHER){hssid.value=mssid.value;}else{hssid.value=sel.value;}};"
     "showpw.onclick=function(){var t=pass.type;"
     "pass.type=(t==='password')?'text':'password';"
     "this.textContent=(t==='password')?'Hide':'Show';};"
@@ -738,9 +744,12 @@ static esp_err_t handle_get_scan(httpd_req_t *req)
         char esc[96];
         json_escape(esc, sizeof(esc), snapshot[i].ssid);
         off += (size_t)snprintf(body + off, cap - off,
-                                "%s{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+                                "%s{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s,"
+                                "\"auth\":\"%s\"}",
                                 i > 0 ? "," : "", esc, snapshot[i].rssi,
-                                snapshot[i].open ? "true" : "false");
+                                snapshot[i].security == PROVISION_SEC_OPEN
+                                    ? "true" : "false",
+                                provision_security_name(snapshot[i].security));
     }
     if (off + 2 < cap) {
         body[off++] = ']';
@@ -831,6 +840,37 @@ static esp_err_t scan_start(void)
     return ESP_OK;
 }
 
+/* Ciphers are the tiebreaker, not the authmode alone: IDF misreports APs that
+ * mandate PMF as WIFI_AUTH_OPEN while still advertising a real cipher, and
+ * enterprise networks (WPA3-ENT-192) are the usual case
+ * (espressif/esp-idf#11202). Trusting authmode alone offered such a network as
+ * password-free with no way to type a password, which is the bug the owner
+ * hit. So OPEN requires both ciphers to be NONE.
+ *
+ * WPA3-only SAE lands in UNSUPPORTED rather than SECURED: this build has
+ * CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n and cannot complete a SAE handshake.
+ * Mixed WPA2/WPA3 keeps the PSK path and stays SECURED. */
+static provision_security_t classify_ap(const wifi_ap_record_t *r)
+{
+    const bool no_cipher = r->pairwise_cipher == WIFI_CIPHER_TYPE_NONE &&
+                           r->group_cipher == WIFI_CIPHER_TYPE_NONE;
+    if (r->authmode == WIFI_AUTH_OPEN) {
+        return no_cipher ? PROVISION_SEC_OPEN : PROVISION_SEC_UNSUPPORTED;
+    }
+    switch (r->authmode) {
+    case WIFI_AUTH_WEP:
+    case WIFI_AUTH_WPA_PSK:
+    case WIFI_AUTH_WPA2_PSK:
+    case WIFI_AUTH_WPA_WPA2_PSK:
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return PROVISION_SEC_SECURED;
+    default:
+        /* Enterprise/802.1X, WPA3-only SAE, OWE, WAPI, DPP and any future
+         * authmode this build has no join path for. */
+        return PROVISION_SEC_UNSUPPORTED;
+    }
+}
+
 static void on_scan_done(void *arg, esp_event_base_t base,
                          int32_t id, void *data)
 {
@@ -854,12 +894,25 @@ static void on_scan_done(void *arg, esp_event_base_t base,
     for (uint16_t i = 0; i < got && s_scan_count < MAX_SCAN_RESULTS; i++) {
         if (recs[i].ssid[0] == '\0') continue;
 
-        /* One entry per SSID, keeping the strongest signal of its BSSIDs. */
+        const provision_security_t sec = classify_ap(&recs[i]);
+
+        /* One entry per SSID, keeping the strongest signal of its BSSIDs.
+         * Security is merged by severity, independent of RSSI: a non-OPEN
+         * verdict from any BSSID of the SSID replaces an OPEN one (one radio
+         * protecting the SSID must never let it be shown as password-free),
+         * and SECURED replaces UNSUPPORTED, because the owner can act on
+         * SECURED by typing a password while UNSUPPORTED only says not to
+         * bother. */
         bool dup = false;
         for (int j = 0; j < s_scan_count; j++) {
             if (memcmp(s_scan_results[j].ssid, recs[i].ssid, 32) == 0) {
                 if (recs[i].rssi > s_scan_results[j].rssi) {
                     s_scan_results[j].rssi = recs[i].rssi;
+                }
+                if (sec != PROVISION_SEC_OPEN &&
+                    (s_scan_results[j].security == PROVISION_SEC_OPEN ||
+                     sec == PROVISION_SEC_SECURED)) {
+                    s_scan_results[j].security = sec;
                 }
                 dup = true;
                 break;
@@ -870,8 +923,7 @@ static void on_scan_done(void *arg, esp_event_base_t base,
         memcpy(s_scan_results[s_scan_count].ssid, recs[i].ssid, 32);
         s_scan_results[s_scan_count].ssid[32] = '\0';
         s_scan_results[s_scan_count].rssi = recs[i].rssi;
-        s_scan_results[s_scan_count].open =
-            (recs[i].authmode == WIFI_AUTH_OPEN);
+        s_scan_results[s_scan_count].security = sec;
         s_scan_count++;
     }
 
@@ -889,16 +941,20 @@ static void on_scan_done(void *arg, esp_event_base_t base,
     s_scanning = false;
     unlock_state();
 
-    /* Raw records, before dedup: the exact SSID bytes and the advertised
-     * authmode are what decide whether a connect attempt is even allowed. */
+    /* Raw records, before dedup: the exact SSID bytes, the advertised
+     * authmode and the ciphers are what decide whether a connect attempt is
+     * even allowed. The ciphers are logged too because IDF has misreported
+     * PMF-mandating enterprise APs as WIFI_AUTH_OPEN; having them here makes
+     * the next such report diagnosable from the console. */
     ESP_LOGI(TAG, "scan found %d networks", s_scan_count);
     for (uint16_t i = 0; i < got; i++) {
         char hex[65];
         for (int b = 0; b < 32; b++) {
             snprintf(hex + b * 2, 3, "%02x", recs[i].ssid[b]);
         }
-        ESP_LOGI(TAG, "  \"%.32s\" rssi %d auth %d hex %s",
-                 recs[i].ssid, recs[i].rssi, recs[i].authmode, hex);
+        ESP_LOGI(TAG, "  \"%.32s\" rssi %d auth %d pair %d group %d hex %s",
+                 recs[i].ssid, recs[i].rssi, recs[i].authmode,
+                 recs[i].pairwise_cipher, recs[i].group_cipher, hex);
     }
 
     if (recs != NULL) free(recs);
@@ -1350,6 +1406,16 @@ esp_err_t provision_scan_start(void)
     return scan_start();
 }
 
+const char *provision_security_name(provision_security_t sec)
+{
+    switch (sec) {
+    case PROVISION_SEC_OPEN:        return "open";
+    case PROVISION_SEC_SECURED:     return "secured";
+    case PROVISION_SEC_UNSUPPORTED: return "unsupported";
+    }
+    return "unsupported";
+}
+
 int provision_scan_results(provision_scan_result_t *out, int max)
 {
     lock_state();
@@ -1357,7 +1423,7 @@ int provision_scan_results(provision_scan_result_t *out, int max)
     for (int i = 0; i < n; i++) {
         memcpy(out[i].ssid, s_scan_results[i].ssid, sizeof(out[i].ssid));
         out[i].rssi = s_scan_results[i].rssi;
-        out[i].open = s_scan_results[i].open;
+        out[i].security = s_scan_results[i].security;
     }
     unlock_state();
     return n;

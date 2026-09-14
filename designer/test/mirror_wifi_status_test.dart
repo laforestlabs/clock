@@ -42,19 +42,50 @@ void main() {
   });
 
   group('parseWifiNet', () {
-    test('parses a secured network', () {
+    test('parses a legacy secured line without auth', () {
       final n =
           parseWifiNet('wifi-net {"ssid":"Home","rssi":-45,"open":false}');
       expect(n, isNotNull);
       expect(n!.ssid, 'Home');
       expect(n.rssi, -45);
-      expect(n.open, isFalse);
+      expect(n.security, WifiSecurity.secured);
     });
 
-    test('parses an open network', () {
+    test('parses a legacy open line without auth', () {
       final n = parseWifiNet('wifi-net {"ssid":"Cafe","rssi":-70,"open":true}');
       expect(n, isNotNull);
-      expect(n!.open, isTrue);
+      expect(n!.security, WifiSecurity.open);
+    });
+
+    test('parses each auth verdict', () {
+      WifiSecurity security(String auth) => parseWifiNet(
+              'wifi-net {"ssid":"A","rssi":-40,"open":false,"auth":"$auth"}')!
+          .security;
+      expect(security('open'), WifiSecurity.open);
+      expect(security('secured'), WifiSecurity.secured);
+      expect(security('unsupported'), WifiSecurity.unsupported);
+    });
+
+    test('auth wins over the legacy open bool', () {
+      // The IDF reports a PMF-mandating enterprise AP as open; the cipher
+      // aware verdict in auth is the one to trust.
+      final n = parseWifiNet('wifi-net {"ssid":"Corp","rssi":-60,'
+          '"open":true,"auth":"unsupported"}');
+      expect(n, isNotNull);
+      expect(n!.security, WifiSecurity.unsupported);
+    });
+
+    test('treats an unknown auth verdict as secured', () {
+      final n = parseWifiNet(
+          'wifi-net {"ssid":"A","rssi":-40,"open":true,"auth":"wpa4"}');
+      expect(n, isNotNull);
+      expect(n!.security, WifiSecurity.secured);
+    });
+
+    test('rejects lines with no usable verdict', () {
+      expect(parseWifiNet('wifi-net {"ssid":"Home","rssi":-45}'), isNull);
+      expect(parseWifiNet('wifi-net {"ssid":"Home","rssi":-45,"open":1}'),
+          isNull);
     });
 
     test('rejects unrelated lines', () {

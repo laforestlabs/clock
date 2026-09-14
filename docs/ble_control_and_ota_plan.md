@@ -38,8 +38,8 @@ Firmware (ESP-IDF 5.5.2, target esp32s3, board Freenove FNK0085 / N16R8):
   image that crashes early reverts automatically.
 - `firmware/partitions.csv`: `ota_0`/`ota_1`, 4 MB each. Already in place.
 - `firmware/main/config.c` / `config.h`: owner config in NVS (timezone,
-  latitude, longitude, place, brightness, clock12h, temp_unit), seeded from
-  Kconfig, partial-JSON apply with all-or-nothing validation via
+  latitude, longitude, place, brightness, clock12h, temp_unit, flip180), seeded
+  from Kconfig, partial-JSON apply with all-or-nothing validation via
   `mirror_config_apply_json()`. This is the pattern to follow for any new
   persisted setting.
 - `firmware/main/panel.cpp`: `panel_set_brightness(uint8_t)` and
