@@ -25,12 +25,13 @@ static void usage(const char *argv0)
         "  -o <path>     Output PNG (default: out/<layout>-<variant>.png)\n"
         "  -s <n>        Pixel scale, default 6\n"
         "  -m <variant>  Mock data: typical, cold, overflow, evening (default typical)\n"
-        "  -b <n>        Override brightness 0-255\n"
+        "  -b <n>        Override brightness 0-255 for the PNG/ASCII preview\n"
         "  --all         Render every mock variant\n"
         "  --led         Draw inter-pixel gaps so it reads as discrete LEDs\n"
         "  --mirror <n>  Simulate two-way mirror transmission, percent (e.g. 20)\n"
         "  --ascii       Also print the result to the terminal\n"
-        "  --dump <path> Write raw gamma-corrected RGB888 bytes for device diffing\n"
+        "  --dump <path> Write raw gamma-corrected RGB888 bytes at full scale,\n"
+        "                the bytes the panel receives, for device diffing\n"
         "  -h, --help    This message\n",
         argv0);
 }
@@ -119,20 +120,29 @@ static int render_one(const ml_layout *layout, int variant, const char *out_path
         return 1;
     }
 
-    ml_canvas_export_rgb888(&canvas, brightness, rgb);
-
-    /* The dump is written before any mirror simulation, because it has to be
-     * exactly what the panel receives for the device diff to mean anything. */
+    /*
+     * The dump is written before any mirror simulation, and at full scale,
+     * because it has to be exactly what the panel receives for the device diff
+     * to mean anything: the firmware exports at 255 and dims in the driver by
+     * shortening LED on-time, so a dump with the layout's brightness baked in
+     * would differ from the device by a uniform factor and read as a mismatch
+     * that is not there.
+     */
     if (dump_path) {
+        ml_canvas_export_rgb888(&canvas, 255, rgb);
         FILE *fp = fopen(dump_path, "wb");
         if (!fp) {
             fprintf(stderr, "error: cannot write %s\n", dump_path);
         } else {
             fwrite(rgb, 1, nbytes, fp);
             fclose(fp);
-            printf("  dump   %s (%zu bytes)\n", dump_path, nbytes);
+            printf("  dump   %s (%zu bytes, full scale)\n", dump_path, nbytes);
         }
     }
+
+    /* The PNG and the ASCII preview are pictures of the mirror, so they keep
+     * the brightness the panel is set to. */
+    ml_canvas_export_rgb888(&canvas, brightness, rgb);
 
     if (mirror_pct > 0 && mirror_pct < 100) {
         /* A two-way mirror passes only a fraction of the light through. This
@@ -183,7 +193,15 @@ int main(int argc, char **argv)
 
         if (!strcmp(a, "-o") && has_next)              out_path = argv[++i];
         else if (!strcmp(a, "-s") && has_next)         scale = atoi(argv[++i]);
-        else if (!strcmp(a, "-b") && has_next)         brightness = atoi(argv[++i]);
+        else if (!strcmp(a, "-b") && has_next) {
+            brightness = atoi(argv[++i]);
+            /* Validated rather than cast: -b 256 would wrap to 0, i.e. asking
+             * for maximum brightness would render black. */
+            if (brightness < 0 || brightness > 255) {
+                fprintf(stderr, "error: -b takes 0-255, not '%s'\n", argv[i]);
+                return 2;
+            }
+        }
         else if (!strcmp(a, "--dump") && has_next)     dump_path = argv[++i];
         else if (!strcmp(a, "--mirror") && has_next)   mirror_pct = atoi(argv[++i]);
         else if (!strcmp(a, "--led"))                  led = true;

@@ -391,16 +391,36 @@ static const ml_font *choose_font(const ml_widget *w, const char *fallback,
     return f;
 }
 
+/*
+ * The row cap and row spacing a list widget draws with, held inside what the
+ * row arithmetic can carry. The parser clamps both too; doing it here as well
+ * means a widget built by any other path — the FFI sim today, a future caller
+ * tomorrow — cannot overflow (rows - 1) * gap or fh + gap.
+ */
+static int list_rows(const ml_widget *w)
+{
+    if (w->max_items <= 0) return 4;          /* the default when unset */
+    return w->max_items > ML_MAX_ITEMS ? ML_MAX_ITEMS : w->max_items;
+}
+
+static int row_gap(const ml_widget *w)
+{
+    int gap = w->line_gap > 0 ? w->line_gap : 0;
+    if (gap > ML_MAX_LINE_GAP) gap = ML_MAX_LINE_GAP;
+    /* A gap taller than the box leaves no room for a row, which is the same
+     * outcome as clipping, so cap it at the box's own height. */
+    if (gap > w->rect.h) gap = w->rect.h;
+    return gap;
+}
+
 /* Lists fit one row, not the entire list rectangle. The row count is part of
  * the widget's layout contract; using the full height would make a three-row
  * agenda render each title three rows tall when a scalable master is used. */
 static const ml_font *choose_list_font(const ml_widget *w, int *scale_out)
 {
     ml_widget row = *w;
-    const int rows = w->max_items > 0 ? w->max_items : 4;
-    const int gaps = rows > 1 && w->line_gap > 0
-                         ? (rows - 1) * w->line_gap
-                         : 0;
+    const int rows = list_rows(w);
+    const int gaps = row_gap(w) * (rows - 1);
     row.rect.h = (w->rect.h - gaps) / rows;
     if (row.rect.h < 1) row.rect.h = 1;
     return choose_font(&row, "display24", NULL, scale_out);
@@ -918,7 +938,7 @@ static void draw_weather_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     int sc = ML_SCALE_1X;
     const ml_font *f = choose_font(w, "display24", buf, &sc);
     const int fh     = ml_text_height(f, sc);
-    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
+    const int line_h = fh + row_gap(w);
 
     int  y = w->rect.y;
 
@@ -1023,7 +1043,7 @@ static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     int sc = ML_SCALE_1X;
     const ml_font *f = choose_list_font(w, &sc);
     const int fh     = ml_text_height(f, sc);
-    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
+    const int line_h = fh + row_gap(w);
 
     if (m->event_count == 0) {
         ml_text_draw_clipped(c, f, w->rect.x, w->rect.y, w->rect.w,
@@ -1072,7 +1092,7 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     int sc = ML_SCALE_1X;
     const ml_font *f = choose_list_font(w, &sc);
     const int fh     = ml_text_height(f, sc);
-    int line_h = fh + (w->line_gap > 0 ? w->line_gap : 0);
+    const int line_h = fh + row_gap(w);
 
     int shown = 0;
     int y     = w->rect.y;
@@ -1117,8 +1137,23 @@ static void draw_todo_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 
     if (shown == 0) {
-        ml_text_draw_clipped(c, f, w->rect.x, w->rect.y, w->rect.w,
-                             "All done", dim(w->color), sc);
+        /*
+         * "All done" is a claim about the data, not about the drawing. shown
+         * counts rows that fit, so a box too small for even one row would
+         * otherwise announce that the owner's list is finished. The agenda
+         * asks the same question the same way ("No events" only when the
+         * count is zero); an empty box is the honest answer here.
+         */
+        int pending = 0;
+        for (int i = 0; i < m->todo_count && i < ML_MAX_TODOS; i++) {
+            if (!m->todos[i].valid) continue;
+            if (m->todos[i].done && w->hide_done) continue;
+            pending++;
+        }
+        if (pending == 0) {
+            ml_text_draw_clipped(c, f, w->rect.x, w->rect.y, w->rect.w,
+                                 "All done", dim(w->color), sc);
+        }
     }
 }
 

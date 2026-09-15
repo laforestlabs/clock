@@ -111,5 +111,5 @@ clean:
 # Every object must be listed. An object whose .d is missing here is rebuilt
 # only when its own .c changes, so a header change leaves it stale: it still
 # links, and then crashes at runtime the first time a struct layout moves.
--include $(CORE_OBJ:.o=.d) $(HOST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(CORE_OBJ:.o=.d) $(CORE_PIC:.o=.d) $(HOST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
 CFLAGS += -MMD -MP

@@ -133,6 +133,34 @@ static bool read_color(const ml_json *j, int obj, const char *key,
     return false;
 }
 
+/*
+ * Rect components live in int16_t, so narrowing an out-of-range value wraps it
+ * back inside the canvas, where it passes the zero-area and off-canvas checks
+ * and renders somewhere plausible but wrong. Clamped, not rejected: an
+ * out-of-range rect is a warning per the layout header, and clipping a
+ * deliberately silly value beats dropping the widget.
+ */
+static int rect_component(int v)
+{
+    if (v < -32768) return -32768;
+    if (v >  32767) return  32767;
+    return v;
+}
+
+/*
+ * Countdown deadlines are plain UTC epoch seconds, and 0 means unset. The
+ * double can be NaN — a JSON encoder is free to emit one for a float it could
+ * not represent — or far outside int64, and converting either is undefined
+ * behaviour. Anything past 2100 is also a deadline no widget can draw.
+ */
+#define ML_UNTIL_MAX 4102444800.0   /* 2100-01-01T00:00:00Z */
+static int64_t clamp_until(double d)
+{
+    if (!(d > 0.0)) return 0;             /* unset, and NaN-safe */
+    if (d >= ML_UNTIL_MAX) return (int64_t)ML_UNTIL_MAX;
+    return (int64_t)d;
+}
+
 /* Accept a rect as [x,y,w,h] or as {"x":..,"y":..,"w":..,"h":..}. */
 static bool read_rect(const ml_json *j, int obj, ml_rect *out)
 {
@@ -146,7 +174,8 @@ static bool read_rect(const ml_json *j, int obj, ml_rect *out)
             int e = ml_json_array_at(j, t, i);
             if (e < 0 || !ml_json_int(j, e, &v[i])) return false;
         }
-        *out = ML_RECT(v[0], v[1], v[2], v[3]);
+        *out = ML_RECT(rect_component(v[0]), rect_component(v[1]),
+                       rect_component(v[2]), rect_component(v[3]));
         return true;
     }
 
@@ -156,7 +185,8 @@ static bool read_rect(const ml_json *j, int obj, ml_rect *out)
         ml_json_get_int(j, t, "y", &y);
         if (!ml_json_get_int(j, t, "w", &w)) ml_json_get_int(j, t, "width",  &w);
         if (!ml_json_get_int(j, t, "h", &h)) ml_json_get_int(j, t, "height", &h);
-        *out = ML_RECT(x, y, w, h);
+        *out = ML_RECT(rect_component(x), rect_component(y),
+                       rect_component(w), rect_component(h));
         return true;
     }
 
@@ -255,7 +285,7 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
 
     double until_d = 0;
     if (ml_json_get_double(j, obj, "until", &until_d))
-        w->until_s = (int64_t)until_d;
+        w->until_s = clamp_until(until_d);
 
     char buf[16];
     if (ml_json_get_str(j, obj, "align", buf, sizeof(buf)))
@@ -266,8 +296,15 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
     if (!ml_json_get_int(j, obj, "max_items", &w->max_items))
         ml_json_get_int(j, obj, "maxItems", &w->max_items);
     if (w->max_items < 0) w->max_items = 0;
+    if (w->max_items > ML_MAX_ITEMS) w->max_items = ML_MAX_ITEMS;
 
-    ml_json_get_int(j, obj, "line_gap", &w->line_gap);
+    if (ml_json_get_int(j, obj, "line_gap", &w->line_gap)) {
+        /* Clamped both ways like scale below. The renderer computes
+         * (rows - 1) * line_gap and fh + line_gap, so an unbounded value is a
+         * signed overflow on every frame rather than a silly-looking list. */
+        if (w->line_gap < 0)               w->line_gap = 0;
+        if (w->line_gap > ML_MAX_LINE_GAP) w->line_gap = ML_MAX_LINE_GAP;
+    }
 
     /* Clamped rather than rejected. A layout arriving over the network with a
      * silly scale should draw something sensible, not refuse to load. */

@@ -1,5 +1,6 @@
 #include "mirror/json.h"
 
+#include <limits.h>
 #include <string.h>
 
 static ml_json_tok *tok_alloc(ml_json *j)
@@ -421,8 +422,16 @@ bool ml_json_int(const ml_json *j, int tok, int *out)
 {
     double d;
     if (!ml_json_double(j, tok, &d)) return false;
-    /* Round rather than truncate so 20.999 from a float source reads as 21. */
-    *out = (int)(d < 0 ? d - 0.5 : d + 0.5);
+
+    /* Round rather than truncate so 20.999 from a float source reads as 21,
+     * and clamp before converting: the double can be infinity or 1e308, and
+     * converting a value outside the int range is undefined behaviour
+     * reachable straight from a layout pushed over the network. Clamped
+     * rather than rejected, matching the parser's policy for silly numbers. */
+    const double r = d < 0 ? d - 0.5 : d + 0.5;
+    if (r <= (double)INT_MIN) { *out = INT_MIN; return true; }
+    if (r >= (double)INT_MAX) { *out = INT_MAX; return true; }
+    *out = (int)r;
     return true;
 }
 

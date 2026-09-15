@@ -172,7 +172,10 @@ int ml_sim_hit_test(const ml_sim *s, int x, int y)
      * is the one visible at that pixel. */
     for (int i = s->layout.count - 1; i >= 0; i--) {
         const ml_widget *wi = &s->layout.widgets[i];
-        if (!wi->visible) continue;
+        /* The two cases the renderer refuses to draw: a hidden widget, and one
+         * whose type the engine does not know. Both must not swallow a tap, or
+         * the designer selects something invisible instead of what is drawn. */
+        if (!wi->visible || wi->type == ML_W_UNKNOWN) continue;
         if (ml_rect_contains(wi->rect, x, y)) return i;
     }
     return -1;

@@ -37,6 +37,16 @@ extern "C" {
  */
 #define ML_MAX_SCALE      8
 
+/*
+ * Ceilings on the list widgets' row cap and row spacing. Both arrive from a
+ * pushed layout and both feed the renderer's row arithmetic — (rows - 1) * gap
+ * and fh + gap — so an unbounded value overflows rather than merely looking
+ * silly. They mirror the ranges the designer offers
+ * (designer/lib/src/model/field_schema.dart).
+ */
+#define ML_MAX_ITEMS     12
+#define ML_MAX_LINE_GAP  16
+
 typedef enum {
     ML_W_UNKNOWN = 0,
     ML_W_RECT,

@@ -113,6 +113,12 @@ void ml_model_mock(ml_model *m, int variant)
     case ML_MOCK_EVENING:
         m->now.hour   = 22;
         m->now.minute = 7;
+        m->now.epoch_s = 1785362820LL;   /* 2026-07-29 22:07:00 UTC, in step with
+                                          * the broken-down time above: the
+                                          * countdown widget measures against
+                                          * this, and letting it keep the base
+                                          * fixture's 09:41 puts the clock and
+                                          * the countdown twelve hours apart */
 
         m->weather.valid        = true;
         m->weather.temp_c       = 11.2f;

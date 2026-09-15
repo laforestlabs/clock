@@ -403,10 +403,14 @@ untouched by it.
 make -C core -f Makefile.host test
 ```
 
-Golden tests hash the exact gamma-corrected RGB888 bytes the panel would receive, across
-three layouts and four mock variants. Any change to glyphs, gamma, parsing or widget
-drawing is caught. On a mismatch the actual frame is written to `out/<key>-actual.png`
-so the difference can be looked at rather than argued about.
+Golden tests hash the exported gamma-corrected RGB888 frame at each layout's own
+brightness — what the designer's preview draws — across five layouts and four mock variants.
+Any change to glyphs, gamma, parsing or widget drawing is caught. On a mismatch the actual
+frame is written to `out/<key>-actual.png` so the difference can be looked at rather than
+argued about.
+
+The device is sent the same frame at full scale and dims in the driver, which is the form
+`mirror-cli --dump` writes for comparing a host render against the panel.
 
 After an intentional rendering change:
 

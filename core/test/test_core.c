@@ -3,14 +3,18 @@
  *
  * Run from the core directory: make -f Makefile.host test
  *
- * The golden tests hash the exact bytes the panel would receive, so any change
- * in glyphs, gamma, layout parsing, or widget drawing shows up immediately. On
- * a mismatch the actual frame is written to out/ as a PNG so the difference can
- * be inspected rather than guessed at.
+ * The golden tests hash the exported RGB888 frame at each layout's own
+ * brightness — the bytes the designer's preview draws, so any change in glyphs,
+ * gamma, layout parsing, or widget drawing shows up immediately. (The device is
+ * sent the same frame at full scale and dims in the driver; `mirror-cli --dump`
+ * writes that form, which is what the device diff compares.) On a mismatch the
+ * actual frame is written to out/ as a PNG so the difference can be inspected
+ * rather than guessed at.
  *
  * To accept intentional rendering changes:
  *     MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test
  */
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1943,6 +1947,146 @@ static void test_precip(void)
     ml_canvas_free(&c);
 }
 
+/* Non-black channel count of an exported frame: enough to tell "something was
+ * drawn" from "the box stayed empty" without reaching into the canvas. */
+static int ink_channels(const ml_canvas *c, int w, int h)
+{
+    const size_t n = (size_t)w * (size_t)h * 3;
+    uint8_t *rgb = (uint8_t *)malloc(n);
+    if (!rgb) return -1;
+
+    ml_canvas_export_rgb888(c, 255, rgb);
+    int ink = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (rgb[i] != 0) ink++;
+    }
+    free(rgb);
+    return ink;
+}
+
+/*
+ * Numbers and rectangles that arrive in a pushed layout, at their worst. Every
+ * field here is caller-controlled — the designer posts layouts over the LAN and
+ * they persist in flash — so the parser is the boundary that has to keep the
+ * engine's arithmetic inside its types.
+ */
+static void test_hostile_layout(void)
+{
+    group("hostile layout");
+
+    ml_layout l;
+    ml_diag   diag;
+
+    /* Rect components are int16_t. A value that wrapped would land back inside
+     * the canvas, render something plausible but wrong, and pass the zero-area
+     * and off-canvas checks in silence. */
+    static const char silly_rect[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"text\",\"rect\":[131072,0,65537,10],\"text\":\"hi\"}]}";
+    CHECK(ml_layout_parse(silly_rect, strlen(silly_rect), &l, &diag),
+          "a rect far outside int16 still parses");
+    CHECK(l.widgets[0].visible, "and is drawn rather than dropped");
+    CHECK(l.widgets[0].rect.x == 32767 && l.widgets[0].rect.w == 32767,
+          "rect components clamp instead of wrapping");
+    CHECK(diag.count > 0, "the clamped rect is reported");
+
+    /* Row cap and row spacing feed (rows - 1) * gap and fh + gap. */
+    static const char silly_list[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"agenda\",\"rect\":[0,0,64,24],\"line_gap\":2147483647,"
+        "\"max_items\":2000000000}]}";
+    CHECK(ml_layout_parse(silly_list, strlen(silly_list), &l, &diag),
+          "a list with an unbounded gap parses");
+    CHECK(l.widgets[0].line_gap == ML_MAX_LINE_GAP, "line_gap clamps to the ceiling");
+    CHECK(l.widgets[0].max_items == ML_MAX_ITEMS, "max_items clamps to the ceiling");
+
+    /* The countdown deadline is epoch seconds; converting a double outside
+     * int64 is undefined, and a deadline past 2100 is not drawable anyway. */
+    static const char huge_until[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"countdown\",\"rect\":[0,0,64,16],\"until\":1e400}]}";
+    CHECK(ml_layout_parse(huge_until, strlen(huge_until), &l, &diag), "a huge until parses");
+    CHECK(l.widgets[0].until_s == 4102444800LL, "until clamps to the 2100 ceiling");
+
+    static const char negative_until[] =
+        "{\"canvas\":{\"width\":64,\"height\":32},\"widgets\":["
+        "{\"type\":\"countdown\",\"rect\":[0,0,64,16],\"until\":-5e9}]}";
+    CHECK(ml_layout_parse(negative_until, strlen(negative_until), &l, &diag),
+          "a negative until parses");
+    CHECK(l.widgets[0].until_s == 0, "a negative until means unset");
+
+    /* The integer reader, on the values that used to be an undefined conversion
+     * (ml_json_double saturates only the exponent, so 1e400 arrives as 1e308). */
+    static const char nums[] = "[2147483648,-2147483649,1e400,-1e400,12.6]";
+    ml_json_tok toks[64];
+    ml_json j;
+    CHECK(ml_json_parse(&j, nums, strlen(nums), toks, 64) > 0, "the numbers parse");
+    int v = 0;
+    CHECK(ml_json_int(&j, ml_json_array_at(&j, 0, 0), &v) && v == INT_MAX,
+          "an over-range int clamps up");
+    CHECK(ml_json_int(&j, ml_json_array_at(&j, 0, 1), &v) && v == INT_MIN,
+          "an under-range int clamps down");
+    CHECK(ml_json_int(&j, ml_json_array_at(&j, 0, 2), &v) && v == INT_MAX, "1e400 clamps");
+    CHECK(ml_json_int(&j, ml_json_array_at(&j, 0, 3), &v) && v == INT_MIN, "-1e400 clamps");
+    CHECK(ml_json_int(&j, ml_json_array_at(&j, 0, 4), &v) && v == 13, "and rounding still rounds");
+
+    /*
+     * The renderer's own guard, for a widget that never went through the
+     * parser: the row pitch is computed per frame, and a signed overflow here
+     * is undefined behaviour on a schedule. A -ftrapv build aborts on it.
+     */
+    ml_layout hand;
+    ml_layout_init(&hand, 64, 32);
+    hand.count = 1;
+    ml_widget *ag = &hand.widgets[0];
+    ag->type      = ML_W_AGENDA;
+    ag->visible   = true;
+    ag->rect      = ML_RECT(0, 0, 64, 24);
+    ag->line_gap  = 2147483647;
+    ag->max_items = 2000000000;
+    ag->color     = ML_RGB(255, 255, 255);
+
+    ml_model m;
+    ml_model_mock(&m, ML_MOCK_OVERFLOW);
+    ml_canvas c;
+    CHECK(ml_canvas_init(&c, 64, 32, NULL), "hand-built canvas");
+    ml_render(&hand, &m, &c);
+    CHECK(ink_channels(&c, 64, 32) > 0, "an unbounded row pitch still draws its first row");
+    ml_canvas_free(&c);
+
+    /*
+     * "All done" is a claim about the data, not about the drawing. A box with
+     * no room for a row must stay blank rather than announce that the owner's
+     * list is finished.
+     */
+    ml_layout todo;
+    ml_layout_init(&todo, 64, 32);
+    todo.count = 1;
+    ml_widget *tw = &todo.widgets[0];
+    tw->type    = ML_W_TODO;
+    tw->visible = true;
+    tw->rect    = ML_RECT(0, 0, 64, 2);
+    tw->color   = ML_RGB(255, 255, 255);
+
+    ml_model one;
+    ml_model_init(&one);
+    one.todos[0].valid = true;
+    snprintf(one.todos[0].text, sizeof(one.todos[0].text), "Groceries");
+    one.todo_count = 1;
+
+    ml_canvas tc;
+    CHECK(ml_canvas_init(&tc, 64, 32, NULL), "todo canvas");
+    ml_render(&todo, &one, &tc);
+    CHECK(ink_channels(&tc, 64, 32) == 0,
+          "a box too small for a row stays blank instead of claiming 'All done'");
+
+    one.todo_count = 0;
+    ml_canvas_clear(&tc, ml_black);
+    ml_render(&todo, &one, &tc);
+    CHECK(ink_channels(&tc, 64, 32) > 0, "a genuinely empty list still says 'All done'");
+    ml_canvas_free(&tc);
+}
+
 static void test_golden(void)
 {
     group("golden images");
@@ -1956,8 +2100,9 @@ static void test_golden(void)
     if (update) {
         out = fopen(GOLDEN_PATH, "w");
         if (out) {
-            fprintf(out, "# Golden render digests. FNV-1a 64 over the exact\n");
-            fprintf(out, "# gamma-corrected RGB888 bytes sent to the panel.\n");
+            fprintf(out, "# Golden render digests. FNV-1a 64 over the exported\n");
+            fprintf(out, "# gamma-corrected RGB888 frame at the layout's brightness,\n");
+            fprintf(out, "# which is what the designer's preview draws.\n");
             fprintf(out, "#\n");
             fprintf(out, "# Regenerate deliberately after an intended rendering change:\n");
             fprintf(out, "#   MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test\n");
@@ -2076,6 +2221,7 @@ int main(void)
     test_display_settings();
     test_countdown();
     test_precip();
+    test_hostile_layout();
     test_golden();
 
     printf("\n%d checks, %d failure(s)\n", g_checks, g_fails);
