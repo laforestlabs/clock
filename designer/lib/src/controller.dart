@@ -332,6 +332,13 @@ class DesignerController extends ChangeNotifier {
     await _applyEdit(() => mutate(widget));
   }
 
+  /// Edits the document itself rather than a widget: name, canvas size,
+  /// background, brightness. The inspector's property fields go through here
+  /// so a property change is undoable and marks the document dirty exactly like
+  /// a widget edit, instead of quietly changing what gets saved.
+  Future<void> updateDocument(void Function(LayoutDoc doc) mutate) =>
+      _applyEdit(() => mutate(_doc));
+
   /// Smallest widget the editor will produce. The engine hit tests against the
   /// rect, so a zero-width widget would be invisible *and* impossible to select
   /// again: it would be lost the moment it was resized away.

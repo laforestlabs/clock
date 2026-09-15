@@ -151,7 +151,15 @@ class MirrorLan {
     try {
       final req = await client.putUrl(_uri('/api/layout')).timeout(_timeout);
       req.headers.contentType = ContentType('application', 'json');
-      req.add(utf8.encode(json));
+      // The length has to be declared. Without it dart:io frames the body with
+      // Transfer-Encoding: chunked, and ESP-IDF's httpd does not de-chunk
+      // requests: it reports content_len 0 and the mirror answers 400 "empty
+      // body", which reads here as unreadable JSON. A Dart HttpServer
+      // de-chunks transparently, so a loopback test cannot catch this — see
+      // the raw-socket case in the tests.
+      final bytes = utf8.encode(json);
+      req.contentLength = bytes.length;
+      req.add(bytes);
       final resp = await req.close().timeout(_timeout);
       final body = await resp.transform(utf8.decoder).join().timeout(_timeout);
 

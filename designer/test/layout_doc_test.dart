@@ -55,5 +55,34 @@ void main() {
       );
       expect(LayoutDoc.decode(doc.encode()).widgets.single.raw['sparkle'], 7);
     });
+
+    // Duplicating copies the rect and offsets it so the copy is visible. A
+    // widget as large as the canvas is deliberately allowed (a drag leaves
+    // size alone), and there is then no room to offset into: clamping to that
+    // empty interval threw ArgumentError out of the Duplicate button.
+    test('duplicates a widget as large as the canvas', () {
+      final doc = LayoutDoc.decode(
+        '{$canvas,"widgets":[{"type":"rect","rect":[0,0,64,32]}]}',
+      );
+      final copy = doc.duplicateWidget(0);
+
+      expect(doc.widgetCount, 2);
+      expect(copy.rect.width, 64);
+      expect(copy.rect.height, 32);
+      expect(copy.rect.left, 0, reason: 'no room to offset, so it stays put');
+      expect(copy.rect.top, 0);
+    });
+
+    test('offsets a duplicate that has room to move', () {
+      final doc = LayoutDoc.decode(
+        '{$canvas,"widgets":[{"type":"rect","rect":[4,4,16,8]}]}',
+      );
+      final copy = doc.duplicateWidget(0);
+
+      expect(copy.rect.left, 6);
+      expect(copy.rect.top, 6);
+      expect(copy.rect.width, 16);
+      expect(copy.rect.height, 8);
+    });
   });
 }

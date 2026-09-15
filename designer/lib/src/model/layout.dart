@@ -11,6 +11,7 @@
 // has to produce valid JSON.
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 class LayoutDoc {
@@ -150,11 +151,17 @@ class LayoutDoc {
     final widget = LayoutWidget(copy);
 
     // Offset so the duplicate is visibly separate rather than hidden exactly
-    // behind the original.
+    // behind the original. The editor deliberately allows a widget as large as
+    // the canvas, and then there is no room to offset into: clamping to the
+    // interval between 0 and (canvas - widget) would be clamping to an empty
+    // range, which throws. The copy lands on top of the original instead, and
+    // the next drag separates them.
     final r = widget.rect;
+    final maxX = math.max(0.0, width - r.width);
+    final maxY = math.max(0.0, height - r.height);
     widget.rect = Rect.fromLTWH(
-      (r.left + 2).clamp(0.0, (width - r.width).toDouble()).toDouble(),
-      (r.top + 2).clamp(0.0, (height - r.height).toDouble()).toDouble(),
+      (r.left + 2).clamp(0.0, maxX),
+      (r.top + 2).clamp(0.0, maxY),
       r.width,
       r.height,
     );

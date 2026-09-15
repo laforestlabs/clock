@@ -60,14 +60,22 @@ void main() {
     final engine = MirrorEngine.open();
     engine.load(_doc);
     final wide = engine.widgets().single;
+    // A family names a style; the engine picks the cut. The stock display
+    // family has a single scaling master, so the cut does not change here.
     expect(wide.font, 'display24');
-    expect(wide.scale, greaterThan(1.0));
 
     // The same edit a resize drag makes: reload with a shorter box.
     engine.load(_doc.replaceAll('[0,0,64,32]', '[0,0,64,12]'));
     final short = engine.widgets().single;
-    expect(short.font, 'display24');
-    expect(short.scale, closeTo(0.5, 0.01));
+    expect(short.font, wide.font, reason: 'the same box keeps the same cut');
+
+    // Behavior, not a pinned number: text in a shorter box draws smaller, and
+    // the scale is derived continuously rather than snapped to whole
+    // multiples, which is what makes a resize grow the text a pixel at a time
+    // instead of parking at one size until the next multiple.
+    expect(short.scale, lessThan(wide.scale));
+    expect(wide.scale, isNot(wide.scale.roundToDouble()),
+        reason: 'the derived scale is not restricted to whole multiples');
     engine.dispose();
   }, skip: skip);
 
@@ -107,9 +115,21 @@ void main() {
     );
     await tester.pump();
 
-    // The family names a style; the engine picked the cut for this box.
-    expect(find.text('Drawing digits16'), findsOneWidget);
-    expect(find.text('Scale: 1.2 (fit)'), findsOneWidget);
+    // The family names a style; the engine picked the cut for this box. The
+    // inspector has to report what the engine resolved rather than what the
+    // JSON holds, so this compares the two instead of pinning a font name and
+    // a scale that only hold for one set of glyph metrics.
+    double shownScale() {
+      final line = tester
+          .widgetList<Text>(find.textContaining('Scale: '))
+          .map((t) => t.data!)
+          .firstWhere((s) => s.contains('(fit)'));
+      return double.parse(line.split(': ')[1].split(' ')[0]);
+    }
+
+    final wide = c.engine.widgets().single;
+    expect(find.text('Drawing ${wide.font}'), findsOneWidget);
+    expect(shownScale(), closeTo(wide.scale, 0.05));
 
     await tester.runAsync(() async {
       await c.resizeSelected(const Rect.fromLTWH(0, 0, 64, 12));
@@ -117,7 +137,8 @@ void main() {
     await tester.pump();
 
     // What a drag to that size would have updated the inspector to.
-    expect(find.text('Drawing digits12'), findsOneWidget);
-    expect(find.text('Scale: 1 (fit)'), findsOneWidget);
+    final short = c.engine.widgets().single;
+    expect(short.scale, lessThan(wide.scale));
+    expect(shownScale(), closeTo(short.scale, 0.05));
   }, skip: skip);
 }

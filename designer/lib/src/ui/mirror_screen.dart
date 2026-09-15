@@ -96,8 +96,12 @@ class _MirrorScreenState extends State<MirrorScreen> {
   String? _mdnsUnavailable;
   final TextEditingController _ipField = TextEditingController();
 
-  // Avoid overlapping async work on the same device.
+  // Avoid overlapping async work on the same device. Separate from the browse
+  // generation below: a status refresh is triggered by every device discovery
+  // finds, so sharing one counter made the first result cancel the search it
+  // came from.
   int _workToken = 0;
+  int _browseToken = 0;
 
   @override
   void initState() {
@@ -490,10 +494,13 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _browsing = true;
       _mdnsUnavailable = null;
     });
-    final token = ++_workToken;
+    // Its own generation counter. The per-device status refreshes started
+    // below bump _workToken, and while that was the same counter the first
+    // device found ended the search and left the button stuck on "browsing".
+    final token = ++_browseToken;
     try {
       await for (final device in browseMdns()) {
-        if (!mounted || token != _workToken) return;
+        if (!mounted || token != _browseToken) return;
         setState(() {
           if (!_lanDevices.any((d) => d.ip == device.ip)) {
             _lanDevices.add(device);
@@ -504,11 +511,11 @@ class _MirrorScreenState extends State<MirrorScreen> {
         });
       }
     } catch (_) {
-      if (mounted && token == _workToken) {
+      if (mounted && token == _browseToken) {
         setState(() => _mdnsUnavailable = 'mDNS discovery unavailable here');
       }
     } finally {
-      if (mounted && token == _workToken) {
+      if (mounted && token == _browseToken) {
         setState(() => _browsing = false);
       }
     }

@@ -144,9 +144,56 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   // ------------------------------------------------------------------ file
 
   Future<void> _open() async {
+    if (!await _confirmDiscard()) return;
     final picked = await _repo.openFile();
     if (picked == null) return;
     await _c.loadJson(picked.json, path: picked.path, label: picked.label);
+  }
+
+  Future<void> _newLayout() async {
+    if (!await _confirmDiscard()) return;
+    await _c.newLayout();
+  }
+
+  /// True when it is safe to replace the document: nothing unsaved, or the
+  /// owner chose to let it go. Every path that swaps the document runs this
+  /// first, because the alternative is losing an afternoon's layout to one
+  /// click on a stock preset, with the app aware the whole time that it had
+  /// unsaved changes.
+  Future<bool> _confirmDiscard() async {
+    if (!_c.dirty) return true;
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: Text(
+            '"${_c.doc.name}" has changes that have not been saved.'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'discard'),
+            child: const Text('Discard'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'save'),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return false;
+    if (choice == 'save') {
+      await _save();
+      // The save may itself have been cancelled at the file picker, so the
+      // document is only safe to replace if it came back clean.
+      return !_c.dirty;
+    }
+    return choice == 'discard';
   }
 
   Future<void> _save({bool forceAs = false}) async {
@@ -295,6 +342,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _openStock(StockLayout layout) async {
+    if (!await _confirmDiscard()) return;
     _activeStockPath = layout.assetPath;
     await _c.loadJson(await _repo.loadAsset(layout.assetPath));
     _toast('Opened ${layout.name}');
@@ -519,7 +567,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             // versions, and this costs nothing to be unambiguous about.
             switch (choice) {
               case 'new':
-                _c.newLayout();
+                _newLayout();
                 break;
               case 'open':
                 _open();

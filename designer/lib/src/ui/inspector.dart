@@ -740,8 +740,7 @@ class _LayoutProperties extends StatelessWidget {
             border: OutlineInputBorder(),
           ),
           onFieldSubmitted: (v) {
-            doc.name = v;
-            controller.refresh();
+            controller.updateDocument((d) => d.name = v);
           },
         ),
         const SizedBox(height: 16),
@@ -756,8 +755,7 @@ class _LayoutProperties extends StatelessWidget {
                   label: Text(p.label, style: const TextStyle(fontSize: 11)),
                   selected: doc.width == p.w && doc.height == p.h,
                   onSelected: (_) {
-                    doc.resize(p.w, p.h);
-                    controller.refresh();
+                    controller.updateDocument((d) => d.resize(p.w, p.h));
                   },
                 ),
               )
@@ -768,8 +766,7 @@ class _LayoutProperties extends StatelessWidget {
           label: 'Background',
           value: doc.background,
           onChanged: (v) {
-            doc.background = v ?? '#000000';
-            controller.refresh();
+            controller.updateDocument((d) => d.background = v ?? '#000000');
           },
         ),
         const SizedBox(height: 16),
@@ -782,8 +779,7 @@ class _LayoutProperties extends StatelessWidget {
           divisions: 51,
           label: '${doc.brightness}',
           onChanged: (v) {
-            doc.brightness = v.round();
-            controller.refresh();
+            controller.updateDocument((d) => d.brightness = v.round());
           },
         ),
         Text(

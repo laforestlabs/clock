@@ -68,7 +68,7 @@ void main() {
           ]));
 
       final roleByName = <String, FontRole>{
-        for (final f in engine!.families) f.name: f.role,
+        for (final f in engine.families) f.name: f.role,
       };
       expect(roleByName['sans'], FontRole.text);
       expect(roleByName['display'], FontRole.text);

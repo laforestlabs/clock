@@ -16,8 +16,6 @@ import 'package:flutter/foundation.dart';
 // ---------------------------------------------------------------- typedefs
 
 typedef _VoidPtr = Pointer<Void>;
-typedef _VoidPtrC = _VoidPtr Function();
-typedef _VoidPtrD = _VoidPtr Function();
 
 typedef _DestroyC = Void Function(_VoidPtr);
 typedef _DestroyD = void Function(_VoidPtr);

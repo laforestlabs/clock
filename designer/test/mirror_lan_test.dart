@@ -19,6 +19,13 @@ class FakeMirror {
   final List<int> receivedOta = <int>[];
   int putCount = 0;
 
+  /// What ESP-IDF's httpd computes from the request head. A chunked body has
+  /// no length, and httpd_parse.c maps that to content_len 0, which the layout
+  /// handler answers with 400 "empty body". Dart's HttpServer de-chunks
+  /// transparently, so these are recorded rather than inferred.
+  int? putContentLength;
+  String? putTransferEncoding;
+
   Future<void> start() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen(_handle);
@@ -45,6 +52,8 @@ class FakeMirror {
         break;
 
       case 'PUT /api/layout':
+        putContentLength = req.contentLength;
+        putTransferEncoding = req.headers.value('transfer-encoding');
         final body = await utf8.decoder.bind(req).join();
         putCount++;
         try {
@@ -146,6 +155,18 @@ void main() {
       expect(result.diag, <String>['note 1']);
       expect(result.error, isNull);
       expect(fake.storedLayout, mini, reason: 'server must store what was sent');
+    });
+
+    // The mirror's httpd does not de-chunk request bodies: a chunked PUT
+    // arrives with content_len 0 and is refused as an empty body, which reads
+    // in the app as unreadable JSON. Assert the framing, not just the bytes —
+    // a loopback Dart server de-chunks and would hide it.
+    test('PUT declares its length instead of using chunked encoding', () async {
+      final mini = await readMiniLayout();
+      await lan.putLayout(mini);
+
+      expect(fake.putTransferEncoding, isNull);
+      expect(fake.putContentLength, utf8.encode(mini).length);
     });
 
     test('GET returns what was pushed', () async {
