@@ -102,6 +102,7 @@ static void render_task(void *arg)
 
     uint32_t frames = 0;
     bool was_synced = false;
+    bool valid_marked = false;
 
     for (;;) {
         /*
@@ -157,11 +158,27 @@ static void render_task(void *arg)
          * shortening LED on-time, which keeps the colour depth that scaling
          * these bytes would throw away.
          *
-         * These are the exact bytes the golden-image tests hash, which is what
-         * makes the device-versus-host framebuffer diff in M4 meaningful.
+         * These are the bytes `mirror-cli --dump` writes, which is what makes
+         * the device-versus-host framebuffer diff in M4 meaningful. The golden
+         * tests hash the same frame exported at the layout's brightness
+         * instead, because that is what the designer's preview draws.
          */
         ml_canvas_export_rgb888(&canvas, 255, rgb);
         panel_blit_rgb888(rgb);
+
+        /*
+         * The first frame on the panel is the proof that this image boots:
+         * the task started, the canvas and frame buffers were allocated, the
+         * layout parsed and the blit went through. Cancelling the update's
+         * pending rollback is only honest once that has happened, so it is
+         * done here rather than in app_main, where a task that never started
+         * would still mark the image good and strand a mirror that draws
+         * nothing.
+         */
+        if (!valid_marked) {
+            valid_marked = true;
+            ota_mark_valid();
+        }
 
         /* Roughly every 30 seconds. */
         if ((frames % (30000 / RENDER_PERIOD_MS)) == 0) {
@@ -254,10 +271,12 @@ void app_main(void)
      * like a random crash rather than a stack problem, and RAM is not scarce. */
     xTaskCreate(render_task, "render", 8192, NULL, 5, NULL);
 
-    /* The render task running means this app demonstrably boots. Cancel the
-     * rollback pending state; a crash before this point reverts to the
-     * previous image automatically. */
-    ota_mark_valid();
+    /*
+     * ota_mark_valid() is not called here: a task that failed to start would
+     * otherwise cancel the update's rollback on its behalf. The render task
+     * marks the image valid once it has drawn its first frame. Until then a
+     * crash or a failure to allocate reverts to the previous image.
+     */
 
     /*
      * Provisioning owns the WiFi lifecycle: it joins the saved network, or

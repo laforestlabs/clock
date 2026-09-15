@@ -104,6 +104,9 @@ static provision_wifi_result_cb_t    s_wifi_result_cb = NULL;
 static void portal_start(void);
 static void dns_stop(void);
 static esp_err_t scan_start(void);
+static void ensure_scan_handler(void);
+static void on_scan_done(void *arg, esp_event_base_t base,
+                         int32_t id, void *data);
 
 /* state */
 
@@ -809,11 +812,36 @@ static httpd_config_t server_config(void)
 
 /* ------------------------------------------------------- wifi scanning */
 
+/*
+ * Make sure SCAN_DONE has a listener. Registered on first use rather than when
+ * the portal opens: the BLE "wifi scan" command runs on a mirror that is
+ * already provisioned and will never open a portal, and a scan whose completion
+ * nobody reaps leaves s_scanning latched true, which starves every later scan —
+ * including the portal's own — until the next reboot.
+ */
+static void ensure_scan_handler(void)
+{
+    lock_state();
+    if (!s_scan_handler_registered) {
+        const esp_err_t err = esp_event_handler_instance_register(
+            WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &on_scan_done, NULL, NULL);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "could not register the scan handler: %s",
+                     esp_err_to_name(err));
+        } else {
+            s_scan_handler_registered = true;
+        }
+    }
+    unlock_state();
+}
+
 /* Start a background scan if none is running. The result arrives on
  * WIFI_EVENT_SCAN_DONE and is copied into s_scan_results. Returns ESP_OK when
  * a scan is running or was started, or the underlying error on failure. */
 static esp_err_t scan_start(void)
 {
+    ensure_scan_handler();
+
     lock_state();
     if (s_scanning) {
         unlock_state();
@@ -1158,16 +1186,9 @@ static void portal_start(void)
      * while an association attempt is in flight. */
     wifi_set_autoreconnect(false);
 
-    if (!s_scan_handler_registered) {
-        const esp_err_t err = esp_event_handler_instance_register(
-            WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &on_scan_done, NULL, NULL);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "could not register the scan handler: %s",
-                     esp_err_to_name(err));
-        } else {
-            s_scan_handler_registered = true;
-        }
-    }
+    /* The scan handler is registered by scan_start(), which the portal's own
+     * first scan below goes through, so a portal is not what makes scans work
+     * on a device that never opens one. */
 
     s_portal_active = true;
     unlock_state();

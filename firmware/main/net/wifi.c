@@ -162,20 +162,35 @@ static void on_wifi_event(void *arg, esp_event_base_t base,
         /* Log the reason code: 15 (4WAY_HANDSHAKE_TIMEOUT) almost always means
          * a wrong password, while 201 (NO_AP_FOUND) means a wrong SSID or the
          * radio cannot see the AP. Guessing between those wastes real time. */
-        ESP_LOGW(TAG, "disconnected, reason %d, attempt %d, retrying in %dms",
-                 reason, s_retries, wait);
+        if (s_autoreconnect) {
+            ESP_LOGW(TAG, "disconnected, reason %d, attempt %d, retrying in %dms",
+                     reason, s_retries, wait);
+        } else {
+            ESP_LOGW(TAG, "disconnected, reason %d, auto-reconnect is off",
+                     reason);
+        }
 
         /*
          * Armed on a timer rather than slept through here. Handlers run on the
          * shared default event loop task, so blocking for the 30 seconds this
          * backs off to would hold up dispatch of every other event in the
          * system, GOT_IP among them, and can back the event queue up behind us.
+         *
+         * With auto-reconnect off, nothing retries from here at all: the setup
+         * portal owns the radio while it is open, and it reconnects by calling
+         * wifi_connect_to() when the owner submits credentials. An immediate
+         * esp_wifi_connect() would fail without pause — the portal opens
+         * precisely when the saved network stopped answering — and keep the
+         * radio too busy to finish the scans its network list is built from.
          */
-        if (s_reconnect != NULL && s_autoreconnect) {
-            esp_timer_stop(s_reconnect);   /* no-op when it is not running */
-            esp_timer_start_once(s_reconnect, (int64_t)wait * 1000);
-        } else {
-            esp_wifi_connect();
+        if (s_autoreconnect) {
+            if (s_reconnect != NULL) {
+                esp_timer_stop(s_reconnect);   /* no-op when it is not running */
+                esp_timer_start_once(s_reconnect, (int64_t)wait * 1000);
+            } else {
+                /* No backoff timer to arm; a retry now is all that is left. */
+                esp_wifi_connect();
+            }
         }
 
         netlog_record(NETLOG_EVT_WIFI_DISCONNECTED, 0, reason);

@@ -780,10 +780,19 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len < 1) return 0;
 
-    /* Copy first so count can be validated regardless of how the packet is
-     * segmented in the mbuf chain. len is bounded by the count<=16 check
-     * below and the buffer is 49 bytes. */
+    /*
+     * Bound the copy before making it. len is whatever the peer chose, and the
+     * ATT MTU allows far more than one input frame, so a larger write would
+     * spill past this buffer and into the host task's stack. The control-count
+     * check below can only run once the bytes are in hand, so the size of the
+     * box has to be checked first.
+     */
     uint8_t p[1 + 3 * 16];
+    if (len > sizeof(p)) {
+        ESP_LOGW(TAG, "game input: %u bytes, over the %u-byte frame, dropped",
+                 (unsigned)len, (unsigned)sizeof(p));
+        return 0;
+    }
     os_mbuf_copydata(ctxt->om, 0, len, p);
 
     const uint8_t count = p[0];
