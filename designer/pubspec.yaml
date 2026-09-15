@@ -39,6 +39,9 @@ dependencies:
   flutter_map: ^8.3.2
   # The coordinate type flutter_map passes back to the wizard.
   latlong2: ^0.10.1
+  # The setup wizard's GPS source: this device's own position, read once per tap.
+  # Android/iOS/macOS/Windows, and Linux through GeoClue (Dart-only plugin).
+  geolocator: ^14.0.3
 
 dev_dependencies:
   flutter_test:

@@ -128,4 +128,66 @@ void main() {
       expect(tempFForCountry(null), isNull);
     });
   });
+
+  group('timezoneIanaForCoordinates', () {
+    // A real-shaped answer for a bare coordinate pair (verified live against
+    // api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&timezone=auto).
+    const forecastFixture = '{"latitude":52.52,"longitude":13.41,'
+        '"generationtime_ms":0.07081032,"utc_offset_seconds":7200,'
+        '"timezone":"Europe/Berlin","timezone_abbreviation":"GMT+2",'
+        '"elevation":38.0}';
+
+    test('reads the zone and asks the forecast endpoint for it', () async {
+      Uri? asked;
+      final tz = await timezoneIanaForCoordinates(52.52, 13.41,
+          fetcher: (u) async {
+        asked = u;
+        return forecastFixture;
+      });
+      expect(tz, 'Europe/Berlin');
+      expect(asked!.host, 'api.open-meteo.com');
+      expect(asked!.path, '/v1/forecast');
+      expect(asked!.queryParameters['timezone'], 'auto');
+      expect(asked!.queryParameters['latitude'], '52.52');
+      expect(asked!.queryParameters['longitude'], '13.41');
+    });
+
+    test('a zone the firmware preset table knows maps further', () async {
+      // The provider's answer is the only reason a pin gets a POSIX clock.
+      final tz = await timezoneIanaForCoordinates(52.52, 13.41,
+          fetcher: (u) async => forecastFixture);
+      expect(posixTzForIana(tz), 'CET-1CEST,M3.5.0,M10.5.0/3');
+    });
+
+    test('a missing zone key is null', () async {
+      expect(
+        await timezoneIanaForCoordinates(0, 0,
+            fetcher: (u) async => '{"latitude":0.0,"utc_offset_seconds":0}'),
+        isNull,
+      );
+      expect(
+        await timezoneIanaForCoordinates(0, 0,
+            fetcher: (u) async => '{"timezone":""}'),
+        isNull,
+      );
+    });
+
+    test('an API error answer is null, not a throw', () async {
+      // Out-of-range input comes back 200 with an error object and no zone.
+      expect(
+        await timezoneIanaForCoordinates(999, 999,
+            fetcher: (u) async =>
+                '{"error":true,"reason":"Latitude must be in range of -90 to 90"}'),
+        isNull,
+      );
+    });
+
+    test('transport failures are null, not a throw', () async {
+      expect(
+        await timezoneIanaForCoordinates(52.52, 13.41,
+            fetcher: (u) async => throw Exception('offline')),
+        isNull,
+      );
+    });
+  });
 }

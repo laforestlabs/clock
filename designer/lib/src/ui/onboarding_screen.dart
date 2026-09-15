@@ -8,16 +8,22 @@
 //                 itself; the owner keeps it or types a name of their own,
 //                 which is then pushed so the device advertises it.
 //   2. WiFi     — the existing guided scan/pick flow (reused as a form).
-//   3. Location — imprecise on purpose: a ZIP code, a city, or a tap on a
-//                 map. The weather provider needs coordinates, nothing more.
-//   4. Time & units — timezone (prefilled from wherever the location search
-//                 found), 12/24-hour clock, Fahrenheit/Celsius (prefilled
-//                 from the country).
+//   3. Location — three explicit sources, one per way an owner can answer:
+//                 a ZIP/postal code (or city, or raw "lat, lon"), this
+//                 device's own GPS, or a pin on the map. The weather
+//                 provider needs coordinates, nothing more.
+//   4. Time & units — timezone (prefilled from whatever the location source
+//                 could say about the zone), 12/24-hour clock,
+//                 Fahrenheit/Celsius (prefilled from the country, when the
+//                 source knew one).
 //
 // The later steps prefill from what came before them but never lock the
-// owner in: every prefill is an ordinary editable control. WiFi is skipped
-// when [includeWifi] is false (the device already has credentials and the
-// owner reran setup to fix its name, location or display).
+// owner in: every prefill is an ordinary editable control, and a zone that
+// arrives after the owner moved on still lands. The WiFi step advances by
+// itself the moment the mirror confirms it joined, and a failure keeps the
+// owner on the step with the network list still in front of them. WiFi is
+// skipped when [includeWifi] is false (the device already has credentials and
+// the owner reran setup to fix its name, location or display).
 //
 // The page talks to the device only through injected callbacks, so the whole
 // walkthrough is widget-testable without a mirror on the other end of the
@@ -28,11 +34,13 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../services/device_location.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_location.dart';
 import '../services/mirror_wifi.dart';
 import '../services/mirror_wifi_status.dart';
+import 'location_picker.dart';
 import 'place_pin_page.dart';
 import 'wifi_setup_form.dart';
 
@@ -50,7 +58,10 @@ class MirrorOnboardingPage extends StatefulWidget {
     this.wifiScan,
     this.wifiPush,
     this.wifiAwait,
+    this.wifiStatus,
     this.geocode = geocodeSearch,
+    this.timezoneLookup = timezoneIanaForCoordinates,
+    this.deviceLocation = currentDeviceLocation,
     this.pickOnMap = _showPinPicker,
   });
 
@@ -65,6 +76,12 @@ class MirrorOnboardingPage extends StatefulWidget {
   /// Await the async connect outcome after [wifiPush]; the caller must
   /// start this before pushing (see [BleSession.awaitWifiResult]).
   final Future<BleWifiResult?> Function()? wifiAwait;
+
+  /// Ask the device what it currently thinks of its network (normally
+  /// [BleSession.getWifi]). Consulted only when [wifiAwait] ran out of
+  /// window with no outcome, which would otherwise be reported as a failure
+  /// the owner has no way to check.
+  final Future<BleWifiStatus?> Function()? wifiStatus;
 
   /// Push the collected config (a partial MirrorConfig JSON) and return the
   /// device's commit status.
@@ -81,6 +98,13 @@ class MirrorOnboardingPage extends StatefulWidget {
 
   /// Location lookup seam: [geocodeSearch] on device runs, a fake in tests.
   final Future<List<GeocodeResult>> Function(String query) geocode;
+
+  /// Reverse coordinate→zone seam, for the sources with no zone of their own.
+  final Future<String?> Function(double latitude, double longitude)
+      timezoneLookup;
+
+  /// This device's position seam (the wizard's GPS source).
+  final Future<LatLng> Function() deviceLocation;
 
   /// Map picker seam: pushes [PlacePinPage] for real, a stub in tests.
   final Future<LatLng?> Function(BuildContext context, {LatLng? initial})
@@ -128,23 +152,15 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   WifiConfig? _wifiDraft;
 
-  /// True once the device reported it joined the network (or the outcome
-  /// simply timed out, which the existing flow treats as "saved"); flips the
-  /// primary button from Connect to Continue.
-  bool _wifiOk = false;
-
   // --------------------------------------------------------- location step
 
-  final TextEditingController _query = TextEditingController();
-  final TextEditingController _place = TextEditingController();
-  int _searchToken = 0;
-  bool _searching = false;
-  String? _searchError;
-  List<GeocodeResult> _results = const <GeocodeResult>[];
-  GeocodeResult? _selected;
+  /// The picker's current choice; null until one of the three sources lands.
+  LocationChoice? _choice;
 
-  /// While true, the place label tracks the selection; editing it detaches.
-  bool _placeAuto = true;
+  /// True when the chosen point's zone could not be turned into a POSIX
+  /// string (unknown to the preset table, or the lookup failed). The display
+  /// step says so rather than leaving the owner with a silent UTC clock.
+  bool _tzUnmapped = false;
 
   // ------------------------------------------------------------ display step
 
@@ -163,8 +179,6 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
   @override
   void dispose() {
-    _query.dispose();
-    _place.dispose();
     _tzCustom.dispose();
     _mirrorName.dispose();
     super.dispose();
@@ -206,14 +220,16 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     });
   }
 
-  /// Prefill the display step from wherever the location search landed,
-  /// unless the owner already changed those controls by hand.
+  /// Prefill the display step from wherever the location choice landed,
+  /// unless the owner already changed those controls by hand. Callers wrap
+  /// this in setState; it mutates state only.
   void _deriveFromLocation() {
-    final sel = _selected;
-    if (sel == null) return;
-    final f = tempFForCountry(sel.countryCode);
+    final choice = _choice;
+    if (choice == null) return;
+    final f = tempFForCountry(choice.countryCode);
     if (f != null) _tempF = f;
-    final tz = posixTzForIana(sel.timezone);
+    final tz = posixTzForIana(choice.timezoneIana);
+    _tzUnmapped = tz == null;
     if (tz == null || _tzTouched) return;
     final presetValues = kTimezonePresets.map((p) => p.tz).toSet();
     if (presetValues.contains(tz)) {
@@ -227,6 +243,20 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
   }
 
   // ---------------------------------------------------------- wifi actions
+
+  /// What the device says about its own network, for the case where the
+  /// async outcome window closed with no answer from the mirror.
+  Future<bool> _deviceJoined(String ssid) async {
+    final ask = widget.wifiStatus;
+    if (ask == null) return false;
+    try {
+      final status = await ask();
+      return status != null && status.connected && status.ssid == ssid;
+    } catch (_) {
+      // An unanswerable device is an unconfirmed join: stay on the step.
+      return false;
+    }
+  }
 
   Future<void> _submitWifi() async {
     final draft = _wifiDraft;
@@ -243,7 +273,7 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
       _note = null;
     });
     String? note;
-    var ok = false;
+    var joined = false;
     try {
       // Subscribe before pushing so the async outcome can never be missed,
       // exactly like the Mirror screen's own flow.
@@ -251,16 +281,20 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
       await widget.wifiPush!(draft);
       final result = await resultFuture;
       if (result != null && result.connected) {
-        note = 'Connected to ${draft.ssid}';
-        ok = true;
+        joined = true;
       } else if (result != null) {
-        note = 'Could not join ${draft.ssid}: ${result.detail}';
+        note = 'Could not join ${draft.ssid}: ${result.detail}. '
+            'Pick a different network below, or try again.';
       } else {
-        // No outcome within the window: the mirror kept the credentials and
-        // is still trying. Let the walkthrough proceed; the device will
-        // connect when the router answers.
-        note = 'Saved; the mirror is still trying to join ${draft.ssid}';
-        ok = true;
+        // No outcome within the window. A push that gets no answer is not a
+        // success (the wizard used to walk on and leave the owner with a
+        // mirror that never joined), and it is not a failure either until
+        // the device itself says so.
+        joined = await _deviceJoined(draft.ssid);
+        if (!joined) {
+          note = 'No answer from ${draft.ssid} within 40 seconds. '
+              'Check the password, or pick a different network below.';
+        }
       }
     } catch (e) {
       note = e is BlePushException ? e.message : '$e';
@@ -268,80 +302,20 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _note = note;
-      _wifiOk = ok;
+      _note = joined ? null : note;
     });
+    // A confirmed join continues by itself: the owner already said which
+    // network to join, and there is nothing left to decide here.
+    if (joined) _next();
   }
 
-  // ----------------------------------------------------- location actions
-
-  Future<void> _search() async {
-    final q = _query.text.trim();
-    if (q.isEmpty) return;
-    // A coordinate pair needs no lookup; short-circuit it here rather than
-    // through the injected seam so a stubbed geocoder cannot change it.
-    final direct = parseCoordinateQuery(q);
-    if (direct != null) {
-      ++_searchToken;
-      setState(() {
-        _searching = false;
-        _searchError = null;
-        _results = const <GeocodeResult>[];
-      });
-      _applySelection(direct);
-      return;
-    }
-    final token = ++_searchToken;
+  /// Give up on the current draft and go back to the scanned list: clears the
+  /// note and the draft, so the primary is disabled until the owner picks a
+  /// network again.
+  void _chooseAnotherNetwork() {
     setState(() {
-      _searching = true;
-      _searchError = null;
-      _results = const <GeocodeResult>[];
-    });
-    try {
-      final res = await widget.geocode(q);
-      if (!mounted || token != _searchToken) return;
-      setState(() {
-        _searching = false;
-        if (res.isEmpty) {
-          _searchError =
-              'Nothing found for "$q". A city on its own is usually enough.';
-        } else if (res.length == 1) {
-          _applySelection(res.single);
-        } else {
-          _results = res;
-        }
-      });
-    } catch (e) {
-      if (!mounted || token != _searchToken) return;
-      setState(() {
-        _searching = false;
-        _searchError = '$e'.replaceFirst('Exception: ', '');
-      });
-    }
-  }
-
-  void _applySelection(GeocodeResult r) {
-    setState(() {
-      _selected = r;
-      _results = const <GeocodeResult>[];
-      if (_placeAuto) _place.text = r.placeDraft;
-    });
-  }
-
-  Future<void> _pickOnMap() async {
-    final sel = _selected;
-    final initial = sel == null ? null : LatLng(sel.latitude, sel.longitude);
-    final pin = await widget.pickOnMap(context, initial: initial);
-    if (pin == null || !mounted) return;
-    setState(() {
-      _selected = GeocodeResult(
-        name: 'Pinned location',
-        latitude: pin.latitude,
-        longitude: pin.longitude,
-      );
-      _results = const <GeocodeResult>[];
-      _searchError = null;
-      if (_placeAuto) _place.text = 'Home';
+      _note = null;
+      _wifiDraft = null;
     });
   }
 
@@ -366,13 +340,13 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
   }
 
   MirrorConfig _collect() {
-    final sel = _selected;
-    final place = _place.text.trim();
+    final choice = _choice;
+    final place = choice?.place.trim() ?? '';
     return MirrorConfig(
       name: _pushedName,
       timezone: _timezone,
-      latitude: sel?.latitude.toStringAsFixed(5),
-      longitude: sel?.longitude.toStringAsFixed(5),
+      latitude: choice?.latitude.toStringAsFixed(5),
+      longitude: choice?.longitude.toStringAsFixed(5),
       place: place.isEmpty
           ? null
           : (place.length <= 23 ? place : place.substring(0, 23)),
@@ -505,16 +479,13 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
   Widget _noteLine() {
     final note = _note;
     if (note == null) return const SizedBox.shrink();
-    // A "Connected to ..." line on the WiFi step is a status, not an error;
-    // everywhere else the note holds a failure to show next to the button.
-    final isStatus = _step == SetupStep.wifi && _wifiOk;
+    // Every note is now a failure to show next to the button that produced
+    // it: a confirmed WiFi join advances instead of leaving a message.
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Text(
         note,
-        style: TextStyle(
-          color: isStatus ? Colors.grey : Theme.of(context).colorScheme.error,
-        ),
+        style: TextStyle(color: Theme.of(context).colorScheme.error),
       ),
     );
   }
@@ -565,7 +536,12 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
         const SizedBox(height: 12),
         WifiSetupForm(
           scan: widget.wifiScan!,
-          onDraft: (c) => setState(() => _wifiDraft = c),
+          // A stale verdict about the previous network (backlog M11) cannot
+          // exist without a flag to go stale: a new draft clears the note.
+          onDraft: (c) => setState(() {
+            _wifiDraft = c;
+            _note = null;
+          }),
         ),
         _noteLine(),
       ],
@@ -575,137 +551,31 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
   // ----------------------------------------------------- location step
 
   Widget _locationStep() {
-    final sel = _selected;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Text(
           'Weather is fetched for a point on the map, so the mirror needs to '
-          'know roughly where it hangs. A ZIP/postal code or a city name is '
-          'precise enough; you can also tap the map, or type "lat, lon".',
+          "know roughly where it hangs. Use a ZIP/postal code, this device's "
+          'GPS, or a tap on the map.',
         ),
         const SizedBox(height: 12),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: _query,
-                onChanged: (_) => setState(() {}),
-                enabled: !_busy,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _search(),
-                decoration: InputDecoration(
-                  hintText: 'ZIP or city name',
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                  suffixIcon: _searching
-                      ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : null,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: _busy || _query.text.trim().isEmpty ? null : _search,
-              child: const Text('Find'),
-            ),
-          ],
+        // initial is the wizard's own record, so stepping Back and forward
+        // keeps the choice; the picker owns it from then on.
+        LocationPicker(
+          enabled: !_busy,
+          initial: _choice,
+          geocode: widget.geocode,
+          timezoneLookup: widget.timezoneLookup,
+          deviceLocation: widget.deviceLocation,
+          pickOnMap: widget.pickOnMap,
+          onChanged: (c) => setState(() {
+            _choice = c;
+            // Runs again when a zone arrives late, which is what carries a
+            // GPS or pin timezone onto the display step.
+            _deriveFromLocation();
+          }),
         ),
-        if (_searchError != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              _searchError!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        if (_results.isNotEmpty) ...<Widget>[
-          const Padding(
-            padding: EdgeInsets.only(top: 12, bottom: 4),
-            child: Text('Did you mean:',
-                style: TextStyle(color: Colors.grey, fontSize: 13)),
-          ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: ListView(
-              shrinkWrap: true,
-              children: <Widget>[
-                for (final r in _results)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.place_outlined, size: 18),
-                    title: Text(r.fullLabel),
-                    subtitle: Text(
-                      '${r.latitude.toStringAsFixed(4)}, '
-                      '${r.longitude.toStringAsFixed(4)}'
-                      '${r.timezone == null ? '' : '  •  ${r.timezone}'}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    onTap: () => _applySelection(r),
-                  ),
-              ],
-            ),
-          ),
-        ],
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _pickOnMap,
-          icon: const Icon(Icons.map_outlined, size: 18),
-          label: const Text('Pick on a map instead'),
-        ),
-        if (sel != null) ...<Widget>[
-          const SizedBox(height: 12),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Icon(Icons.check_circle,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(sel.fullLabel),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _place,
-                    maxLength: 23,
-                    onChanged: (_) => _placeAuto = false,
-                    decoration: const InputDecoration(
-                      labelText: 'Place name',
-                      helperText: 'Shown by weather widgets',
-                      helperMaxLines: 1,
-                      isDense: true,
-                      counterText: '',
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _busy ? null : _pickOnMap,
-                    icon: const Icon(Icons.my_location, size: 16),
-                    label: const Text('Adjust on the map'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
         _noteLine(),
       ],
     );
@@ -723,6 +593,10 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String?>(
+          // FormField keeps the value it was created with, so a zone derived
+          // after this step was built only appears if the field is rebuilt
+          // with it (a GPS fix whose lookup landed last).
+          key: ValueKey<String?>(_presetTz),
           initialValue: _presetTz,
           decoration: const InputDecoration(labelText: 'Timezone'),
           items: <DropdownMenuItem<String?>>[
@@ -743,6 +617,15 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
             _presetTz = value;
           }),
         ),
+        if (_tzUnmapped && _timezone == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Could not set the timezone from this location; '
+              'choose one here.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ),
         if (_presetTz == null || _presetTz!.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -797,19 +680,19 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
 
     final String primaryLabel = switch (step) {
       SetupStep.name => 'Continue',
-      SetupStep.wifi => _wifiOk ? 'Continue' : 'Connect',
+      SetupStep.wifi => 'Connect',
       SetupStep.location => 'Continue',
       SetupStep.display => 'Finish setup',
     };
     final bool primaryEnabled = switch (step) {
       SetupStep.name => !_busy,
-      SetupStep.wifi => !_busy && (_wifiOk || _wifiDraft != null),
-      SetupStep.location => _busy ? false : _selected != null,
+      SetupStep.wifi => !_busy && _wifiDraft != null,
+      SetupStep.location => _busy ? false : _choice != null,
       SetupStep.display => !_busy,
     };
     final VoidCallback? onPrimary = primaryEnabled
         ? () {
-            if (step == SetupStep.wifi && !_wifiOk) {
+            if (step == SetupStep.wifi) {
               _submitWifi();
             } else {
               _next();
@@ -846,11 +729,19 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
                       onPressed: _busy ? null : _skipLocation,
                       child: const Text('Skip'),
                     ),
+                  // The list below stays on screen and is the choice UI; this
+                  // is the way back to it after a failure, and the reason the
+                  // primary can be disabled again.
+                  if (step == SetupStep.wifi && _note != null)
+                    TextButton(
+                      onPressed: _busy ? null : _chooseAnotherNetwork,
+                      child: const Text('Choose another network'),
+                    ),
                   FilledButton(
                     onPressed: onPrimary,
                     child: Text(_busy && isLast
                         ? 'Saving...'
-                        : _busy && step == SetupStep.wifi && !_wifiOk
+                        : _busy && step == SetupStep.wifi
                             ? 'Connecting...'
                             : primaryLabel),
                   ),
@@ -867,8 +758,9 @@ class _MirrorOnboardingPageState extends State<MirrorOnboardingPage> {
     setState(() {
       _note = null;
       _stepIndex = _steps.indexOf(SetupStep.display);
-      // No selection: keep the device's factory defaults rather than
-      // pushing anything derived.
+      // With nothing chosen, the device keeps its factory coordinates. A
+      // location chosen before tapping Skip is still pushed: skipping leaves
+      // the step, it does not undo the choice.
     });
   }
 }

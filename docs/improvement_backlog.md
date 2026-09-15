@@ -78,7 +78,7 @@ skipped.
 | H7 | Split the mDNS discovery token from per-device status | HIGH | XS | — | Done 2026-09-14 |
 | H9 | Add the PIC dep files to `-include` (stale `.so`) | HIGH | XS | — | Done 2026-09-14 |
 | M10 | Designer engine robustness (6 sub-items) | MEDIUM | S | — | Partly done — 1 of 6 |
-| M11 | Designer UI lifecycle and input defects (10 sub-items) | MEDIUM | M | — | Open |
+| M11 | Designer UI lifecycle and input defects (10 sub-items) | MEDIUM | M | — | Partly done — 1 of 10 |
 | M13 | Render-core edge cases (5 sub-items) | MEDIUM | S | I2 | Partly done — 4 of 5 |
 | **Tier 3 — latent, hardening, or needs a decision** | | | | | |
 | M1 | Report string truncation instead of returning success | MEDIUM | S | I4 | Open |
@@ -465,7 +465,10 @@ recompiles the PIC objects and relinks the library, and a second run rebuilds no
 - An unvalidated colour code reaches the document and the device.
 - The time picker opens at the current time and silently rewrites a stored countdown.
 - Re-picking a WiFi network in the wizard leaves it un-pushed, because the "WiFi ok" flag
-  goes stale.
+  goes stale. **Fixed 2026-09-14:** there is no flag left to go stale — a confirmed join
+  advances by itself, a new draft or "Choose another network" clears the note, and the
+  confirmed-join path is what the button does (`onboarding_wizard_test.dart` re-picks a second
+  network after a rejected one and asserts the new credentials are pushed).
 - The map controller is never released.
 - Saving swallows errors, so a failed save looks like a successful one.
 - The simple view commits text only on Enter, so typed text is dropped when focus moves.

@@ -23,20 +23,25 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controller.dart';
 import '../services/bundled_firmware.dart';
+import '../services/device_location.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_connection.dart';
 import '../services/mirror_discovery.dart';
 import '../services/mirror_lan.dart';
+import '../services/mirror_location.dart';
 import '../services/mirror_wifi.dart';
 import '../services/mirror_wifi_status.dart';
 import 'ble_prompt.dart';
+import 'location_picker.dart';
 import 'onboarding_screen.dart';
+import 'place_pin_page.dart';
 import 'wifi_setup_form.dart';
 
 class MirrorScreen extends StatefulWidget {
@@ -330,6 +335,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
           wifiScan: session.scanWifi,
           wifiPush: session.pushWifi,
           wifiAwait: session.awaitWifiResult,
+          wifiStatus: session.getWifi,
           configPush: session.pushConfig,
         ),
       ),
@@ -466,7 +472,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
     final saved = await showDialog<MirrorConfig>(
       context: context,
-      builder: (_) => _ConfigureDialog(initial: current),
+      builder: (_) => MirrorConfigDialog(initial: current),
     );
     if (saved == null || !mounted) return;
 
@@ -1350,29 +1356,63 @@ class _WifiSetupDialogState extends State<_WifiSetupDialog> {
   }
 }
 
-/// Configure dialog: timezone preset (or custom), coordinates, place label,
-/// clock format and temperature unit. Only reachable over BLE, per the
-/// owner's decision.
-class _ConfigureDialog extends StatefulWidget {
-  const _ConfigureDialog({this.initial});
+/// Configure dialog: timezone preset (or custom), location, clock format and
+/// temperature unit. Only reachable over BLE, per the owner's decision.
+///
+/// The location controls are the setup wizard's own [LocationPicker], so the
+/// three sources (ZIP/city, this device's GPS, a map pin) and the timezone
+/// lookup behind them behave identically on both surfaces. The picker is
+/// prefilled with the device's stored point when its numbers parse; saving
+/// rounds to five decimal places, which is what the wizard pushes too, so a
+/// device whose stored value carries more precision is rounded here.
+class MirrorConfigDialog extends StatefulWidget {
+  const MirrorConfigDialog({
+    super.key,
+    this.initial,
+    this.geocode = geocodeSearch,
+    this.timezoneLookup = timezoneIanaForCoordinates,
+    this.deviceLocation = currentDeviceLocation,
+    this.pickOnMap = _showPinPicker,
+  });
 
   final MirrorConfig? initial;
 
+  /// Location seams, forwarded to the picker: production defaults, fakes in
+  /// tests.
+  final Future<List<GeocodeResult>> Function(String query) geocode;
+  final Future<String?> Function(double latitude, double longitude)
+      timezoneLookup;
+  final Future<LatLng> Function() deviceLocation;
+  final Future<LatLng?> Function(BuildContext context, {LatLng? initial})
+      pickOnMap;
+
+  static Future<LatLng?> _showPinPicker(BuildContext context,
+          {LatLng? initial}) =>
+      showPlacePinPicker(context, initial: initial);
+
   @override
-  State<_ConfigureDialog> createState() => _ConfigureDialogState();
+  State<MirrorConfigDialog> createState() => _MirrorConfigDialogState();
 }
 
-class _ConfigureDialogState extends State<_ConfigureDialog> {
+class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
   late final TextEditingController _tzCustom;
-  late final TextEditingController _lat;
-  late final TextEditingController _lon;
-  late final TextEditingController _place;
   String? _presetTz;
+
+  /// Set once the owner picks a zone themselves; a derived one never
+  /// overwrites it.
+  bool _tzTouched = false;
+
+  /// True when the picker's zone could not be turned into a POSIX string (or
+  /// the lookup failed), so nothing was prefilled and the owner is told.
+  bool _tzUnmapped = false;
+
+  /// The picker's choice; null when the owner has not chosen a point.
+  LocationChoice? _choice;
 
   /// Display settings default to the device's factory values (12-hour,
   /// Fahrenheit) when the device could not be prefilled. They are always
-  /// pushed: unlike the text fields there is no "unchanged" empty state for
-  /// a choice, and the defaults match a fresh mirror.
+  /// pushed: unlike the location there is no "unchanged" empty state for a
+  /// choice, and the defaults match a fresh mirror.
   late bool _clock12h;
   late bool _tempF;
 
@@ -1392,18 +1432,55 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
       _presetTz = tz == null ? null : '';
     }
     _tzCustom = TextEditingController(text: tz ?? '');
-    _lat = TextEditingController(text: initial?.latitude ?? '');
-    _lon = TextEditingController(text: initial?.longitude ?? '');
-    _place = TextEditingController(text: initial?.place ?? '');
+    _choice = _initialChoice(initial);
   }
 
   @override
   void dispose() {
     _tzCustom.dispose();
-    _lat.dispose();
-    _lon.dispose();
-    _place.dispose();
     super.dispose();
+  }
+
+  /// The picker prefill: the device's stored point, when both numbers parse
+  /// and are in range. No timezone: the dialog has no zone source until a
+  /// lookup runs, and the picker asks for one only when the owner changes the
+  /// location.
+  LocationChoice? _initialChoice(MirrorConfig? initial) {
+    final lat = double.tryParse(initial?.latitude ?? '');
+    final lon = double.tryParse(initial?.longitude ?? '');
+    if (lat == null || lon == null) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LocationChoice(
+      latitude: lat,
+      longitude: lon,
+      place: initial?.place ?? '',
+    );
+  }
+
+  /// Prefill the timezone from the picker's choice, unless the owner already
+  /// changed the control. Mutates state; callers wrap in setState.
+  void _deriveFromChoice() {
+    final choice = _choice;
+    if (choice == null) return;
+    final tz = posixTzForIana(choice.timezoneIana);
+    _tzUnmapped = tz == null;
+    if (tz == null || _tzTouched) return;
+    final presetValues = kTimezonePresets.map((p) => p.tz).toSet();
+    if (presetValues.contains(tz)) {
+      _presetTz = tz;
+    } else {
+      _presetTz = '';
+      _tzCustom.text = tz;
+    }
+  }
+
+  void _onLocationChanged(LocationChoice choice) {
+    setState(() {
+      _choice = choice;
+      // Runs again when the zone arrives after the choice, which is how a GPS
+      // fix or a pin gets a timezone into this dropdown.
+      _deriveFromChoice();
+    });
   }
 
   String? get _timezone {
@@ -1414,14 +1491,19 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
     return _presetTz;
   }
 
-  MirrorConfig _collect() => MirrorConfig(
-        timezone: _timezone,
-        latitude: _lat.text.trim().isEmpty ? null : _lat.text.trim(),
-        longitude: _lon.text.trim().isEmpty ? null : _lon.text.trim(),
-        place: _place.text.trim().isEmpty ? null : _place.text.trim(),
-        clock12h: _clock12h,
-        tempF: _tempF,
-      );
+  MirrorConfig _collect() {
+    final place = _choice?.place.trim() ?? '';
+    return MirrorConfig(
+      timezone: _timezone,
+      latitude: _choice?.latitude.toStringAsFixed(5),
+      longitude: _choice?.longitude.toStringAsFixed(5),
+      place: place.isEmpty
+          ? null
+          : (place.length <= 23 ? place : place.substring(0, 23)),
+      clock12h: _clock12h,
+      tempF: _tempF,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1433,7 +1515,15 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             DropdownButtonFormField<String?>(
+              // FormField keeps the value it was created with, so a zone
+              // derived after the dialog opened only appears if the field is
+              // rebuilt with it.
+              key: ValueKey<String?>(_presetTz),
               initialValue: _presetTz,
+              // "Los Angeles (PST8PDT,M3.2.0,M11.1.0)" is wider than the
+              // dialog's field: let the button take the row and ellipsize
+              // rather than overflow.
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Timezone'),
               items: <DropdownMenuItem<String?>>[
                 for (final p in kTimezonePresets)
@@ -1447,14 +1537,25 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
                 ),
               ],
               onChanged: (value) => setState(() {
+                _tzTouched = true;
                 _presetTz = value;
               }),
             ),
+            if (_tzUnmapped && _timezone == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Could not set the timezone from this location; '
+                  'choose one here.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
             if (_presetTz == null || _presetTz!.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: TextField(
                   controller: _tzCustom,
+                  onChanged: (_) => _tzTouched = true,
                   decoration: const InputDecoration(
                     labelText: 'POSIX timezone string',
                     hintText: 'e.g. UTC0',
@@ -1462,22 +1563,13 @@ class _ConfigureDialogState extends State<_ConfigureDialog> {
                 ),
               ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _lat,
-              keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true, signed: true),
-              decoration: const InputDecoration(labelText: 'Latitude'),
-            ),
-            TextField(
-              controller: _lon,
-              keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true, signed: true),
-              decoration: const InputDecoration(labelText: 'Longitude'),
-            ),
-            TextField(
-              controller: _place,
-              maxLength: 23,
-              decoration: const InputDecoration(labelText: 'Place name'),
+            LocationPicker(
+              initial: _choice,
+              geocode: widget.geocode,
+              timezoneLookup: widget.timezoneLookup,
+              deviceLocation: widget.deviceLocation,
+              pickOnMap: widget.pickOnMap,
+              onChanged: _onLocationChanged,
             ),
             const SizedBox(height: 8),
             SegmentedButton<bool>(

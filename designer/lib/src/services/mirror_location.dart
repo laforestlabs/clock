@@ -11,6 +11,11 @@
 // firmware only accepts POSIX strings (see the MIRROR_TIMEZONE Kconfig help),
 // hence [posixTzForIana].
 //
+// The same provider's forecast endpoint also answers a bare coordinate pair's
+// IANA zone (see [timezoneIanaForCoordinates]), which is how a GPS fix or a map
+// pin gets a timezone at all: the geocoder is a name search and knows nothing
+// about a point.
+//
 // The fetcher is injectable so the wizard's logic is testable without a
 // network, like the rest of the protocol layer.
 
@@ -169,6 +174,34 @@ Future<List<GeocodeResult>> geocodeSearch(
       .map(GeocodeResult.fromJson)
       .whereType<GeocodeResult>()
       .toList(growable: false);
+}
+
+/// The IANA zone name for a point, or null when it cannot be had.
+///
+/// Open-Meteo's forecast endpoint answers a bare coordinate pair carrying only
+/// the timezone headers when `timezone=auto` is set — the same provider and the
+/// same parameter the firmware's weather request already uses, so this is no new
+/// vendor and no new credential. Best effort: the owner can always pick a zone.
+Future<String?> timezoneIanaForCoordinates(
+  double latitude,
+  double longitude, {
+  GeoFetcher fetcher = _httpFetcher,
+}) async {
+  final uri = Uri.https('api.open-meteo.com', '/v1/forecast', <String, String>{
+    'latitude': latitude.toString(),
+    'longitude': longitude.toString(),
+    'timezone': 'auto',
+  });
+  try {
+    final decoded = jsonDecode(await fetcher(uri));
+    if (decoded is! Map<String, dynamic>) return null;
+    // Out-of-range input is not an HTTP error: the API answers 200 with
+    // {"error":true,"reason":...} and no timezone key at all.
+    final tz = decoded['timezone'];
+    return tz is String && tz.isNotEmpty ? tz : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /// IANA zone names the wizard can translate into a POSIX TZ string the
