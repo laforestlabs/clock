@@ -568,6 +568,49 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
+  /// Whether this phone can reach [ip] over the LAN, explaining the two
+  /// reasons it usually cannot when it cannot. Both are invisible from the app
+  /// otherwise: the mirror is connected over Bluetooth either way, and the
+  /// failure only shows up as a socket timeout after the work has started.
+  /// Returns true when the caller should go ahead.
+  Future<bool> _reachableOverLan(String ip) async {
+    final lan = MirrorLan(ip);
+    while (mounted) {
+      if (await lan.reachable()) return true;
+      if (!mounted) return false;
+      final retry = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Can't reach the mirror over WiFi"),
+          content: Text(
+            'This phone could not open a connection to $ip.\n\n'
+            'Bluetooth and WiFi are separate paths, so a mirror that looks '
+            'connected can still be unreachable at its WiFi address. The two '
+            'usual causes:\n\n'
+            '• A VPN on this phone is routing local traffic into its tunnel. '
+            'Turn it off, or allow local-network traffic (Proton VPN: Allow '
+            'LAN connections).\n'
+            '• This phone is not on the same WiFi network as the mirror.\n\n'
+            'The data itself travels over WiFi — Bluetooth only carries the '
+            'command — so this has to work before anything is sent.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+      if (retry != true) return false;
+    }
+    return false;
+  }
+
   Future<void> _pushLayoutLan(int index) async {
     final device = _lanDevices[index];
     final status = _lanStatuses[index];
@@ -576,6 +619,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toastSizeMismatch(status.width, status.height);
       return;
     }
+    if (!await _reachableOverLan(device.ip)) return;
     setState(() => _lanBusy[index] = true);
     try {
       final result = await MirrorLan(device.ip).putLayout(_c.exportJson());
@@ -609,8 +653,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   /// Firmware update from the BLE section: the pong carries the mirror's
-  /// WiFi IP, which is what the upload talks to. Fails with the ordinary
-  /// "could not reach" error when the phone is not on the same WiFi.
+  /// WiFi IP, which is what the upload talks to.
   Future<void> _updateFirmwareBle() async {
     final ip = _connection.pong?.ip;
     if (ip == null || ip.isEmpty || ip == '0.0.0.0') {
@@ -634,13 +677,17 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toast('The mirror has no WiFi IP; the phone and mirror must be on the same network');
       return;
     }
+    if (!await _reachableOverLan(ip)) return;
     await _uploadAndWait(ip, bundled.bytes, 'bundled v${bundled.version}');
   }
 
   /// Shared OTA flow: prefer the firmware bundled with this app, offering a
   /// file or a URL as fallbacks. Upload the chosen bytes over the LAN API,
-  /// then poll until the mirror answers again after its reboot.
+  /// then poll until the mirror answers again after its reboot. Probes the
+  /// LAN first: everything that follows sends megabytes over WiFi, and there
+  /// is no point picking a source for an address this phone cannot reach.
   Future<void> _updateFirmware(String ip, {String deviceVersion = ''}) async {
+    if (!await _reachableOverLan(ip)) return;
     final bundled = await loadBundledFirmware();
     if (!mounted) return;
 

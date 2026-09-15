@@ -251,6 +251,13 @@ Notes:
 
 - The phone and the mirror must be on the same LAN for the upload; the app
   warns about this when the mirror reports no usable WiFi IP.
+- Bluetooth and WiFi are separate paths: a phone can hold a BLE session to a
+  mirror it cannot reach at its LAN address. The usual cause is a VPN on the
+  phone that routes local traffic into its tunnel (Proton VPN's "Allow LAN
+  connections" off, or any full-tunnel VPN), which is invisible from the app —
+  the mirror looks connected. Before an upload the app opens a TCP connection
+  to the mirror and, when that fails, says so and names the two causes instead
+  of failing mid-upload with a socket error.
 - `python3 -m http.server` (which `--serve` wraps) is not a hardened web
   server. It is fine for a home LAN update session; do not expose it to the
   internet.

@@ -104,6 +104,25 @@ class MirrorLan {
     return client;
   }
 
+  /// Whether a TCP connection to the mirror's HTTP port can be opened right
+  /// now. The Bluetooth link and the WiFi path are independent: a phone can
+  /// hold a BLE session to a mirror it cannot reach at its LAN address, which
+  /// a VPN that routes local traffic into its tunnel does, and so does a phone
+  /// on another network. Anything that sends a body over WiFi asks this first,
+  /// so the failure is named instead of surfacing as a socket timeout.
+  Future<bool> reachable({Duration timeout = const Duration(seconds: 4)}) async {
+    final uri = _uri('/');
+    try {
+      final socket = await Socket.connect(uri.host, uri.port, timeout: timeout);
+      socket.destroy();
+      return true;
+    } on SocketException {
+      return false;
+    } on TimeoutException {
+      return false;
+    }
+  }
+
   Future<MirrorStatus> status() async {
     final client = await _newClient();
     try {

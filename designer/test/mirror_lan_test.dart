@@ -183,6 +183,35 @@ void main() {
     });
   });
 
+  group('reachable', () {
+    test('true against a mirror that answers', () async {
+      expect(await lan.reachable(), isTrue);
+    });
+
+    test('false when nothing is listening on that port', () async {
+      // Learn a free port, then close it: a closed loopback port refuses
+      // immediately, which is the "wrong address, or the mirror is down" case.
+      final probe = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final dead = MirrorLan('127.0.0.1:${probe.port}');
+      await probe.close(force: true);
+
+      expect(await dead.reachable(timeout: const Duration(seconds: 2)), isFalse);
+    });
+
+    test('false when the packets go nowhere', () async {
+      // TEST-NET-1 (RFC 5737) routes nowhere, so the connect fails or times
+      // out — both mean unreachable. This is the shape of the failure a VPN
+      // that captures the LAN produces: the phone is connected, the Bluetooth
+      // link works, and the SYN disappears into the tunnel.
+      final tunneled = MirrorLan('192.0.2.1:80');
+
+      expect(
+        await tunneled.reachable(timeout: const Duration(milliseconds: 500)),
+        isFalse,
+      );
+    });
+  });
+
   group('OTA', () {
     test('uploads byte-identical content with monotonic progress', () async {
       final dir = await Directory.systemTemp.createTemp('mirror_lan_test');

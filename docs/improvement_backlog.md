@@ -42,6 +42,8 @@ verification that runs on this machine (no hardware needed).
 | M2 | Network-supplied numbers are clamped where they are read: `line_gap`, `max_items`, the countdown deadline, and the integer conversion | New `hostile layout` test group; the `-ftrapv` reproduction that aborted at `render.c:401` now exits cleanly |
 | M3 | Rect components are clamped before narrowing to `int16_t`, so a silly rect warns and clips instead of wrapping back inside the canvas | Same test group |
 | M8 | The update's rollback is cancelled after the first frame is drawn, not before the render task has started | Firmware builds; `ota_mark_valid()` moved into the render task |
+| H14 | Name the reason a phone cannot reach the mirror's LAN API before an upload starts | Three new `reachable()` cases; the Pixel now says "Can't reach the mirror over WiFi" instead of a socket timeout |
+| D18 | Re-stage the bundled image and bump the version after the firmware fixes landed without one | Staged and built images are byte-identical at `0.2.24` |
 | M10 *(1 of 6)* | `resolved_font_test.dart` asserted stale font names and scales, and had been failing unseen behind the skip | Now asserts agreement with the engine; both tests pass with the native core |
 | M13 *(4 of 5)* | Hit-testing skips unknown widget types; `-b` is range-checked; the evening sample's clock and its machine-readable time agree; "All done" is only claimed when the data says so | Two tests in the core suite; the existing render fixtures are unchanged |
 | D17 *(partial)* | Empty `designer/mirror_designer/` removed; two unused FFI typedefs and one no-op assertion deleted, taking `dart analyze` from 13 issues to 10 | `dart analyze --fatal-infos`; suite green |
@@ -64,6 +66,7 @@ skipped.
 | B3 | Send `Content-Length` on the LAN layout PUT | BLOCKER | XS | — | Done 2026-09-14 |
 | H1 | Register the WiFi scan handler outside the portal | HIGH | XS | — | Done 2026-09-14 |
 | H2 | Stop the STA retry storm when autoreconnect is off | HIGH | XS | — | Done 2026-09-14 |
+| H14 | Say why a phone cannot reach the mirror's LAN API instead of failing mid-upload | HIGH | S | — | Done 2026-09-14 |
 | H3 | Constrain the clock bootstrap; offer a TCP SNTP path | HIGH | M | — | Open |
 | H8 | Make `--dump` byte-identical to what the device receives | HIGH | S | — | Done 2026-09-14 |
 | H13 | Fix or drop the Cairo timezone entry | HIGH | XS | — | Open |
@@ -91,6 +94,7 @@ skipped.
 | M8 | Gate `ota_mark_valid()` on a successfully started render task | MEDIUM | XS | — | Done 2026-09-14 |
 | M9 | Fix or remove the MBI5124 driver option | MEDIUM | XS | *decision 4* | Open |
 | M12 | Gamekit runtime and host-harness defects | MEDIUM | M | — | Open |
+| M14 | The first weather fetch after a boot can fail its TLS handshake | MEDIUM | S | — | Open |
 | L1–L15 | Assorted LOW items | LOW | S | — | Open |
 | **Tier 4 — test and CI infrastructure (unblocks confident work on Tier 3)** | | | | | |
 | I1 | Add CI: core check, firmware build, designer analyze + test | — | S | — | Open |
@@ -110,6 +114,7 @@ skipped.
 | **Tier 6 — documentation and housekeeping** | | | | | |
 | D1–D15 | Documentation corrections | — | S | — | Open |
 | D17 | Housekeeping: empty directory, `dart analyze` warnings | — | XS | — | Partly done — 10 analyzer infos remain |
+| D18 | Re-stage the bundled image and bump the version after a firmware change | — | XS | — | Done 2026-09-14 |
 
 ---
 
@@ -261,6 +266,34 @@ setup page's network list is built from.
 
 **Fixed:** with auto-reconnect off there is no retry from the handler at all; the timer path
 (and a fallback when no timer exists) still serves the normal case.
+
+### H14 — The update failed on the phone while the mirror looked connected **(V)** · Done 2026-09-14 · Effort: S
+
+**Was:** tapping *Update firmware → Install v0.2.23* on the Pixel answered with a socket
+timeout, and the mirror never saw a request. Bluetooth and WiFi are separate paths, and the
+app only ever checked the BLE side: it enabled the button from the pong's IP and then spent
+the upload's timeout on the first packet, reporting
+
+```
+update: could not reach 192.168.0.165: Connection timed out (OS Error: Connection timed out, errno = 110)
+```
+
+which names neither of the two real causes. A full-tunnel VPN on the phone is the common
+one: `dumpsys connectivity` shows Proton VPN's `tun0` carrying `192.168.0.0/17 -> tun0`, so
+the mirror's subnet goes into the tunnel and its SYN never reaches the AP. Measured from the
+app's own UID on the device (`adb shell run-as com.example.mirror_designer`, the APK is
+debuggable): `nc 192.168.0.165 80` times out and `nc 1.1.1.1 443` answers, and the phone's
+ARP table has no entry for the mirror afterwards — the packets did not leave `wlan0`. The
+mirror's own persisted log settled the device side: in ~4 days of entries, the only
+`OTA_BEGIN`/`OTA_OK` pair is the probe upload sent from the PC.
+
+**Fixed:** `MirrorLan.reachable()` — a 4 s TCP connect probe — gates every flow that sends
+bytes over WiFi (both OTA entry points, bundled and source-dialog, and the LAN layout push).
+When it fails the app says which address is unreachable, that Bluetooth being up does not
+mean the WiFi path is, and the two causes: a VPN routing local traffic (with the setting to
+look for) and a phone on another network. Retry re-probes in place, so enabling the VPN's
+LAN access and tapping Retry finishes the update. Three cases in `mirror_lan_test.dart`
+(answer, refused port, packets that go nowhere).
 
 ### H3 — Anyone who answers one request can set the mirror's clock **(V)** · Effort: M
 
@@ -614,6 +647,35 @@ remove the choice.
 | `ffi/game_ffi.h:50` | Only control labels are exposed — no codes, types or axes — so the designer's simulation cannot drive the tilt controls the probe game declares |
 | `gamenet.h:30` | The handshake messages are declared but never sent, and a peer's random seed is zero — a fixed point of the generator |
 
+### M14 — The first weather fetch after a boot can fail its TLS handshake **(V)** · Effort: S
+
+Observed on the UART console of the board at `192.168.0.165`, on the boot after an OTA —
+where the fetch is triggered the moment the link comes up, seconds after the BLE stack and
+httpd have claimed their banks:
+
+```
+I (3604) provider: link is back, refreshing everything now
+E (3729) esp-aes: Failed to allocate memory
+E (3730) esp-tls-mbedtls: mbedtls_ctr_drbg_seed returned -0x0001
+E (3732) esp-tls: create_ssl_handle failed
+E (3737) transport_base: Failed to open a new connection
+W (3748) http: connect failed: ESP_ERR_HTTP_CONNECT
+W (3758) provider: weather: failed (ESP_ERR_HTTP_CONNECT), attempt 1, retry in 900s
+```
+
+The same firmware fetched fine on the previous boot (`openmeteo: 16.2C (feels 14.4) ... updated
+in 1555ms`), so this is an allocation race, not a configuration error — and the cost is
+fifteen minutes of `weather stale` on the panel, on the boot the owner is most likely to be
+watching (right after an update). The 30 s status line kept reporting `weather stale` for at
+least ten minutes afterwards.
+
+**Fix (candidate):** fail fast and retry in seconds rather than the provider's 900 s cadence,
+and/or take the TLS buffers (AES context, CTR_DRBG) from a reserved pool at init, the way the
+panel already claims its DMA block before WiFi fragments the heap.
+
+**Done when.** A fresh boot's first fetch either succeeds or retries within ~10 s, with the
+allocation failure logged once.
+
 ### L1–L15 — Assorted LOW items
 
 Unknown widget types are rewritten as `"unknown"` on a device round trip, so a newer layout
@@ -740,6 +802,24 @@ Every row was checked against the code during the scan.
 | `docs/games.md:329, :127` `gamekit/src/shapes.c`, `ml_rand_seed` | Do not exist | Fix |
 | `docs/ble_control_and_ota_plan.md` ("Audience: the agent implementing this") | Everything in it has shipped | Mark as delivered, keep as history |
 | `firmware/main/main.c:5` "Weather, calendar and todos arrive in M3" | Calendar and todos never arrived | Correct, or update when F1 lands |
+
+### D18 — The bundled image and the version drifted apart **(V)** · Done 2026-09-14 · Effort: XS
+
+**Was:** the tree carried two different builds of `0.2.23` — the staged one
+(`designer/assets/firmware/smart_mirror.bin`, 1305568 bytes, app descriptor built 13:39) and
+`firmware/build/smart_mirror.bin` (1306144 bytes, built 20:21 from the sources, including the
+firmware fixes in `5d362e5`). `5d362e5` changed `firmware/main/**` without bumping
+`project(smart_mirror VERSION ...)` or re-staging, so the rule at the top of
+`firmware/CMakeLists.txt` ("bump this version on every firmware change ... two builds that
+share a version are indistinguishable on the board and over OTA") was broken by exactly one
+commit. `firmware/README.md` promises the opposite: "a stale bundle is therefore not
+possible". The APK built at 21:28 carries the newer build (its asset hashes to `7dab2d2e…`,
+the build directory's image), so the bundled copy and the staged copy disagreed at the same
+version — an update could not be shown to have happened.
+
+**Fixed:** version bumped to `0.2.24` and `tools/bundle_firmware.sh` re-run, so the staged
+image is byte-identical to the sources' build and the next update is verifiable: the app's
+"Install v0.2.24" and the mirror's `/api/status` now have to agree.
 
 ### D17 — Housekeeping · Partly done 2026-09-14 · Effort: XS
 
