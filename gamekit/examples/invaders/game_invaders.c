@@ -264,10 +264,12 @@ static void invaders_draw(const void *state, const ml_view *view, ml_canvas *c,
     if (s->status == INV_OVER) {
         const ml_font *of = ml_font_find("sans10");
         if (!of) of = ml_font_default();
-        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
         int th = ml_text_height(of, ML_SCALE_1X);
-        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
-                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+        int top = (H - (2 * th + 1)) / 2;
+        ml_text_draw(c, of, (W - ml_text_width(of, "GAME", ML_SCALE_1X)) / 2,
+                     top, "GAME", ML_RGB(255, 60, 60), ML_SCALE_1X);
+        ml_text_draw(c, of, (W - ml_text_width(of, "OVER", ML_SCALE_1X)) / 2,
+                     top + th + 1, "OVER", ML_RGB(255, 60, 60), ML_SCALE_1X);
     }
 }
 

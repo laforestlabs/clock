@@ -1,7 +1,8 @@
 /*
- * tetris_input_test.c - regression test for the Down (soft drop) contract.
+ * tetris_input_test.c - regression test for the Tetris rotation and Down
+ * (soft drop) contracts.
  *
- * Two bugs this pins down:
+ * Three bugs this pins down:
  *
  *  1. Down must accelerate the fall, not hard-drop. The old code dropped the
  *     piece to the floor in the same tick, and because the phone streams the
@@ -11,6 +12,11 @@
  *  2. The soft drop must stop at the lock: the next piece only accelerates
  *     again after the player releases Down and holds it once more. Held-down
  *     frames that cross a lock must not re-engage.
+ *
+ *  3. Up must rotate once per press, not once per event. The same full-state
+ *     stream delivers a run of Up=1 packets while the button is held (and a
+ *     keyboard repeats the key), and each one used to spin the piece again.
+ *     Only the 0->1 edge rotates; a release re-arms the next press.
  *
  * Observable: on a 64x32 panel the field is the 32-wide center (origin x=16,
  * frame at columns 15 and 48, row 31). Every piece is 4 lit cells; a locked
@@ -23,9 +29,17 @@
  * must NOT accelerate while Down stays held), then release once and hold
  * again (the soft drop must re-engage and lock the second piece). Expected
  * cell counts: 4, 4, 4, 8, 12.
+ *
+ * The rotation cases run on their own sessions, opened with seed 2, which
+ * deals the T piece: all four of its rotations are distinct, so a rotation
+ * that silently did nothing cannot pass. Seed 1 deals the rotation-invariant
+ * O piece, which is why the soft-drop sessions above cannot show it.
+ * Nothing is stepped between the Up events, so gravity and the score
+ * animation cannot account for any difference.
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "game_ffi.h"
 
@@ -75,6 +89,25 @@ static void release_down(ml_game_session *s, int steps)
     }
 }
 
+/* Byte-compare the field rect of two sessions. The two render buffers are
+ * session-owned, and the rect excludes the score text at (1,1) and the
+ * next-piece preview in the right margin, so only the piece's cells can
+ * differ. Comparing rendered panel pixels keeps the assertion on observable
+ * output rather than on the session's private held state. */
+static int same_field(ml_game_session *a, ml_game_session *b)
+{
+    const uint8_t *ra = ml_game_render_rgba(a);
+    const uint8_t *rb = ml_game_render_rgba(b);
+    if (!ra || !rb) return 0;
+
+    for (int y = FIELD_Y; y < FIELD_Y + FIELD_H; y++) {
+        const uint8_t *pa = ra + ((size_t)y * PANEL_W + FIELD_X) * 4;
+        const uint8_t *pb = rb + ((size_t)y * PANEL_W + FIELD_X) * 4;
+        if (memcmp(pa, pb, (size_t)FIELD_W * 4) != 0) return 0;
+    }
+    return 1;
+}
+
 int main(void)
 {
     ml_game_session *s = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
@@ -122,6 +155,53 @@ int main(void)
     if (rearmed != 12) fail = 1;
 
     ml_game_close(s);
+
+    /* 6. Up rotates once per press. Three Up=1 packets with no release in
+     * between are one press, exactly as the phone's per-frame full-state
+     * stream delivers them; the field must match a session that received a
+     * single Up=1. The frozen session pins the "rotated at all" half: if the
+     * edge handling accidentally swallowed every press, the held session
+     * would match it and the first assertion would pass vacuously. */
+    ml_game_session *up1   = ml_game_open("tetris", PANEL_W, PANEL_H, 2, 1);
+    ml_game_session *uprep = ml_game_open("tetris", PANEL_W, PANEL_H, 2, 1);
+    ml_game_session *up2   = ml_game_open("tetris", PANEL_W, PANEL_H, 2, 1);
+    ml_game_session *up0   = ml_game_open("tetris", PANEL_W, PANEL_H, 2, 1);
+    if (!up1 || !uprep || !up2 || !up0) {
+        fprintf(stderr, "open failed\n");
+        return 1;
+    }
+
+    ml_game_button(up1, 1, 0, 1);   /* one press, no step */
+    ml_game_button(uprep, 1, 0, 1); /* held: three packets, no release */
+    ml_game_button(uprep, 1, 0, 1);
+    ml_game_button(uprep, 1, 0, 1);
+
+    int rotated = !same_field(up0, up1);
+    int held_once = same_field(up1, uprep);
+    printf("one Up press:     field moved=%d (expect 1)\n", rotated);
+    printf("held Up x3:       ==one press=%d (expect 1, bug: 0)\n", held_once);
+    if (!rotated || !held_once) fail = 1;
+
+    /* 7. Releasing re-arms the next press: the held session rotates a second
+     * time, matching a clean two-press reference, and no longer matches the
+     * one-rotation frame (T's four rotations are all distinct). A session
+     * that ignored the release stays at one rotation and matches nothing. */
+    ml_game_button(uprep, 1, 0, 0);  /* release */
+    ml_game_button(uprep, 1, 0, 1);  /* press again: second rotation */
+    ml_game_button(up2, 1, 0, 1);    /* clean two-press reference */
+    ml_game_button(up2, 1, 0, 0);
+    ml_game_button(up2, 1, 0, 1);
+
+    int two_matches = same_field(uprep, up2);
+    int two_differs = !same_field(up1, uprep);
+    printf("release+press:    ==two presses=%d (expect 1)\n", two_matches);
+    printf("one vs two:       fields differ=%d (expect 1)\n", two_differs);
+    if (!two_matches || !two_differs) fail = 1;
+
+    ml_game_close(up1);
+    ml_game_close(uprep);
+    ml_game_close(up2);
+    ml_game_close(up0);
 
     if (fail) {
         printf("FAIL\n");

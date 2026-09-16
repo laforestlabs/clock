@@ -8,13 +8,48 @@ inputs, what pixels go on the panel, *and what state comes next*, frame after
 frame, on displays that range from a 64x32 clock to a 128x128 mirror, with one
 player on a phone or several players on several phones?
 
-This document is the design for `gamekit/`: the simulation and the architecture
-for writing games that run on any of the project's panels today, without
-hardware, and that reach a phone as a controller over the LAN. Firmware
-integration is a later phase and is intentionally out of scope here. What is in
-scope is the contract every game signs, the runtime that drives it, the
-abstraction that makes any panel size work, and the multiplayer model that keeps
-those properties honest when more than one player joins.
+This document records the design for `gamekit/`: its deterministic simulation,
+panel geometry, and multiplayer architecture. The app now runs the shared native
+simulation locally or controls one player on the ESP32 over BLE. The LAN and
+multi-phone architecture described below remains design material, not a claim
+that those transports are shipped. See [Games in the app](../designer/README.md#games)
+for choosing, controlling, pausing, and replaying the five playable games.
+
+## Shipped BLE session protocol
+
+Game commands are serialized independently of low-level BLE writes. The app
+subscribes before sending a command and waits for its matching reply; unsolicited
+terminal and watchdog notifications remain visible to other listeners.
+
+| Command | Successful reply |
+|---|---|
+| `game list` | `games` followed by space-separated IDs; bare `games` is supported-empty |
+| `game start <id>` | `game ok <id>` followed by declared controls |
+| `game stop` | `game stopped`; `game error no game` also means already stopped |
+| `game pause` | `game paused` |
+| `game resume` | `game resumed` |
+
+Pause/Resume are idempotent in their respective states. Without a session they
+return `game error no game`; resuming a terminal session returns
+`game error game over`. A full command queue returns `game error busy`.
+Other device rejections retain the last acknowledged state. A ten-second
+transition timeout, malformed acknowledgment, or transport failure disconnects
+the app because the remote state is unknown.
+
+The firmware runner owns pause, not the individual game implementations. Paused
+and terminal boards remain displayed without simulation updates. Pause feeds
+zero events for every declared control, and start/stop/pause/resume discard
+queued stale inputs. Resume resets the clock so paused time is never caught up.
+The app sends full-state recovery packets every 100 ms; after 500 ms without
+valid input, the runner pauses and sends one `game paused` notification. New
+input alone cannot resume it. A BLE disconnect ends the session and restores
+the normal mirror layout.
+
+Firmware that answers `unknown command` to Pause is not treated as paused.
+Manual Pause reports that an update is required; automatic interruptions and
+Help use an acknowledged Stop instead. If that Stop cannot be acknowledged, the
+app disconnects. Deploy the updated app and firmware together for interruption
+safety.
 
 ## The principle the framework inherits
 

@@ -694,12 +694,20 @@ static void handle_cmd(char *line)
     } else if (strncmp(line, "game start ", 11) == 0) {
         /* Queued, not run here: opening a session allocates and must not run
          * on the NimBLE host task. The render task answers "game ok ..." or
-         * "game error ...". */
+         * "game error ..."; queue saturation is answered by the request. */
         game_runner_request_start(line + 11);
     } else if (strcmp(line, "game stop") == 0) {
         /* Queued like start; the render task answers "game stopped" or
          * "game error no game". */
         game_runner_request_stop();
+    } else if (strcmp(line, "game pause") == 0) {
+        /* Queued like start; the render task freezes the round and answers
+         * "game paused", or "game error no game" when none is live. */
+        game_runner_request_pause();
+    } else if (strcmp(line, "game resume") == 0) {
+        /* Queued like start; the render task answers "game resumed", "game
+         * error no game", or "game error game over" for a finished round. */
+        game_runner_request_resume();
     } else {
         send_status("unknown command");
     }
@@ -770,7 +778,9 @@ static int status_read_cb(uint16_t conn_handle, uint16_t attr_handle,
  * The type is resolved from the running game (game_runner_control_type)
  * rather than trusted from a byte on the wire. Max packet 49 bytes. Any
  * other shape is a protocol violation and is dropped, matching the Dart
- * writer in mirror_ble_game.dart.
+ * writer in mirror_ble_game.dart. The whole frame then goes to the runner in
+ * one call: it is validated against the running game's control list there,
+ * and only an accepted frame counts as the controller still being there.
  */
 static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                             struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -802,6 +812,11 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         return 0;
     }
 
+    /* Static, not stack: this is one frame's worth of events and the host task
+     * has a small stack (see the file header). Only the host task runs a GATT
+     * write callback, so there is no second writer. */
+    static ml_input_event events[16];
+
     for (uint8_t i = 0; i < count; i++) {
         const uint16_t code = p[1 + 3 * i];
         const int16_t raw =
@@ -810,7 +825,7 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         const int16_t value = (type == ML_INPUT_AXIS) ? raw : (raw ? 1 : 0);
         /* seq/tick left 0: the runtime stamps the host tick and games never
          * read seq. */
-        ml_input_event e = {
+        events[i] = (ml_input_event){
             .player_id = 1,
             .seq = 0,
             .code = code,
@@ -818,8 +833,11 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
             .tick = 0,
             .type = type,
         };
-        game_runner_request_input(&e);
     }
+    /* Best effort by design: a frame the runner rejects (no session, a code
+     * from another game's table) or a saturated queue drops this packet, and
+     * the phone's next heartbeat carries the same held state again. */
+    (void)game_runner_request_input_frame(events, count);
     return 0;
 }
 
@@ -966,10 +984,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "disconnected");
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         transfer_reset();
-        /* A game only ever runs for the one connected phone; drop it. The
-         * queued stop is answered by the render task, whose status line
-         * no-ops here because s_conn_handle is already NONE. */
-        game_runner_request_stop();
+        /* Disconnect is mandatory teardown, not a droppable game command.
+         * The render task discards queued commands and ends the session. */
+        game_runner_request_disconnect();
         advertise();
         return 0;
 

@@ -37,7 +37,8 @@ CLI     := $(BUILD)/game-cli
 
 # Host tests, compiled against the FFI layer like Dart binds to it. Run with:
 #   make -f Makefile.host check
-TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_input_test
+TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_input_test \
+            $(BUILD)/breakout_progression_test
 
 .PHONY: all clean cli core check
 
@@ -66,6 +67,13 @@ $(BUILD)/ffi/game_ffi.o: ffi/game_ffi.c
 	$(CC) $(CFLAGS) -Iffi -c $< -o $@
 
 $(BUILD)/%_test: host/%_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(EX_OBJ) $(CORE_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
+
+# The breakout fixture includes examples/breakout/game_breakout.c to drive the
+# game's own static lifecycle and state without a production test API, so it
+# defines ml_game_breakout itself and must not also link the game's object.
+$(BUILD)/breakout_progression_test: host/breakout_progression_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(filter-out $(BUILD)/examples/breakout/game_breakout.o,$(EX_OBJ)) $(CORE_LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
 

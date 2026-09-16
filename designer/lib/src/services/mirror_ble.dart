@@ -114,6 +114,14 @@ Future<List<BleScanEntry>> scanForMirrors({
   return found;
 }
 
+/// Whether [line] can answer a `ping`: the pong payload every firmware
+/// build sends. Anything else (a `game over <id>` push, say) must not be
+/// mistaken for the reply.
+bool _isPongReply(String line) => line.startsWith('pong ');
+
+/// Whether [line] can answer a `get latency` diagnostic.
+bool _isLatencyReply(String line) => line.startsWith('latency ');
+
 /// A connected mirror. All writes are with-response and serialized through a
 /// queue, so chunk order is preserved and the device's ATT backpressure is
 /// respected.
@@ -153,6 +161,12 @@ class BleSession {
   // Serialization tail for with-response writes.
   Future<void> _writeTail = Future<void>.value();
 
+  // Serialization tail for game commands. Separate from [_writeTail]: a
+  // transaction owns this slot for the whole subscribe/write/wait cycle,
+  // while [_writeCmd] only queues the write itself. A transaction that fails
+  // must not hold up the next one, hence the error-swallowing tail.
+  Future<void> _gameTail = Future<void>.value();
+
   /// Connect, discover the service and start listening for status
   /// notifications. Throws [BlePushException] when the service is missing.
   /// [timeout] bounds the link establishment; the caller decides how long a
@@ -161,7 +175,8 @@ class BleSession {
   static Future<BleSession> connect(BluetoothDevice device,
       {Duration timeout = const Duration(seconds: 35)}) async {
     // Personal home use: the nonprofit license covers it.
-    await device.connect(mtu: 512, license: License.nonprofit, timeout: timeout);
+    await device.connect(
+        mtu: 512, license: License.nonprofit, timeout: timeout);
     // Ask the central for a fast connection interval. Android HIGH maps to
     // 11.25-15 ms, which cuts the radio wait for a game input packet from the
     // 30-50 ms balanced default. The firmware requests the same interval via
@@ -245,15 +260,41 @@ class BleSession {
 
   /// Write a command and wait for its one status line, subscribing first so
   /// the response can never be missed.
+  ///
+  /// With [accepts], wait for the first line the predicate approves instead
+  /// of the next line to arrive, and give up on [timeout]. Game and
+  /// diagnostic commands use it so an unsolicited line — a `game over <id>`
+  /// push during a latency poll, say — cannot be mistaken for the answer.
   Future<String> _sendAndWait(String line,
-      {Duration timeout = const Duration(seconds: 10)}) async {
+      {Duration timeout = const Duration(seconds: 10),
+      bool Function(String)? accepts}) async {
+    if (accepts != null) {
+      return waitForGameReply(
+        statuses: _statusController.stream,
+        write: () => _writeCmd(line),
+        accepts: accepts,
+        timeout: timeout,
+      );
+    }
     final status = _takeStatuses(1, timeout: timeout);
     await _writeCmd(line);
     return (await status).single;
   }
 
+  /// One game command transaction: subscribe for the reply, write, and await
+  /// it inside a single slot, so a reply can never be matched to a different
+  /// game command and the write keeps its place in the low-level queue.
+  Future<String> _gameCommand(String line,
+      {required bool Function(String) accepts,
+      Duration timeout = const Duration(seconds: 10)}) {
+    final result = _gameTail
+        .then((_) => _sendAndWait(line, accepts: accepts, timeout: timeout));
+    _gameTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
   /// Raw pong payload, e.g. "pong 0.2.0 192.168.1.5 mini 64 32".
-  Future<String> ping() => _sendAndWait('ping');
+  Future<String> ping() => _sendAndWait('ping', accepts: _isPongReply);
 
   /// The raw "config {...}" line, or null when the mirror has none.
   Future<String?> getConfigRaw() => _sendAndWait('get config');
@@ -280,7 +321,8 @@ class BleSession {
   /// connection interval, or null when the firmware does not answer the
   /// command (an older build). See [BleLatency].
   Future<BleLatency?> getLatency() async {
-    return parseLatencyStatus(await _sendAndWait('get latency'));
+    return parseLatencyStatus(
+        await _sendAndWait('get latency', accepts: _isLatencyReply));
   }
 
   /// Round-trip time of a command write plus its status notification. A
@@ -294,7 +336,6 @@ class BleSession {
     return sw.elapsed;
   }
 
-
   /// Set a manual brightness override, or clear it (back to following the
   /// layout) when [value] is null. Returns the device's status line; throws
   /// [BlePushException] with the device's reason on rejection.
@@ -302,7 +343,8 @@ class BleSession {
     final status = await _sendAndWait(
         value == null ? 'set brightness auto' : 'set brightness $value');
     if (status.startsWith('brightness error')) {
-      throw BlePushException(status.substring('brightness error'.length).trim());
+      throw BlePushException(
+          status.substring('brightness error'.length).trim());
     }
     return status;
   }
@@ -394,31 +436,76 @@ class BleSession {
     return line;
   }
 
-  /// The mirror's game ids, or null when the firmware does not support
-  /// games (it answers "unknown command" to "game list").
-  Future<List<String>?> listGames() async =>
-      parseGameList(await _sendAndWait('game list'));
+  /// The mirror's game ids, or null when the firmware does not support games
+  /// (it answers "unknown command" to "game list"). An empty list means a
+  /// mirror that supports games and has none installed — not an unsupported
+  /// one. A malformed reply is an error, not a claim about the firmware.
+  Future<List<String>?> listGames() async {
+    final line = await _gameCommand('game list', accepts: isGameListReply);
+    final ids = parseGameList(line);
+    if (ids != null) return ids;
+    if (line == unknownCommandReply) return null;
+    if (line.startsWith('$gameErrorPrefix ')) {
+      throw BlePushException(gameErrorReason(line));
+    }
+    throw FormatException('unexpected game list reply: $line');
+  }
 
   /// Start a game on the mirror and return its control labels for the
   /// gamepad. Throws [BlePushException] with the device's reason when the
-  /// mirror rejects the start.
+  /// mirror rejects the start, and [FormatException] when the mirror answers
+  /// for a different game — the device is then running something the app did
+  /// not ask for, so the caller has to treat the session as unknown.
   Future<MirrorGame> startGame(String id) async {
-    final line = await _sendAndWait('game start $id');
+    final line =
+        await _gameCommand('game start $id', accepts: isGameStartReply);
     final g = parseGameOk(line);
-    if (g == null) {
-      if (line.startsWith('game error')) {
-        throw BlePushException(line.substring('game error'.length).trim());
+    if (g != null) {
+      if (g.id != id) {
+        throw FormatException(
+            'mirror answered "game ok ${g.id}" for "game start $id"');
       }
-      throw BlePushException('unexpected reply: $line');
+      return g;
     }
-    return g;
+    if (line == unknownCommandReply) {
+      throw BlePushException(unknownCommandReply);
+    }
+    if (line.startsWith('$gameErrorPrefix ')) {
+      throw BlePushException(gameErrorReason(line));
+    }
+    throw FormatException('unexpected game start reply: $line');
   }
 
-  /// Stop the running game. The reply ("game stopped" or an error) is
-  /// consumed and its value ignored; a stop on a mirror with no game running
-  /// is harmless.
+  /// Stop the running game. "game stopped" and "game error no game" both mean
+  /// no game is running now, so stopping an idle mirror is harmless. Any other
+  /// device error, and the `unknown command` of firmware without games, throws
+  /// [BlePushException] with the device's reason.
   Future<void> stopGame() async {
-    await _sendAndWait('game stop');
+    final line = await _gameCommand('game stop', accepts: isGameStopReply);
+    if (line == 'game stopped' || line == 'game error no game') return;
+    if (line == unknownCommandReply) {
+      throw BlePushException(unknownCommandReply);
+    }
+    throw BlePushException(gameErrorReason(line));
+  }
+
+  /// Freeze the remote simulation without discarding its board.
+  Future<void> pauseGame() => _changeGamePause('pause', 'game paused');
+
+  /// Continue a paused remote simulation, with all controls released.
+  Future<void> resumeGame() => _changeGamePause('resume', 'game resumed');
+
+  Future<void> _changeGamePause(String command, String acknowledgment) async {
+    final line = await _gameCommand('game $command',
+        accepts: (line) =>
+            line == acknowledgment ||
+            line.startsWith('$gameErrorPrefix ') ||
+            line == unknownCommandReply);
+    if (line == acknowledgment) return;
+    if (line == unknownCommandReply) {
+      throw BlePushException('Update the mirror firmware to use Pause.');
+    }
+    throw BlePushException(gameErrorReason(line));
   }
 
   /// Stream the full input state to the mirror, one packet per frame.

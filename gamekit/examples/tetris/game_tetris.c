@@ -2,11 +2,12 @@
  * game_tetris.c - the third game: falling blocks on any panel.
  *
  * The puzzle game, and the first whose controls are semantic rather than
- * spatial: Up rotates, Down soft-drops (hold to fall faster, one row per
- * tick, re-armed by a fresh press per piece), Left/Right move. Same input surface
- * as snake (four direction buttons), different meaning, which is exactly the
- * contract's point: the controls are declared by the game, and the controller
- * client renders them as labels.
+ * spatial: Up rotates once per press edge (a held key or the phone's repeated
+ * full-state packets must not spin the piece), Down soft-drops (hold to fall
+ * faster, one row per tick, re-armed by a fresh press per piece), Left/Right
+ * move. Same input surface as snake (four direction buttons), different
+ * meaning, which is exactly the contract's point: the controls are declared
+ * by the game, and the controller client renders them as labels.
  *
  * The field is capped at 32 wide by 64 tall, so a row is exactly one uint32
  * and the whole board is 256 bytes of state, well under the 1024-byte
@@ -41,6 +42,7 @@ typedef struct {
     uint8_t  next_piece;
     uint16_t score;
     uint16_t lines;
+    uint8_t  held_u;           /* last Up held state, for press edges */
     uint8_t  held_d;           /* last Down held state, for press edges */
     uint8_t  down_active;      /* soft drop engaged for the current piece */
     uint32_t board[TETRIS_BH]; /* 1 bit per cell, bw wide */
@@ -159,6 +161,7 @@ static void tetris_reset(void *state, ml_game_ctx *ctx)
     s->fall_ctr = 0;
     s->held_l = 0;
     s->held_r = 0;
+    s->held_u = 0;
     s->held_d = 0;
     s->down_active = 0;
     s->status = TETRIS_PLAYING;
@@ -175,8 +178,15 @@ static void tetris_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
     tetris_state *s = state;
     if (s->status != TETRIS_PLAYING) return;
     switch (e->code) {
-    case 0:  /* Up: rotate */
-        if (e->value) tetris_rotate(s);
+    case 0:  /* Up: rotate, on the press edge only */
+        if (e->value) {
+            /* the phone streams the whole held state every frame and the
+             * keyboard repeats a held key, so a held Up arrives as a run of
+             * value=1 events: rotate once per press, not once per packet.
+             * A release re-arms the next press */
+            if (!s->held_u) tetris_rotate(s);
+        }
+        s->held_u = e->value ? 1 : 0;
         break;
     case 1:  /* Down: soft drop, re-armed by a release */
         if (e->value) {
@@ -311,10 +321,17 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
     if (s->status == TETRIS_OVER) {
         const ml_font *of = ml_font_find("sans10");
         if (!of) of = ml_font_default();
-        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
-        int th = ml_text_height(of, ML_SCALE_1X);
-        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
-                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+        /* "GAME OVER" is one pixel wider than the shipped 64px panel, so the
+         * label clips at both edges; two centered lines fit and read the
+         * same. A one-pixel gap keeps the block tight while staying centered */
+        ml_rgb over = ML_RGB(255, 60, 60);
+        int lh = ml_text_height(of, ML_SCALE_1X);
+        int top = (H - (2 * lh + 1)) / 2;
+        int w0 = ml_text_width(of, "GAME", ML_SCALE_1X);
+        int w1 = ml_text_width(of, "OVER", ML_SCALE_1X);
+        ml_text_draw(c, of, (W - w0) / 2, top, "GAME", over, ML_SCALE_1X);
+        ml_text_draw(c, of, (W - w1) / 2, top + lh + 1, "OVER", over,
+                     ML_SCALE_1X);
     }
 }
 

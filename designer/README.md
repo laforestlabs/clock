@@ -175,6 +175,51 @@ cursor.
 One more detail that matters: the image is drawn with `FilterQuality.none`. Any
 smoothing turns a 5x7 glyph into grey mush.
 
+## Games
+
+Enable **Developer mode** in Settings, then open the game-controller icon in the
+workspace. With no mirror connected, **Preview** runs the native simulation
+locally. With a mirror connected, **Playing on …** identifies the physical display;
+the phone is its controller. Connecting a mirror discards any local preview.
+
+Choose Rally, Snake, Tetris, Breakout, or Invaders, read its goal and controls,
+then press **Start Game**. This screen has one player; Rally is solo against the
+computer. **Controller diagnostic** opens Probe separately.
+
+| Input | Behavior |
+|---|---|
+| Direction pad / arrows / WASD | Declared movement controls; opposite directions cancel |
+| Tetris Rotate / Up / W | One rotation per press, not per repeated held packet |
+| Tetris Soft drop / Down / S | Hold to fall faster |
+| Invaders Shoot / Space | Fire while playing; movement and Shoot can be held together |
+| Space at setup or after a round | Start / Play again; holding Space never restarts |
+| P / Escape | Pause or Resume |
+
+Pause retains the round. Returning from app suspension does not resume it.
+Help and **Display & diagnostics** pause before opening and leave the round paused
+when dismissed. The overflow menu contains Restart, Choose game, and diagnostics;
+discarding a nonterminal round asks for confirmation. Finished rounds offer
+**Play again** and **Choose game** without hiding the panel's result.
+
+Diagnostics contains the local panel-size selector (before starting), veneer,
+LED presentation, ticks, and mirror latency. Latency is polled only while open.
+Controls remain at least 48 logical pixels; setup and paused content scroll.
+An undersized play area pauses and asks for more space rather than clipping pads.
+
+Mirror **Motion controls** establishes neutral from 20 accelerometer samples
+before starting. Hold the phone still; Cancel or Manual controls leaves setup
+usable. A sensor error or two seconds without samples prevents starting in motion
+mode. While paused, switch Manual/Motion or Recalibrate, then explicitly Resume.
+An ordinary pause retains neutral; app suspension requires recalibration.
+Tetris tilt steers only horizontally: Rotate and Soft drop remain buttons.
+Games requests landscape-left orientation and restores the app's orientation
+policy on exit.
+
+Real mirror pause requires updated firmware. Older firmware rejects manual Pause
+honestly; an automatic interruption or Help stops the game instead. A lost or
+unacknowledged transition disconnects rather than guessing the remote state.
+See [the game protocol](../docs/games.md#shipped-ble-session-protocol).
+
 ## Using it
 
 | Action | How |

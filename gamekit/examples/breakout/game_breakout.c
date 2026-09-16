@@ -9,9 +9,10 @@
  * none: the serve is a fixed diagonal, which keeps every session a pure
  * function of the input stream.
  *
- * Bricks are one cell each, up to 8 rows across the full panel width, stored
- * as bit rows so 8x128 cells cost 128 bytes of state. A cleared wall refills
- * a level up; losing the ball costs a life out of three.
+ * Bricks are one cell each, up to 8 rows across up to 128 columns, stored as
+ * bit rows so 8x128 cells cost 128 bytes of state; a panel wider than that
+ * keeps the wider arena but not a wider wall. A cleared wall refills a level
+ * up; losing the ball costs a life out of three.
  */
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 #define FX_ONE (1 << FX)
 
 #define BRICK_ROWS_MAX 8
+#define BRICK_COLS_MAX 128  /* the bit-row storage bound, not the arena width */
 
 enum { BREAKOUT_PLAYING = 0, BREAKOUT_OVER = 1 };
 
@@ -58,22 +60,46 @@ static void serve(breakout_state *s)
     s->bvy = -FX_ONE * 3 / 4;
 }
 
+/* Columns that are both drawable and storable: the wall is left-aligned in the
+ * panel, so a panel wider than the storage keeps the wider arena but not a
+ * wider wall. Bricks outside it are always dead. */
+static int brick_cols(const breakout_state *s)
+{
+    return s->panel_w < BRICK_COLS_MAX ? s->panel_w : BRICK_COLS_MAX;
+}
+
+/* Set each active row's live columns, and only those: on a panel narrower than
+ * the storage the dead columns stay zero, so clearing what the player sees
+ * really does clear the wall. Never shifts by 32. */
 static void refill_bricks(breakout_state *s)
 {
+    int live = brick_cols(s);
     for (int r = 0; r < BRICK_ROWS_MAX; r++) {
-        for (int h = 0; h < 4; h++)
-            s->bricks[r][h] = (r < s->brick_rows) ? 0xFFFFFFFFu : 0;
+        for (int h = 0; h < 4; h++) {
+            int base = h * 32;
+            uint32_t bits;
+            if (r >= s->brick_rows || base >= live)
+                bits = 0;
+            else if (live - base >= 32)
+                bits = 0xFFFFFFFFu;
+            else
+                bits = (1u << (live - base)) - 1u;
+            s->bricks[r][h] = bits;
+        }
     }
 }
 
 static bool brick_at(const breakout_state *s, int x, int y)
 {
-    if (y < 0 || y >= s->brick_rows || x < 0 || x >= s->panel_w) return false;
+    if (x < 0 || y < 0 || y >= s->brick_rows || y >= BRICK_ROWS_MAX) return false;
+    if (x >= brick_cols(s)) return false;
     return (s->bricks[y][x >> 5] >> (x & 31)) & 1u;
 }
 
 static void brick_clear(breakout_state *s, int x, int y)
 {
+    if (x < 0 || y < 0 || y >= s->brick_rows || y >= BRICK_ROWS_MAX) return;
+    if (x >= brick_cols(s)) return;
     s->bricks[y][x >> 5] &= ~(1u << (x & 31));
 }
 
@@ -252,11 +278,17 @@ static void breakout_draw(const void *state, const ml_view *view, ml_canvas *c,
         ml_canvas_set(c, 1 + i, H - 1, ML_RGB(220, 220, 220));
 
     if (s->status == BREAKOUT_OVER) {
+        /* Two centred lines: "GAME OVER" on one line does not fit the shipped
+         * 64-pixel panel at the smallest font and was clipped. */
         const ml_font *of = ml_font_find("sans10");
         if (!of) of = ml_font_default();
-        int tw = ml_text_width(of, "GAME OVER", ML_SCALE_1X);
         int th = ml_text_height(of, ML_SCALE_1X);
-        ml_text_draw(c, of, (W - tw) / 2, (H - th) / 2, "GAME OVER",
+        int w1 = ml_text_width(of, "GAME", ML_SCALE_1X);
+        int w2 = ml_text_width(of, "OVER", ML_SCALE_1X);
+        int ty = (H - (2 * th + 1)) / 2;   /* one-pixel gap between the lines */
+        ml_text_draw(c, of, (W - w1) / 2, ty, "GAME",
+                     ML_RGB(255, 60, 60), ML_SCALE_1X);
+        ml_text_draw(c, of, (W - w2) / 2, ty + th + 1, "OVER",
                      ML_RGB(255, 60, 60), ML_SCALE_1X);
     }
 }
