@@ -361,7 +361,8 @@ class _GameScreenState extends State<GameScreen>
       goal: 'Move left and right, and shoot before the invaders reach you.',
     ),
     'probe': _GameCopy(
-      goal: 'Controller diagnostic: move the dot with buttons or tilt.',
+      goal: 'The tilt visualiser: the red dot sits where the phone points. '
+          'Move it with the buttons or with tilt.',
     ),
   };
 
@@ -404,9 +405,8 @@ class _GameScreenState extends State<GameScreen>
   /// rendered as readouts rather than pads.
   final Map<int, int> _axes = <int, int>{};
 
-  /// The local game actually on screen: the picker's selection, or the
-  /// controller diagnostic. Restart replays this game, not whatever the picker
-  /// happens to show afterwards.
+  /// The local game actually on screen. Restart replays this game, not
+  /// whatever the picker happens to show afterwards.
   GameInfo? _localGame;
 
   /// The running local game's controls in code order, captured when the engine
@@ -452,8 +452,8 @@ class _GameScreenState extends State<GameScreen>
 
   /// The mirror game the picker has selected, or null for "the first one the
   /// mirror offers". The selection is an id rather than an index because the
-  /// picker shows only the games to play: the controller diagnostic has its
-  /// own entry and must not shift what the dropdown means.
+  /// mirror's catalogue arrives as ids and the dropdown indexes into whatever
+  /// the device listed.
   String? _mirrorSelected;
   bool _mirrorUnsupported = false;
   bool _mirrorLoading = false;
@@ -2979,9 +2979,9 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// Play the local round again: the game that is on screen when one was
-  /// started (including the controller diagnostic), otherwise the picker's
-  /// selection. Restart, Play again and Space all go through this, so none of
-  /// them can quietly swap the round for another game.
+  /// started, otherwise the picker's selection. Restart, Play again and Space
+  /// all go through this, so none of them can quietly swap the round for
+  /// another game.
   Future<void> _replayOrStartLocal() async {
     // A round replayed after the app was suspended has no neutral left: the
     // suspension discarded it, so a motion replay asks for it again first.

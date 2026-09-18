@@ -644,7 +644,7 @@ remove the choice.
 | `runtime.c:264` | Controller input carries an unvalidated player and control code, and the sequence number documented as the replay guard is never read |
 | `host/game_cli.c:311` | `--replay` compares nothing (the journal carries no hash) and silently truncates past 4096 events |
 | `host/game_cli.c:226` | `--peer` always runs the rally game, so a replay of any other game renders rally into a file named for the other game |
-| `ffi/game_ffi.h:50` | Only control labels are exposed — no codes, types or axes — so the designer's simulation cannot drive the tilt controls the probe game declares |
+| `ffi/game_ffi.h:50` | Only control labels are exposed — no codes, types or axes — so the designer's simulation cannot drive the tilt controls the probe game declares. **Partly fixed 2026-09-17:** `ml_game_control_type` exposes each control's declared type and `ml_game_input` resolves it (replacing `ml_game_button`, which hardcoded BUTTON), so the app's own simulation now drives the tilt axes and no longer guesses them from labels. Control *codes* are still not exposed: the app assumes code == catalogue index, which every shipped game satisfies and which the Bluetooth frame's writer assumes too |
 | `gamenet.h:30` | The handshake messages are declared but never sent, and a peer's random seed is zero — a fixed point of the generator |
 
 ### M14 — The first weather fetch after a boot can fail its TLS handshake **(V)** · Effort: S
@@ -770,7 +770,8 @@ Fix the tier-1 game items first; then the features the code already declares: se
 handshake messages and seed the peer's generator from them (it is currently zero, a fixed
 point), validate the player and control codes on input and use the sequence number as the
 replay guard it is documented to be, hash the journal so `--replay` is a real check, and
-expose control codes, types and axes so the app can drive the tilt game.
+expose control codes, types and axes so the app can drive the tilt game (types
+and axis delivery landed 2026-09-17; see M12).
 
 ### F6 — Designer UX · Effort: M · Depends on: H4, H5
 
