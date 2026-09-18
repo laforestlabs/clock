@@ -232,9 +232,25 @@ static void rally_update(void *state, ml_game_ctx *ctx)
     int bxp = (int)(s->bx >> FX);
     int byp = (int)(s->by >> FX);
 
-    /* top/bottom walls */
-    if (byp <= 0) { s->by = 0; s->bvy = -s->bvy; }
-    if (byp >= s->panel_h - 1) { s->by = (s->panel_h - 1) << FX; s->bvy = -s->bvy; }
+    /* Top and bottom walls: reflect the ball back by the distance it overshot,
+     * rather than clamping it to the wall row and flipping its speed. Clamping
+     * asks only "is the ball at or past this row?", which cannot tell the ball
+     * that arrived there from the ball that is leaving: a ball sitting in the
+     * wall's own row had its speed flipped every tick and never got out. At an
+     * eighth of a pixel per tick - which is what a hit one row off the centre
+     * of a still paddle makes (see paddle_bounce) - that pinned the ball to the
+     * ceiling for the rest of the round. The row tests are strict for the same
+     * reason: row 0 and the last row are rows the ball may be in, and only
+     * leaving the panel is a bounce. */
+    if (byp < 0) {
+        s->by = -s->by;
+        s->bvy = -s->bvy;
+    } else if (byp > s->panel_h - 1) {
+        s->by = 2 * (((int32_t)s->panel_h - 1) << FX) - s->by;
+        s->bvy = -s->bvy;
+    }
+    /* The paddle tests below read byp, which the reflection has moved. */
+    byp = (int)(s->by >> FX);
 
     /* left paddle / left wall */
     if (s->bvx < 0 && bxp <= s->face[0] && bxp >= s->face[0] - 2) {
