@@ -96,7 +96,7 @@ static void probe_reset(void *state, ml_game_ctx *ctx)
     s->x = ((int32_t)s->panel_w / 2) << FX;
     s->y = ((int32_t)s->panel_h / 2) << FX;
     s->held_up = s->held_down = s->held_left = s->held_right = 0;
-    s->tilt_x = s->tilt_y = 0;
+    s->tilt_x = s->tilt_y = ML_AXIS_IDLE;
 }
 
 static void probe_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
@@ -119,26 +119,37 @@ static void probe_update(void *state, ml_game_ctx *ctx)
     (void)ctx;
     probe_state *s = state;
     const int32_t sp = (int32_t)probe_speed(s) << FX;
-
-    int32_t dx = 0, dy = 0;
-    if (s->held_left)  dx -= sp;
-    if (s->held_right) dx += sp;
-    if (s->held_up)    dy -= sp;
-    if (s->held_down)  dy += sp;
-
-    /* Axes move the circle proportionally to tilt: full tilt is about one
-     * button step per tick, so motion and manual feel comparable. */
-    dx += (int32_t)s->tilt_x * sp / 32768;
-    dy += (int32_t)s->tilt_y * sp / 32768;
-
-    s->x += dx;
-    s->y += dy;
-
     const int32_t r = (int32_t)s->radius << FX;
+    /* The whole circle stays on the panel, so its centre travels over
+     * [radius, edge - radius]: at full tilt the dot touches the edge. */
     const int32_t minx = r;
-    const int32_t maxx = ((int32_t)s->panel_w << FX) - r;
+    const int32_t maxx = (((int32_t)s->panel_w - 1) << FX) - r;
     const int32_t miny = r;
-    const int32_t maxy = ((int32_t)s->panel_h << FX) - r;
+    const int32_t maxy = (((int32_t)s->panel_h - 1) << FX) - r;
+
+    /* An axis is the phone's angle as a position: the circle *is* where the
+     * phone points, so a held tilt holds the dot and a level phone centres it.
+     * Buttons keep their rate, and take over when no axis is driven - from
+     * wherever the dot already is, so switching never jumps. */
+    if (ml_axis_engaged(s->tilt_x)) {
+        s->x = (int32_t)ml_axis_map(s->tilt_x, (int32_t)s->radius,
+                                    (int32_t)s->panel_w - 1 - s->radius) << FX;
+    } else {
+        int32_t dx = 0;
+        if (s->held_left)  dx -= sp;
+        if (s->held_right) dx += sp;
+        s->x += dx;
+    }
+    if (ml_axis_engaged(s->tilt_y)) {
+        s->y = (int32_t)ml_axis_map(s->tilt_y, (int32_t)s->radius,
+                                    (int32_t)s->panel_h - 1 - s->radius) << FX;
+    } else {
+        int32_t dy = 0;
+        if (s->held_up)    dy -= sp;
+        if (s->held_down)  dy += sp;
+        s->y += dy;
+    }
+
     if (s->x < minx) s->x = minx;
     else if (s->x > maxx) s->x = maxx;
     if (s->y < miny) s->y = miny;

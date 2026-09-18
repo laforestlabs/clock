@@ -49,7 +49,8 @@ typedef struct {
     uint8_t  status;         /* SNAKE_* */
     uint8_t  food_x, food_y;
     uint8_t  move_every;     /* ticks between steps: w/16, min 1 */
-    uint8_t  pad;
+    int16_t  steer_x;        /* tilt vector, ML_AXIS_IDLE when unused */
+    int16_t  steer_y;
     uint8_t  sx[SNAKE_MAX];  /* ring buffer, tail .. head */
     uint8_t  sy[SNAKE_MAX];
 } snake_state;
@@ -61,7 +62,15 @@ static const ml_control_def snake_controls[] = {
     { .label = "Down",  .code = 1, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Left",  .code = 2, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Right", .code = 3, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "TiltX", .code = 4, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
+    { .label = "TiltY", .code = 5, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
 };
+
+/* A grid game has no position to map a tilt onto, so the tilt vector picks a
+ * heading instead: the larger component, once it is past a deliberate angle,
+ * is the direction to turn at the next cell. Below that the snake keeps its
+ * heading, which is what stops a hand resting on a tilt from zig-zagging it. */
+#define SNAKE_TILT_TURN (32767 * 3 / 10)   /* ~9 degrees */
 
 static const int8_t DX[4] = { 0, 1, 0, -1 };
 static const int8_t DY[4] = { -1, 0, 1, 0 };
@@ -134,6 +143,8 @@ static void snake_reset(void *state, ml_game_ctx *ctx)
     s->sx[2] = (uint8_t)cx;       s->sy[2] = (uint8_t)cy;
     s->dir = 1;                    /* heading right */
     s->next_dir = 1;
+    s->steer_x = ML_AXIS_IDLE;
+    s->steer_y = ML_AXIS_IDLE;
     s->grow = 0;
     s->score = 0;
     s->status = SNAKE_PLAYING;
@@ -144,9 +155,32 @@ static void snake_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
 {
     (void)ctx;
     snake_state *s = state;
+    /* An axis is a position, not a press: it is latched whenever it arrives,
+     * including while it sits at neutral. */
+    if (e->code == 4) { s->steer_x = e->value; return; }
+    if (e->code == 5) { s->steer_y = e->value; return; }
     if (!e->value) return;         /* presses only; held state is irrelevant */
     if (e->code >= 4) return;
     s->next_dir = DIR_OF_CODE[e->code];
+}
+
+/* Turn toward the phone: the dominant component of the tilt vector, once it is
+ * past SNAKE_TILT_TURN, becomes the heading asked for. The queue is what the
+ * step consumes, so the 180-degree rejection and the one-cell step are
+ * unchanged; an idle or level axis asks for nothing. */
+static void snake_steer(snake_state *s)
+{
+    const int ax = ml_axis_engaged(s->steer_x) ? (int)s->steer_x : 0;
+    const int ay = ml_axis_engaged(s->steer_y) ? (int)s->steer_y : 0;
+    const int mx = ax < 0 ? -ax : ax;
+    const int my = ay < 0 ? -ay : ay;
+    if (mx < SNAKE_TILT_TURN && my < SNAKE_TILT_TURN) return;
+    const uint8_t want = (uint8_t)(mx > my ? (ax > 0 ? 1 : 3)   /* right : left */
+                                         : (ay > 0 ? 2 : 0));  /* down  : up   */
+    /* A heading the snake could never take is not a heading to queue: asking
+     * for the one behind it leaves the queue holding what it was doing. */
+    if (want == (uint8_t)((s->dir + 2) & 3)) return;
+    s->next_dir = want;
 }
 
 static void snake_step(snake_state *s, ml_game_ctx *ctx)
@@ -200,6 +234,7 @@ static void snake_update(void *state, ml_game_ctx *ctx)
 {
     snake_state *s = state;
     if (s->status != SNAKE_PLAYING) return;
+    snake_steer(s);
     if (ml_ctx_tick(ctx) % s->move_every != 0) return;
     snake_step(s, ctx);
 }
@@ -284,7 +319,7 @@ const ml_game_vt ml_game_snake = {
     .max_players   = 1,
     .state_size    = sizeof(snake_state),
     .controls      = snake_controls,
-    .control_count = 4,
+    .control_count = 6,
     .init          = snake_init,
     .reset         = snake_reset,
     .input         = snake_input,

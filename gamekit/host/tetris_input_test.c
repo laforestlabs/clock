@@ -76,7 +76,7 @@ static int lit_cells(ml_game_session *s)
 static void hold_down(ml_game_session *s, int steps)
 {
     for (int t = 0; t < steps; t++) {
-        ml_game_button(s, 1, 1, 1);  /* Down held */
+        ml_game_input(s, 1, 1, 1);  /* Down held */
         ml_game_step(s, 25);         /* tetris tick_ms is 25: one tick */
     }
 }
@@ -84,7 +84,7 @@ static void hold_down(ml_game_session *s, int steps)
 static void release_down(ml_game_session *s, int steps)
 {
     for (int t = 0; t < steps; t++) {
-        ml_game_button(s, 1, 1, 0);  /* Down released */
+        ml_game_input(s, 1, 1, 0);  /* Down released */
         ml_game_step(s, 25);
     }
 }
@@ -171,10 +171,10 @@ int main(void)
         return 1;
     }
 
-    ml_game_button(up1, 1, 0, 1);   /* one press, no step */
-    ml_game_button(uprep, 1, 0, 1); /* held: three packets, no release */
-    ml_game_button(uprep, 1, 0, 1);
-    ml_game_button(uprep, 1, 0, 1);
+    ml_game_input(up1, 1, 0, 1);   /* one press, no step */
+    ml_game_input(uprep, 1, 0, 1); /* held: three packets, no release */
+    ml_game_input(uprep, 1, 0, 1);
+    ml_game_input(uprep, 1, 0, 1);
 
     int rotated = !same_field(up0, up1);
     int held_once = same_field(up1, uprep);
@@ -186,11 +186,11 @@ int main(void)
      * time, matching a clean two-press reference, and no longer matches the
      * one-rotation frame (T's four rotations are all distinct). A session
      * that ignored the release stays at one rotation and matches nothing. */
-    ml_game_button(uprep, 1, 0, 0);  /* release */
-    ml_game_button(uprep, 1, 0, 1);  /* press again: second rotation */
-    ml_game_button(up2, 1, 0, 1);    /* clean two-press reference */
-    ml_game_button(up2, 1, 0, 0);
-    ml_game_button(up2, 1, 0, 1);
+    ml_game_input(uprep, 1, 0, 0);  /* release */
+    ml_game_input(uprep, 1, 0, 1);  /* press again: second rotation */
+    ml_game_input(up2, 1, 0, 1);    /* clean two-press reference */
+    ml_game_input(up2, 1, 0, 0);
+    ml_game_input(up2, 1, 0, 1);
 
     int two_matches = same_field(uprep, up2);
     int two_differs = !same_field(up1, uprep);

@@ -1,120 +1,171 @@
-// MotionControl: maps phone accelerometer tilt to held direction buttons.
+// MotionControl: the phone's angle as a position in the game's travel.
 // Kept pure (no Flutter or plugin imports) so the mapping is testable
 // without a device, like the rest of the protocol layer.
+
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_designer/src/services/motion_control.dart';
 
+/// Gravity, and the two gestures a player makes, as the accelerometer sees
+/// them. A roll sample holds the phone's right edge down by [deg]; a pitch
+/// sample tips its top edge away by [deg].
+const double _g = 9.81;
+
+List<double> _rollSample(double deg) {
+  final r = deg * math.pi / 180;
+  return <double>[0, _g * math.sin(r), _g * math.cos(r)];
+}
+
+List<double> _pitchSample(double deg) {
+  final r = deg * math.pi / 180;
+  return <double>[math.sin(r) * _g, 0, _g * math.cos(r)];
+}
+
 void main() {
   group('MotionControl', () {
-    // Feed the calibration baseline: a flat, screen-up hold.
+    /// Establish neutral from a level, screen-up hold.
     void calibrate(MotionControl m) {
       for (var i = 0; i < m.calibrationSamples; i++) {
-        m.addSample(0, 0, 9.81);
+        m.addSample(0, 0, _g);
       }
     }
 
-    // Feed one tilted sample enough times for the low-pass filter to settle.
-    void tilt(MotionControl m, double x, double y) {
-      for (var i = 0; i < 8; i++) {
-        m.addSample(x, y, 9.81);
+    /// Feed one tilt until the filter has settled (the EMA converges in well
+    /// under this many samples).
+    void settle(MotionControl m, List<double> sample, [int n = 60]) {
+      for (var i = 0; i < n; i++) {
+        m.addSample(sample[0], sample[1], sample[2]);
       }
     }
 
-    test('is not calibrated and holds no direction before samples', () {
+    test('reports idle on both axes before neutral is established', () {
       final m = MotionControl();
       expect(m.calibrated, isFalse);
-      expect(m.up, isFalse);
-      expect(m.down, isFalse);
-      expect(m.left, isFalse);
-      expect(m.right, isFalse);
+      expect(m.posX, MotionControl.idle);
+      expect(m.posY, MotionControl.idle);
     });
 
-    test('calibrates to a neutral flat hold', () {
+    test('calibrates to a neutral hold at the middle of the travel', () {
       final m = MotionControl();
       calibrate(m);
       expect(m.calibrated, isTrue);
-      expect(m.up, isFalse);
-      expect(m.down, isFalse);
-      expect(m.left, isFalse);
-      expect(m.right, isFalse);
+      expect(m.posX, 0);
+      expect(m.posY, 0);
     });
 
-    test('tilts right when y is positive', () {
-      final m = MotionControl();
-      calibrate(m);
-      tilt(m, 0, 3.0);
-      expect(m.right, isTrue);
-      expect(m.left, isFalse);
-      expect(m.up, isFalse);
-      expect(m.down, isFalse);
-    });
-
-    test('tilts left when y is negative', () {
-      final m = MotionControl();
-      calibrate(m);
-      tilt(m, 0, -3.0);
-      expect(m.left, isTrue);
-      expect(m.right, isFalse);
-      expect(m.up, isFalse);
-      expect(m.down, isFalse);
-    });
-
-    test('tilts up when x is positive and down when negative', () {
+    test('rolls right with the phone and left the other way', () {
       final m = MotionControl();
       calibrate(m);
 
-      tilt(m, 3.0, 0);
-      expect(m.up, isTrue);
-      expect(m.down, isFalse);
+      settle(m, _rollSample(30));
+      expect(m.posX, MotionControl.full);
+      expect(m.posY, 0);
 
-      tilt(m, -3.0, 0);
-      expect(m.down, isTrue);
-      expect(m.up, isFalse);
+      settle(m, _rollSample(-30));
+      expect(m.posX, -MotionControl.full);
+      expect(m.posY, 0);
     });
 
-    test('does not trigger inside the dead zone', () {
+    test('tips the player up when the phone tips away', () {
       final m = MotionControl();
       calibrate(m);
-      tilt(m, 0, 0.5);
-      expect(m.up, isFalse);
-      expect(m.down, isFalse);
-      expect(m.left, isFalse);
-      expect(m.right, isFalse);
+
+      // Canvas convention: up is negative, so the pitch reads back inverted.
+      settle(m, _pitchSample(30));
+      expect(m.posY, -MotionControl.full);
+      expect(m.posX, 0);
+
+      settle(m, _pitchSample(-30));
+      expect(m.posY, MotionControl.full);
+      expect(m.posX, 0);
     });
 
-    test('holds a direction through a small wobble (hysteresis)', () {
+    test('maps the angle proportionally between the middle and the end', () {
       final m = MotionControl();
       calibrate(m);
-      tilt(m, 0, 3.0); // ~17 degrees: engages right
-      expect(m.right, isTrue);
-      // Wobble back to ~8 degrees: still held, above the release zone.
-      tilt(m, 0, 1.4);
-      expect(m.right, isTrue);
-      // Return near center (~3 degrees): releases.
-      tilt(m, 0, 0.5);
-      expect(m.right, isFalse);
+
+      // Half the travel from neutral, less the dead zone's share of it.
+      settle(m, _rollSample(15));
+      expect(m.posX, greaterThan(15000));
+      expect(m.posX, lessThan(17000));
+
+      settle(m, _rollSample(10));
+      final int ten = m.posX;
+      settle(m, _rollSample(20));
+      final int twenty = m.posX;
+      settle(m, _rollSample(25));
+      expect(ten, lessThan(twenty));
+      expect(twenty, lessThan(m.posX));
+      expect(m.posX, lessThan(MotionControl.full));
     });
 
-    test('a single strong sample does not trigger (filtered)', () {
+    test('saturates at the ends rather than running past them', () {
       final m = MotionControl();
       calibrate(m);
-      m.addSample(0, 3.0, 9.81);
-      expect(m.right, isFalse);
+      settle(m, _rollSample(45));
+      expect(m.posX, MotionControl.full);
+      settle(m, _rollSample(30));
+      expect(m.posX, MotionControl.full);
     });
 
-    test('reports zero axes before calibration', () {
-      final m = MotionControl();
-      expect(m.tiltXAxis, 0);
-      expect(m.tiltYAxis, 0);
-    });
-
-    test('maps tilt to signed axis values after calibration', () {
+    test('holds exactly zero inside the dead zone', () {
       final m = MotionControl();
       calibrate(m);
-      tilt(m, 0, 3.0); // rightward tilt
-      expect(m.tiltXAxis, greaterThan(0));
-      expect(m.tiltYAxis, closeTo(0, 1));
+      settle(m, _rollSample(1)); // the dead zone is 5% of 30 degrees
+      expect(m.posX, 0);
+      settle(m, _pitchSample(-1));
+      expect(m.posY, 0);
+
+      // Just outside it the position moves, but only a little.
+      settle(m, _rollSample(2));
+      expect(m.posX, greaterThan(0));
+      expect(m.posX, lessThan(MotionControl.full ~/ 10));
+    });
+
+    test('a held angle converges to a held position', () {
+      final m = MotionControl();
+      calibrate(m);
+      settle(m, _rollSample(15));
+      final int settled = m.posX;
+      for (var i = 0; i < 10; i++) {
+        m.addSample(0, _g * math.sin(15 * math.pi / 180),
+            _g * math.cos(15 * math.pi / 180));
+        expect(m.posX, settled, reason: 'the position drifted under a still phone');
+      }
+    });
+
+    test('a single strong sample does not jump the whole travel', () {
+      final m = MotionControl();
+      calibrate(m);
+      // One 40 degree sample: the filter takes it a fraction of the way.
+      m.addSample(0, _g * math.sin(40 * math.pi / 180),
+          _g * math.cos(40 * math.pi / 180));
+      expect(m.posX, lessThan(MotionControl.full));
+      expect(m.posX, greaterThan(0));
+    });
+
+    test('the hold that was calibrated becomes the middle of the travel', () {
+      final m = MotionControl();
+      for (var i = 0; i < m.calibrationSamples; i++) {
+        m.addSample(0, _g * math.sin(20 * math.pi / 180),
+            _g * math.cos(20 * math.pi / 180));
+      }
+      settle(m, _rollSample(20));
+      expect(m.posX, 0);
+      settle(m, _rollSample(50));
+      expect(m.posX, MotionControl.full);
+    });
+
+    test('never reports the idle value once neutral is established', () {
+      final m = MotionControl();
+      calibrate(m);
+      for (var deg = -60; deg <= 60; deg += 2) {
+        settle(m, _rollSample(deg.toDouble()), 20);
+        expect(m.posX, isNot(MotionControl.idle));
+        settle(m, _pitchSample(deg.toDouble()), 20);
+        expect(m.posY, isNot(MotionControl.idle));
+      }
     });
   });
 }

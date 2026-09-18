@@ -50,6 +50,12 @@ ML_GAME_EXPORT int         ml_game_control_count(int index);
 /* Label for control ci of game at index gi. */
 ML_GAME_EXPORT const char *ml_game_control_label(int gi, int ci);
 
+/*
+ * Type of control ci of game at index gi, as an ml_input_type value:
+ * 0 button, 1 axis, 2 touch. -1 for an out-of-range index.
+ */
+ML_GAME_EXPORT int         ml_game_control_type(int gi, int ci);
+
 /* ------------------------------------------------------------ lifecycle */
 
 /*
@@ -73,12 +79,16 @@ ML_GAME_EXPORT int ml_game_tick(const ml_game_session *s);
 /* ------------------------------------------------------------ simulation */
 
 /*
- * Feed a button input. value 1 = pressed, 0 = released. For a multiplayer
- * session, player_id selects which controller (1-based).
+ * Feed one control of the round's full state. player_id selects which
+ * controller (1-based). value is 1/0 for a button and -32768..32767 for an
+ * axis; the control's declared type decides which, resolved from the game's
+ * own control table rather than trusted from the caller - the same rule the
+ * firmware applies to the Bluetooth frame, so a local round and a mirror round
+ * read one frame the same way.
  */
-ML_GAME_EXPORT void ml_game_button(ml_game_session *s,
-                                    uint16_t player_id, uint16_t code,
-                                    int16_t value);
+ML_GAME_EXPORT void ml_game_input(ml_game_session *s,
+                                   uint16_t player_id, uint16_t code,
+                                   int16_t value);
 
 /* Advance the simulation by wall_ms of real time (fixed-timestep internally). */
 ML_GAME_EXPORT void ml_game_step(ml_game_session *s, uint32_t ms);

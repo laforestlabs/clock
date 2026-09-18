@@ -182,13 +182,17 @@ workspace. With no mirror connected, **Preview** runs the native simulation
 locally. With a mirror connected, **Playing on …** identifies the physical display;
 the phone is its controller. Connecting a mirror discards any local preview.
 
-Choose Rally, Snake, Tetris, Breakout, or Invaders, read its goal and controls,
-then press **Start Game**. This screen has one player; Rally is solo against the
-computer. **Controller diagnostic** opens Probe separately.
+Choose Rally, Snake, Tetris, Breakout, Invaders, or **Probe**, read its goal
+and controls, then press **Start Game**. This screen has one player; Rally is
+solo against the computer. Probe is the tilt visualiser rather than a round: a
+red dot that sits where the phone points, which is how you see what motion
+control is doing - and how you check the sign of a tilt - before a round depends
+on it. It is never picked for you: Start uses a game played for score.
 
 | Input | Behavior |
 |---|---|
 | Direction pad / arrows / WASD | Declared movement controls; opposite directions cancel |
+| Tilt (motion mode) | Position within the round's travel; a held angle holds the player |
 | Tetris Rotate / Up / W | One rotation per press, not per repeated held packet |
 | Tetris Soft drop / Down / S | Hold to fall faster |
 | Invaders Shoot / Space | Fire while playing; movement and Shoot can be held together |
@@ -206,14 +210,28 @@ LED presentation, ticks, and mirror latency. Latency is polled only while open.
 Controls remain at least 48 logical pixels; setup and paused content scroll.
 An undersized play area pauses and asks for more space rather than clipping pads.
 
-Mirror **Motion controls** establishes neutral from 20 accelerometer samples
-before starting. Hold the phone still; Cancel or Manual controls leaves setup
-usable. A sensor error or two seconds without samples prevents starting in motion
-mode. While paused, switch Manual/Motion or Recalibrate, then explicitly Resume.
-An ordinary pause retains neutral; app suspension requires recalibration.
-Tetris tilt steers only horizontally: Rotate and Soft drop remain buttons.
-Games requests landscape-left orientation and restores the app's orientation
-policy on exit.
+**Motion controls** are offered in the local preview and on a mirror. The phone
+establishes neutral from 20 accelerometer samples before the round starts: hold
+it still, and that angle becomes the middle of the round's travel. Cancel or
+Manual controls leaves setup usable. A sensor error, or two seconds without
+samples, prevents starting in motion mode. While paused, switch Manual/Motion or
+Recalibrate, then explicitly Resume. An ordinary pause retains neutral; app
+suspension requires recalibration.
+
+Tilt is a **position**, not a direction: 30 degrees from neutral reaches the end
+of the travel, the middle is where the phone was held at the start, and a held
+angle holds the player still. So Rally's paddle sits centred at neutral and
+follows the phone from there; Breakout's and Invaders' paddles follow the
+horizontal tilt; Tetris's piece walks toward the column the phone points at and
+stops at a wall or the stack (Rotate and Soft drop stay buttons); Snake, which is
+a grid game with a heading rather than a coordinate, turns only on a deliberate
+tilt. The pads and keys are unchanged when Manual is selected, and switching
+modes mid-round continues from wherever the player is.
+
+A mirror whose game declares no tilt axis - any firmware from before positional
+motion - leaves the round on the pads and says so, rather than looking steered
+while nothing moves. Games requests landscape-left orientation and restores the
+app's orientation policy on exit.
 
 Real mirror pause requires updated firmware. Older firmware rejects manual Pause
 honestly; an automatic interruption or Help stops the game instead. A lost or

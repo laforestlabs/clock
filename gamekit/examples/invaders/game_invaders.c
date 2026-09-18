@@ -43,7 +43,7 @@ typedef struct {
     uint8_t lives;
     uint8_t status;
     uint8_t held_l, held_r;
-    uint8_t pad;
+    int16_t steer_x;             /* tilt axis, ML_AXIS_IDLE when unused */
     uint16_t score;
     uint32_t aliens;             /* bit r*8+c = alive */
     struct { int16_t x, y; uint8_t on; } pshot;          /* cannon bullet */
@@ -56,6 +56,7 @@ static const ml_control_def invaders_controls[] = {
     { .label = "Left",  .code = 0, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Right", .code = 1, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Shoot", .code = 2, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "TiltX", .code = 3, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
 };
 
 static bool alien_alive(const invaders_state *s, int row, int col)
@@ -103,6 +104,7 @@ static void invaders_reset(void *state, ml_game_ctx *ctx)
     s->score = 0;
     s->held_l = 0;
     s->held_r = 0;
+    s->steer_x = ML_AXIS_IDLE;
     s->pshot.on = 0;
     for (int i = 0; i < INV_ASHOTS_MAX; i++) s->ashots[i].on = 0;
 }
@@ -122,6 +124,9 @@ static void invaders_input(void *state, const ml_input_event *e, ml_game_ctx *ct
             s->pshot.on = 1;
         }
         break;
+    case 3:  /* Tilt: the phone's angle, as a position */
+        s->steer_x = e->value;
+        break;
     default: break;
     }
 }
@@ -131,9 +136,14 @@ static void invaders_update(void *state, ml_game_ctx *ctx)
     invaders_state *s = state;
     if (s->status != INV_PLAYING) return;
 
-    /* cannon moves 1 px/tick while held */
-    if (s->held_l && s->px > 0) s->px--;
-    if (s->held_r && s->px < s->panel_w - INV_SPRITE_W) s->px++;
+    /* cannon: on tilt it sits where the phone points, so a held angle holds
+     * it; on buttons it moves 1 px/tick while held */
+    if (ml_axis_engaged(s->steer_x)) {
+        s->px = (int16_t)ml_axis_map(s->steer_x, 0, s->panel_w - INV_SPRITE_W);
+    } else {
+        if (s->held_l && s->px > 0) s->px--;
+        if (s->held_r && s->px < s->panel_w - INV_SPRITE_W) s->px++;
+    }
 
     /* cannon bullet */
     if (s->pshot.on) {
@@ -301,7 +311,7 @@ const ml_game_vt ml_game_invaders = {
     .max_players   = 1,
     .state_size    = sizeof(invaders_state),
     .controls      = invaders_controls,
-    .control_count = 3,
+    .control_count = 4,
     .init          = invaders_init,
     .reset         = invaders_reset,
     .input         = invaders_input,

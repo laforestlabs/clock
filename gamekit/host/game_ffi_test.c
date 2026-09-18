@@ -43,37 +43,37 @@ static uint32_t run_game(const char *id, uint32_t seed)
     if (!s) return 0;
 
     if (!strcmp(id, "snake")) {
-        ml_game_button(s, 1, 1, 1);  /* Down */
+        ml_game_input(s, 1, 1, 1);  /* Down */
         for (int t = 0; t < 20; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 1, 0);
-        ml_game_button(s, 1, 3, 1);  /* Right */
+        ml_game_input(s, 1, 1, 0);
+        ml_game_input(s, 1, 3, 1);  /* Right */
         for (int t = 0; t < 30; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 3, 0);
+        ml_game_input(s, 1, 3, 0);
         for (int t = 0; t < 40; t++) ml_game_step(s, 33);
     } else if (!strcmp(id, "tetris")) {
-        ml_game_button(s, 1, 3, 1);  /* Right */
+        ml_game_input(s, 1, 3, 1);  /* Right */
         for (int t = 0; t < 30; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 3, 0);
-        ml_game_button(s, 1, 0, 1);  /* Up: rotate */
+        ml_game_input(s, 1, 3, 0);
+        ml_game_input(s, 1, 0, 1);  /* Up: rotate */
         for (int t = 0; t < 10; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 0, 0);
-        ml_game_button(s, 1, 1, 1);  /* Down: soft drop */
+        ml_game_input(s, 1, 0, 0);
+        ml_game_input(s, 1, 1, 1);  /* Down: soft drop */
         for (int t = 0; t < 50; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 1, 0);
+        ml_game_input(s, 1, 1, 0);
     } else if (!strcmp(id, "breakout")) {
-        ml_game_button(s, 1, 0, 1);  /* Left */
+        ml_game_input(s, 1, 0, 1);  /* Left */
         for (int t = 0; t < 40; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 0, 0);
-        ml_game_button(s, 1, 1, 1);  /* Right */
+        ml_game_input(s, 1, 0, 0);
+        ml_game_input(s, 1, 1, 1);  /* Right */
         for (int t = 0; t < 50; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 1, 0);
+        ml_game_input(s, 1, 1, 0);
     } else if (!strcmp(id, "invaders")) {
-        ml_game_button(s, 1, 1, 1);  /* Right */
+        ml_game_input(s, 1, 1, 1);  /* Right */
         for (int t = 0; t < 30; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 1, 0);
-        ml_game_button(s, 1, 2, 1);  /* Shoot */
+        ml_game_input(s, 1, 1, 0);
+        ml_game_input(s, 1, 2, 1);  /* Shoot */
         for (int t = 0; t < 5; t++) ml_game_step(s, 33);
-        ml_game_button(s, 1, 2, 0);
+        ml_game_input(s, 1, 2, 0);
         for (int t = 0; t < 55; t++) ml_game_step(s, 33);
     } else {
         for (int t = 0; t < 90; t++) ml_game_step(s, 33);
@@ -105,12 +105,12 @@ int main(void)
     printf("session: %dx%d\n", ml_game_width(s), ml_game_height(s));
 
     /* Feed a few button presses to exercise the input path. */
-    ml_game_button(s, 1, 1, 1);  /* player 1, code 1 (Down), pressed */
+    ml_game_input(s, 1, 1, 1);  /* player 1, code 1 (Down), pressed */
     for (int t = 0; t < 30; t++) ml_game_step(s, 33);
-    ml_game_button(s, 1, 1, 0);  /* release */
-    ml_game_button(s, 1, 0, 1);  /* code 0 (Up), pressed */
+    ml_game_input(s, 1, 1, 0);  /* release */
+    ml_game_input(s, 1, 0, 1);  /* code 0 (Up), pressed */
     for (int t = 0; t < 30; t++) ml_game_step(s, 33);
-    ml_game_button(s, 1, 0, 0);  /* release */
+    ml_game_input(s, 1, 0, 0);  /* release */
     for (int t = 0; t < 30; t++) ml_game_step(s, 33);
 
     printf("tick after 90 steps: %d\n", ml_game_tick(s));

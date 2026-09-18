@@ -18,7 +18,7 @@ import 'dart:ui' as ui;
 import 'package:ffi/ffi.dart';
 
 import 'game_bindings.dart';
-export 'game_bindings.dart' show GameInfo;
+export 'game_bindings.dart' show GameControl, GameControlType, GameInfo;
 
 
 /// One game session: a host, a canvas, and (for each player) a controller.
@@ -85,9 +85,12 @@ class GameEngine {
       (i) {
         final maxP = b.gameMaxPlayers(i);
         final ctrlCount = b.gameControlCount(i);
-        final controls = List<String>.generate(
+        final controls = List<GameControl>.generate(
           ctrlCount,
-          (c) => b.gameControlLabel(i, c).toDartString(),
+          (c) => GameControl(
+            b.gameControlLabel(i, c).toDartString(),
+            _controlType(b.gameControlType(i, c)),
+          ),
           growable: false,
         );
         return GameInfo(
@@ -99,6 +102,14 @@ class GameEngine {
       },
       growable: false,
     );
+  }
+
+  /// The declared type of one control, from the `ml_input_type` value the
+  /// native catalogue reports.
+  static GameControlType _controlType(int value) {
+    if (value == 1) return GameControlType.axis;
+    if (value == 2) return GameControlType.touch;
+    return GameControlType.button;
   }
 
   // -------------------------------------------------------------- geometry
@@ -115,11 +126,13 @@ class GameEngine {
 
   // ------------------------------------------------------------ simulation
 
-  /// Feed a button input (value 1 = pressed, 0 = released). For multiplayer,
-  /// playerId selects which controller (1-based).
-  void button({int playerId = 1, int code = 0, int value = 1}) {
+  /// Feed one control of the round's full state. [value] is 1/0 for a button
+  /// and -32768..32767 for an axis; the control's declared type decides which
+  /// (see [GameControlType]), resolved natively from the game's own table.
+  /// For multiplayer, playerId selects which controller (1-based).
+  void input({int playerId = 1, int code = 0, int value = 1}) {
     _assertLive();
-    _b.gameButton(_handle, playerId, code, value);
+    _b.gameInput(_handle, playerId, code, value);
   }
 
   /// Advance the simulation by ms of wall time (fixed-timestep internally).

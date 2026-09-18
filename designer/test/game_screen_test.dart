@@ -59,13 +59,47 @@ import 'package:mirror_designer/src/ui/game_screen.dart';
 const String _blankLayout = '{"canvas":{"width":64,"height":32},'
     '"background":"#000000","widgets":[]}';
 
+/// The centre of the probe's red dot, read off the frame the round rendered.
+/// -1,-1 when there is no dot, so a missing one fails the assertion that reads
+/// it rather than passing quietly.
+Offset _redDotCentre(Uint8List rgba) {
+  var minX = -1, maxX = -1, minY = -1, maxY = -1;
+  for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 64; x++) {
+      final int i = (y * 64 + x) * 4;
+      if (rgba[i] > 150 && rgba[i + 1] < 90 && rgba[i + 2] < 90) {
+        if (minX < 0 || x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (minY < 0 || y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (minX < 0) return const Offset(-1, -1);
+  return Offset((minX + maxX) / 2, (minY + maxY) / 2);
+}
+
 /// Display name of a game in the shipped catalogue.
 String _name(String id) =>
     GameEngine.games.firstWhere((GameInfo game) => game.id == id).name;
 
 /// The wire labels a game declares, in code order.
-List<String> _wires(String id) =>
-    GameEngine.games.firstWhere((GameInfo game) => game.id == id).controls;
+List<String> _wires(String id) => <String>[
+      for (final control
+          in GameEngine.games
+              .firstWhere((GameInfo game) => game.id == id)
+              .controls)
+        control.label,
+    ];
+
+/// The wire labels a game declares as axes (its tilt controls).
+Set<String> _axisWires(String id) => <String>{
+      for (final control
+          in GameEngine.games
+              .firstWhere((GameInfo game) => game.id == id)
+              .controls)
+        if (control.isAxis) control.label,
+    };
 
 /// The human name a pad shows for a wire label. The wire label itself is never
 /// rewritten: it is what the firmware, the pad ValueKeys, and the input codes
@@ -1156,6 +1190,81 @@ void main() {
     });
   });
 
+  testWidgets('motion steers the preview: the probe dot follows the phone',
+      (tester) async {
+    // The whole tilt path in the app's own preview: neutral from the
+    // accelerometer, the app's angle-to-position mapping, the native round,
+    // and the pixels the dot is drawn with. Before this, motion mode was
+    // mirror-only, so a preview round could not be steered by the phone at all
+    // and the probe's readouts sat pinned at zero.
+    const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
+    const sensorMethods = MethodChannel('dev.fluttercommunity.plus/sensors/method');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
+    messenger.setMockMethodCallHandler(
+        const MethodChannel(sensorChannel), (_) async => null);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(sensorMethods, null);
+      messenger.setMockMethodCallHandler(
+          const MethodChannel(sensorChannel), null);
+    });
+
+    Future<void> sample(WidgetTester t, double x, double y, double z) async {
+      await t.binding.defaultBinaryMessenger.handlePlatformMessage(
+          sensorChannel,
+          const StandardMethodCodec()
+              .encodeSuccessEnvelope(<double>[x, y, z, 0]),
+          (_) {});
+      await t.pump(const Duration(milliseconds: 20));
+    }
+
+    await _scene(tester, (scene) async {
+      await scene.pick('probe');
+      await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+      await tester.pump();
+      await scene.start();
+
+      // Neutral first: hold the phone still and the round starts from it.
+      expect(find.text('Hold the phone still'), findsOneWidget);
+      for (var i = 0; i < 20; i++) {
+        await sample(tester, 0, 0, 9.8);
+      }
+      await scene.advance(2);
+      expect(find.text('Hold the phone still'), findsNothing);
+      await sample(tester, 0, 0, 9.8);
+      await scene.advance(2);
+      final Offset centre = _redDotCentre(scene.pixels());
+      expect(centre.dx, closeTo(31, 2), reason: 'neutral centres the dot');
+      expect(centre.dy, closeTo(15, 2), reason: 'neutral centres the dot');
+
+      // Rolled right: the dot goes right, and holding that angle holds it
+      // there rather than driving it into the edge.
+      for (var i = 0; i < 12; i++) {
+        await sample(tester, 0, 5, 9.8);
+      }
+      await scene.advance(2);
+      final Offset right = _redDotCentre(scene.pixels());
+      expect(right.dx, greaterThan(centre.dx + 10),
+          reason: 'a roll moves the dot the way the phone went');
+      for (var i = 0; i < 12; i++) {
+        await sample(tester, 0, 5, 9.8);
+      }
+      await scene.advance(2);
+      expect(_redDotCentre(scene.pixels()).dx, closeTo(right.dx, 1),
+          reason: 'a held angle holds the position');
+
+      // Tipped up: the vertical axis is a position too. The canvas axis runs
+      // downwards, so up is a smaller y.
+      for (var i = 0; i < 12; i++) {
+        await sample(tester, 5, 0, 9.8);
+      }
+      await scene.advance(2);
+      expect(_redDotCentre(scene.pixels()).dy, lessThan(right.dy - 4),
+          reason: 'tipping the phone up moves the dot up');
+    });
+  });
+
   for (final Size surface in const <Size>[Size(640, 360), Size(800, 360)]) {
     testWidgets(
         'every control of every game is reachable and labelled on '
@@ -1172,6 +1281,9 @@ void main() {
               'tetris',
               'breakout',
               'invaders',
+              // The tilt visualiser is picked like any other game: it is how a
+              // player sees what motion control is doing.
+              'probe',
             ]) {
               await scene.pick(id);
               final Finder startButton =
@@ -1200,6 +1312,18 @@ void main() {
               expect(tester.takeException(), isNull, reason: '$id overflow');
 
               for (final String wire in _wires(id)) {
+                if (_axisWires(id).contains(wire)) {
+                  // An axis is not a pad: it is the phone's tilt, so it shows
+                  // as a readout with no tap target of its own.
+                  final Finder readout =
+                      find.byKey(ValueKey<String>('axis-$wire'));
+                  expect(readout, findsOneWidget, reason: '$id $wire readout');
+                  final SemanticsData axis =
+                      _semantics('$wire axis').getSemanticsData();
+                  expect(axis.flagsCollection.isButton, isFalse,
+                      reason: '$id $wire is not a button');
+                  continue;
+                }
                 final Finder pad = scene.pad(wire);
                 expect(pad, findsOneWidget, reason: '$id $wire pad');
                 final Rect rect = tester.getRect(pad);

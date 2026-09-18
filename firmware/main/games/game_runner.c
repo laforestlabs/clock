@@ -184,22 +184,28 @@ static void input_flush(void)
     }
 }
 
-/* Feed one zero-valued event into the live host for every control the running
- * game declares, in code order and carrying the control's own code and type
- * (an axis returns to centre, a button to released). Draining the queue is
- * not enough to stop a held control: the game keeps what it was last told,
- * so the freeze has to say "released" explicitly. Render task only. */
+/* Feed one neutral event into the live host for every control the running
+ * game declares, in code order and carrying the control's own code and type:
+ * a button arrives released, an axis arrives idle. Draining the queue is not
+ * enough to stop a held control: the game keeps what it was last told, so the
+ * freeze has to say "released" explicitly.
+ *
+ * An axis is released to ML_AXIS_IDLE, never to zero. Zero is the centre of an
+ * axis's travel, so writing it here would recentre the paddle the moment the
+ * round is paused, and the player would resume somewhere they never put it.
+ * Render task only. */
 static void release_declared_controls(void)
 {
     const ml_game_vt *vt = s_active_vt;
 
     if (s_session == NULL || vt == NULL || vt->controls == NULL) return;
     for (int i = 0; i < vt->control_count; i++) {
+        const bool axis = vt->controls[i].type == ML_INPUT_AXIS;
         const ml_input_event e = {
             .player_id = 1,
             .seq = 0,
             .code = vt->controls[i].code,
-            .value = 0,
+            .value = axis ? ML_AXIS_IDLE : 0,
             .tick = 0,
             .type = vt->controls[i].type,
         };
@@ -282,7 +288,9 @@ bool game_runner_request_input_frame(const ml_input_event *events, uint8_t count
         for (int i = 0; i < n; i++) {
             ml_input_event e = count == 0 ? (ml_input_event){
                 .player_id = 1, .code = vt->controls[i].code,
-                .type = vt->controls[i].type, .value = 0,
+                .type = vt->controls[i].type,
+                /* an axis is released to idle, not to its centre */
+                .value = vt->controls[i].type == ML_INPUT_AXIS ? ML_AXIS_IDLE : 0,
             } : events[i];
             xQueueSend(s_input_q, &e, 0);
         }

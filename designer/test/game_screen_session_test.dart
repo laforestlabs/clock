@@ -16,6 +16,26 @@ import 'package:mirror_designer/src/ui/game_screen.dart';
 
 class _Characteristic extends Fake implements BluetoothCharacteristic {}
 
+/// The controls a game declares when it is steered by the pads only.
+const List<MirrorControl> _buttonsOnly = <MirrorControl>[
+  MirrorControl('Up', MirrorControlType.button),
+  MirrorControl('Down', MirrorControlType.button),
+  MirrorControl('Left', MirrorControlType.button),
+  MirrorControl('Right', MirrorControlType.button),
+];
+
+/// The controls a game declares when the phone's tilt steers it: the pads'
+/// buttons, plus the accelerometer axis the tilt drives. The mirror states the
+/// type on the wire, which is how the screen knows tilt can drive the round.
+const List<MirrorControl> _withTilt = <MirrorControl>[
+  MirrorControl('Up', MirrorControlType.button),
+  MirrorControl('Down', MirrorControlType.button),
+  MirrorControl('Left', MirrorControlType.button),
+  MirrorControl('Right', MirrorControlType.button),
+  MirrorControl('TiltX', MirrorControlType.axis),
+  MirrorControl('TiltY', MirrorControlType.axis),
+];
+
 class _Session extends Fake implements BleSession {
   final statuses = StreamController<String>.broadcast(sync: true);
   final start = Completer<MirrorGame>();
@@ -79,12 +99,9 @@ class _Session extends Fake implements BleSession {
     return pendingLatency?.future ?? Future.value(null);
   }
 
-  void acknowledge() => start.complete(MirrorGame(started.single, const [
-        MirrorControl('Up', MirrorControlType.button),
-        MirrorControl('Down', MirrorControlType.button),
-        MirrorControl('Left', MirrorControlType.button),
-        MirrorControl('Right', MirrorControlType.button),
-      ]));
+  void acknowledge({List<MirrorControl>? controls}) => start.complete(
+        MirrorGame(started.single, controls ?? _buttonsOnly),
+      );
 }
 
 class _Connection extends MirrorConnection {
@@ -225,7 +242,7 @@ void main() {
       await tester.pump();
     }
     expect(session.started, ['snake']);
-    session.acknowledge();
+    session.acknowledge(controls: _withTilt);
     await tester.pump();
     await tester.pump();
     expect(find.text('Hold the phone still'), findsNothing);
@@ -272,8 +289,7 @@ void main() {
     expect(find.text('Start Game'), findsOneWidget);
   });
 
-  testWidgets('Tetris tilt steers horizontally but never rotates or drops',
-      (tester) async {
+  testWidgets('tilt drives the axes and never the buttons', (tester) async {
     final (session, _) =
         await boot(tester, configure: (s) => s.catalogue = ['tetris']);
     await beginCalibration(tester);
@@ -284,21 +300,50 @@ void main() {
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
-    session.acknowledge();
+    session.acknowledge(controls: _withTilt);
     await tester.pump();
     await tester.pump();
-    for (var i = 0; i < 8; i++) {
-      await sample(tester, 5, 0, 9.8);
-    }
-    expect(session.inputs, isNotEmpty);
-    expect(session.inputs.every((p) => p[0] == 0 && p[1] == 0), isTrue);
-    for (var i = 0; i < 8; i++) {
+
+    // Rolling the phone right sends a position on TiltX. The buttons that
+    // would have been pressed by the old threshold mapper stay released: tilt
+    // is a position now, not a direction.
+    for (var i = 0; i < 12; i++) {
       await sample(tester, 0, 5, 9.8);
     }
-    expect(session.inputs.any((p) => p[3] == 1), isTrue);
-    await tester.tap(find.byKey(const ValueKey('control-Up')));
-    await tester.pump();
-    expect(session.inputs.any((p) => p[0] == 1), isTrue);
+    expect(session.inputs, isNotEmpty);
+    expect(session.inputs.any((p) => p[4] > 0), isTrue,
+        reason: 'a rightward roll drives TiltX positive');
+    expect(session.inputs.every((p) => p[0] == 0 && p[1] == 0), isTrue,
+        reason: 'no button is held by tilt');
+
+    // Tipping the phone's top edge away moves the player up: the canvas axis
+    // is positive downwards, so the value goes negative.
+    for (var i = 0; i < 12; i++) {
+      await sample(tester, 5, 0, 9.8);
+    }
+    expect(session.inputs.any((p) => p[5] < 0), isTrue,
+        reason: 'a forward pitch drives TiltY negative (up)');
+    expect(session.inputs.last.sublist(0, 4), [0, 0, 0, 0]);
+
+    // A level phone is a level position: once the filter has settled, the app
+    // either sends nothing at all (the value has not changed, so there is
+    // nothing to send) or sends the middle. It never keeps driving the player
+    // the way the old threshold mapper did. Which frame lands last depends on
+    // the wall-clock send throttle, so this reads the set of frames after the
+    // tilt is gone rather than picking one.
+    for (var i = 0; i < 40; i++) {
+      await sample(tester, 0, 0, 9.8);
+    }
+    final settledFrom = session.inputs.length;
+    for (var i = 0; i < 20; i++) {
+      await sample(tester, 0, 0, 9.8);
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(session.inputs.sublist(settledFrom).every((p) => p[4] == 0 && p[5] == 0),
+        isTrue,
+        reason: 'a still phone must only ever send a level position');
+
+    // Manual play is untouched: the pad still presses its button.
     await tester.tap(find.byTooltip('Pause'));
     await tester.pump();
     await tester.pump();
@@ -307,7 +352,12 @@ void main() {
     await tester.tap(find.text('Resume').first);
     await tester.pump();
     await tester.pump();
-    expect(session.inputs.last, [0, 0, 0, 0]);
+    await tester.tap(find.byKey(const ValueKey('control-Up')));
+    await tester.pump();
+    expect(session.inputs.any((p) => p[0] == 1), isTrue);
+    // A released axis, not a recentred one: zero would be the middle of the
+    // travel and would move the piece under a still phone.
+    expect(session.inputs.last.sublist(4), [-32768, -32768]);
   });
 
   testWidgets('terminal notification before Start acknowledgment survives',
@@ -432,7 +482,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await sample(tester, 0, 0, 9.8);
     }
-    session.acknowledge();
+    session.acknowledge(controls: _withTilt);
     await tester.pump();
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey<String>('game-pause')));
@@ -459,7 +509,9 @@ void main() {
     await sample(tester, 0, 0, 9.8);
     await tester.pump();
     expect(session.resumes, 2);
-    expect(session.inputs.last, [0, 0, 0, 0]);
+    // Buttons released and axes idle: the paddle keeps the position it was
+    // paused at instead of being recentred by the resume.
+    expect(session.inputs.last, [0, 0, 0, 0, -32768, -32768]);
   });
 
   testWidgets('Help waits for the actual Pause acknowledgment', (tester) async {

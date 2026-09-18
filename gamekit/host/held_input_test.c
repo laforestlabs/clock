@@ -47,8 +47,8 @@ int main(void)
     /* Up held for 10 steps, full state every frame, Up event first. Each
      * 50ms step is two 25ms ticks at 1px/tick, so 20px of travel. */
     for (int t = 0; t < 10; t++) {
-        ml_game_button(s, 1, 0, 1); /* Up held */
-        ml_game_button(s, 1, 1, 0); /* Down not held */
+        ml_game_input(s, 1, 0, 1); /* Up held */
+        ml_game_input(s, 1, 1, 0); /* Down not held */
         ml_game_step(s, 50);
     }
     int up_top = paddle_top(ml_game_render_rgba(s), 64, 32);
@@ -57,8 +57,8 @@ int main(void)
     /* Release Up, hold Down. From y=0 at 2px per step the paddle needs 12
      * steps to reach the clamp at 24, so run 15. */
     for (int t = 0; t < 15; t++) {
-        ml_game_button(s, 1, 0, 0); /* Up not held */
-        ml_game_button(s, 1, 1, 1); /* Down held */
+        ml_game_input(s, 1, 0, 0); /* Up not held */
+        ml_game_input(s, 1, 1, 1); /* Down held */
         ml_game_step(s, 50);
     }
     int down_top = paddle_top(ml_game_render_rgba(s), 64, 32);

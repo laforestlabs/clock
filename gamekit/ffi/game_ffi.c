@@ -89,6 +89,14 @@ const char *ml_game_control_label(int gi, int ci)
     return g->controls[ci].label;
 }
 
+int ml_game_control_type(int gi, int ci)
+{
+    if (gi < 0 || gi >= GAME_COUNT) return -1;
+    const ml_game_vt *g = k_games[gi].vt;
+    if (ci < 0 || ci >= g->control_count || !g->controls) return -1;
+    return (int)g->controls[ci].type;
+}
+
 ml_game_session *ml_game_open(const char *game_id, int panel_w, int panel_h,
                                uint32_t seed, int players)
 {
@@ -146,16 +154,30 @@ int ml_game_width(const ml_game_session *s)  { return s ? s->canvas.w : 0; }
 int ml_game_height(const ml_game_session *s) { return s ? s->canvas.h : 0; }
 int ml_game_tick(const ml_game_session *s)   { return s ? (int)ml_host_tick(s->host) : 0; }
 
-void ml_game_button(ml_game_session *s, uint16_t player_id, uint16_t code,
-                     int16_t value)
+void ml_game_input(ml_game_session *s, uint16_t player_id, uint16_t code,
+                   int16_t value)
 {
     if (!s) return;
+    /* The game's own declaration decides what this control is, exactly as the
+     * firmware does for a frame off the wire: a button is a level, an axis
+     * keeps its whole range. An undeclared code is a button, which is also
+     * what the firmware's default is. */
+    ml_input_type type = ML_INPUT_BUTTON;
+    if (!s->game->controls)
+        return;
+    for (int i = 0; i < s->game->control_count; i++) {
+        if (s->game->controls[i].code == code) {
+            type = (ml_input_type)s->game->controls[i].type;
+            break;
+        }
+    }
+
     ml_input_event e;
     memset(&e, 0, sizeof(e));
     e.player_id = player_id;
     e.code = code;
-    e.value = value;
-    e.type = ML_INPUT_BUTTON;
+    e.type = (uint8_t)type;
+    e.value = (type == ML_INPUT_AXIS) ? value : (int16_t)(value ? 1 : 0);
     e.seq = s->seq++;
     ml_host_local_input(s->host, &e);
 }

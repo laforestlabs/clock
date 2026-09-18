@@ -167,17 +167,6 @@ final class _SemanticSource extends _InputSource {
   int get hashCode => Object.hash('semantic', control);
 }
 
-/// Phone tilt, which holds whichever directions the round is steered in.
-final class _TiltSource extends _InputSource {
-  const _TiltSource();
-
-  @override
-  bool operator ==(Object other) => other is _TiltSource;
-
-  @override
-  int get hashCode => 0x7217;
-}
-
 /// Human-facing copy for one game: what it asks of the player, and the names
 /// of any controls whose wire label names a code rather than an action.
 class _GameCopy {
@@ -338,10 +327,11 @@ class _GameScreenState extends State<GameScreen>
     'Right',
   };
 
-  /// The axis labels the local catalogue carries. The mirror declares each
-  /// control's type on the wire; the local catalogue has labels only, and the
-  /// probe's two accelerometer axes are the ones that exist.
-  static const Set<String> _axisLabels = <String>{'TiltX', 'TiltY'};
+  /// The labels that name the phone's two accelerometer axes on the wire. A
+  /// control is tilt-driven when it is declared as an axis under one of these
+  /// labels: the label says which way the phone is held, the type says it is
+  /// positional rather than something to press.
+  static const Set<String> _tiltLabels = <String>{'TiltX', 'TiltY'};
 
   /// Human-facing copy for the games this build ships: the one-sentence goal
   /// the setup view and Help show, and the names of controls whose wire label
@@ -419,10 +409,12 @@ class _GameScreenState extends State<GameScreen>
   /// happens to show afterwards.
   GameInfo? _localGame;
 
-  /// The running local game's control labels in code order, captured when the
-  /// engine was opened. Keyboard and pad input resolve their labels from here,
-  /// so a restart with another game cannot feed the previous one's controls.
-  List<String> _localControls = const <String>[];
+  /// The running local game's controls in code order, captured when the engine
+  /// was opened. Keyboard and pad input resolve their labels from here, so a
+  /// restart with another game cannot feed the previous one's controls. The
+  /// declared type travels with each label: an axis is driven by tilt and
+  /// drawn as a readout, never as a pad.
+  List<GameControl> _localControls = const <GameControl>[];
 
   /// The control each movement-pad pointer is currently steering, so sliding
   /// from one direction button onto the next releases the first.
@@ -666,47 +658,32 @@ class _GameScreenState extends State<GameScreen>
     super.dispose();
   }
 
-  /// The games offered as rounds: every compiled game but the probe, which is
-  /// a controller diagnostic rather than something played for score.
-  List<GameInfo> get _playableGames {
-    final out = <GameInfo>[];
-    for (final game in _games) {
-      if (!_isProbe(game)) out.add(game);
-    }
-    return out;
-  }
-
-  /// The controller diagnostic, when this build has one.
-  GameInfo? get _probeGame {
-    for (final game in _games) {
-      if (_isProbe(game)) return game;
-    }
-    return null;
-  }
+  /// The games the picker offers, in catalogue order. The probe is one of
+  /// them: it is the tilt visualiser - a red dot that sits where the phone
+  /// points - and picking it is how a player sees what motion control is
+  /// doing before a round depends on it.
+  List<GameInfo> get _playableGames => _games;
 
   static bool _isProbeId(String id) => id == 'probe';
 
-  static bool _isProbe(GameInfo game) => _isProbeId(game.id);
-
-  /// The mirror's catalogue without the controller diagnostic.
-  List<String> get _mirrorPlayableIds {
-    final ids = _mirrorGameIds;
-    if (ids == null) return const <String>[];
-    return <String>[
-      for (final id in ids)
-        if (!_isProbeId(id)) id,
-    ];
-  }
+  /// The mirror's catalogue, as offered by its own picker.
+  List<String> get _mirrorPlayableIds =>
+      _mirrorGameIds ?? const <String>[];
 
   /// The game a fresh Start on the mirror begins: the picker's selection, or
-  /// the mirror's first playable game. Null when the mirror offers none.
+  /// the mirror's first game that is played for score. The probe is never
+  /// picked for a player who has not asked for it: it is a diagnostic, not a
+  /// round, so it stays out of the default and nothing startles a player with
+  /// it. Null when the mirror offers none.
   String? get _mirrorPlayableSelection {
     final playable = _mirrorPlayableIds;
     if (playable.isEmpty) return null;
     final selected = _mirrorSelected;
-    return selected != null && playable.contains(selected)
-        ? selected
-        : playable.first;
+    if (selected != null && playable.contains(selected)) return selected;
+    for (final id in playable) {
+      if (!_isProbeId(id)) return id;
+    }
+    return playable.first;
   }
 
   /// Hand keyboard control back to the round after a picker selection. The
@@ -719,8 +696,7 @@ class _GameScreenState extends State<GameScreen>
     _gameplayFocus.requestFocus();
   }
 
-  /// Start the game the picker shows. It lists [_playableGames], so the
-  /// diagnostic is never started from here.
+  /// Start the game the picker shows.
   void _startGame() {
     if (_isControllerMode) return;
     final games = _playableGames;
@@ -728,13 +704,16 @@ class _GameScreenState extends State<GameScreen>
     _startLocalGame(games[_gameIndex]);
   }
 
-  /// Start the controller diagnostic from its own button: the same local
-  /// session, without pretending it is one of the games.
-  void _startProbe() {
-    if (_isControllerMode) return;
-    final probe = _probeGame;
-    if (probe == null) return;
-    _startLocalGame(probe);
+  /// Start the game the picker shows, establishing tilt neutral first when the
+  /// round is to be steered by the phone. A calibration the player cancelled
+  /// or a sensor that never reported leaves the setup view alone.
+  Future<void> _startLocalFromSetup() async {
+    final games = _playableGames;
+    if (games.isEmpty || _gameIndex >= games.length) return;
+    final game = games[_gameIndex];
+    if (_inputMode == _InputMode.motion && !await _ensureMotionReady()) return;
+    if (!mounted) return;
+    _startLocalGame(game);
   }
 
   /// Start (or restart) one local game. A library failure leaves the setup
@@ -769,7 +748,7 @@ class _GameScreenState extends State<GameScreen>
         _frame = null;
         _held = const <int>[];
         _localGame = null;
-        _localControls = const <String>[];
+        _localControls = const <GameControl>[];
       });
       return;
     }
@@ -782,12 +761,29 @@ class _GameScreenState extends State<GameScreen>
       _playError = null;
       _image = null;
       _frame = null;
+      // The resolved state is built from the round's own controls, so an axis
+      // starts idle - not at the middle of its travel, which would fight the
+      // phone from the first frame.
       _held = List<int>.filled(game.controls.length, 0);
       // The ticker's clock restarts with the round: zero means "the next
       // frame is the first one, use the nominal step".
       _lastTime = Duration.zero;
       _ticks = 0;
     });
+    _recomputeHeld();
+    // Motion only means something for a round that declares a tilt axis. A
+    // game that takes none (nothing this build ships) is played on the pads
+    // and told so, rather than started unsteerable.
+    if (_inputMode == _InputMode.motion && !_tiltDrivesAxes) {
+      _discardMotion();
+      setState(() => _inputMode = _InputMode.manual);
+      _showMessage('This game does not take tilt; use manual controls');
+    }
+    // Opening the round discarded the local session, and with it the sensor
+    // subscription the calibration was reading. A motion round re-attaches the
+    // mapper it was calibrated with - the same rule the mirror path follows,
+    // and the reason a preview round is steerable at all.
+    if (_inputMode == _InputMode.motion) _attachMotion();
     // Restarting (start over) runs while the ticker may already be active.
     if (!_ticker.isActive) unawaited(_ticker.start());
     // Critical: reclaim focus after the button was tapped, so the Focus
@@ -805,6 +801,10 @@ class _GameScreenState extends State<GameScreen>
   void _pauseLocalGame() {
     if (_isControllerMode || _phase != _PlayPhase.playing) return;
     _sendLocalRelease();
+    // The sensor is dropped with the ticker but the mapper is kept: an
+    // ordinary pause keeps the neutral this round was calibrated with, and a
+    // resume carries on from it.
+    _detachMotion();
     _ticker.stop();
     setState(() {
       _phase = _PlayPhase.paused;
@@ -830,6 +830,7 @@ class _GameScreenState extends State<GameScreen>
       _releaseAllInput();
       _lastTime = Duration.zero;
     });
+    if (_inputMode == _InputMode.motion) _attachMotion();
     if (!_ticker.isActive) unawaited(_ticker.start());
     _gameplayFocus.requestFocus();
   }
@@ -839,6 +840,7 @@ class _GameScreenState extends State<GameScreen>
   /// the setup view is back.
   void _stopGame() {
     _disposeLocalSession();
+    _discardMotion();
     setState(() => _phase = _PlayPhase.idle);
   }
 
@@ -866,6 +868,7 @@ class _GameScreenState extends State<GameScreen>
   /// disposed instead of drawn into whatever is on screen by then.
   void _disposeLocalSession() {
     _sendLocalRelease();
+    _detachMotion();
     _ticker.stop();
     // The sources go too: a held pad pointer or a pending semantic activation
     // must not outlive the round it was holding.
@@ -880,7 +883,7 @@ class _GameScreenState extends State<GameScreen>
     _image = null;
     _frame = null;
     _localGame = null;
-    _localControls = const <String>[];
+    _localControls = const <GameControl>[];
     _held = const <int>[];
     _playError = null;
     _lastTime = Duration.zero;
@@ -1009,9 +1012,10 @@ class _GameScreenState extends State<GameScreen>
     _axes.clear();
     _padPointers.clear();
     _deadPointers.clear();
-    for (var i = 0; i < _held.length; i++) {
-      _held[i] = 0;
-    }
+    // Through the ordinary resolution, so an axis slot ends up idle rather
+    // than at zero: zero is the middle of an axis's travel, and a still phone
+    // must not recentre the player.
+    _recomputeHeld();
   }
 
   // ------------------------------------------------------------ input edges
@@ -1056,10 +1060,12 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// The resolved state: every button from its sources, every axis from its
-  /// raw value, with opposing directions on one axis cancelled to neutral.
+  /// raw value. A button nobody holds is 0 (released) and an axis nobody
+  /// drives is [MotionControl.idle] — never 0, which would be the middle of
+  /// the axis's travel and would recentre a tilted player's paddle.
   void _recomputeHeld() {
     for (var i = 0; i < _held.length; i++) {
-      _held[i] = 0;
+      _held[i] = _isAxisAt(i) ? MotionControl.idle : 0;
     }
     _sources.forEach((index, owners) {
       if (index < _held.length && owners.isNotEmpty) _held[index] = 1;
@@ -1069,6 +1075,19 @@ class _GameScreenState extends State<GameScreen>
     });
     _neutralizeOpposites('Up', 'Down');
     _neutralizeOpposites('Left', 'Right');
+  }
+
+  /// Whether control [index] of the round on screen is an axis. The declared
+  /// type decides, on both paths: the mirror states it per control in its
+  /// start reply, and the local catalogue carries it from the engine.
+  bool _isAxisAt(int index) {
+    if (_isControllerMode) {
+      final game = _mirrorGame;
+      if (game == null || index >= game.controls.length) return false;
+      return game.controls[index].isAxis;
+    }
+    if (index >= _localControls.length) return false;
+    return _localControls[index].isAxis;
   }
 
   /// Two opposing directions held at once resolve to neutral for that axis: a
@@ -1097,12 +1116,14 @@ class _GameScreenState extends State<GameScreen>
   /// Feed the local engine the full held state right now. Every pad and key
   /// edge calls this, so a short tap is not sampled away by the ticker; the
   /// ticker calls it each frame as held-state recovery and to keep a held
-  /// direction moving.
+  /// direction moving. The values go through as they are: the native side
+  /// resolves each control's declared type, so a button arrives as a level and
+  /// an axis keeps its whole range (see GameEngine.input).
   void _sendLocalInput() {
     final engine = _engine;
     if (engine == null || _phase != _PlayPhase.playing) return;
     for (var i = 0; i < _held.length; i++) {
-      engine.button(playerId: 1, code: i, value: _held[i] != 0 ? 1 : 0);
+      engine.input(playerId: 1, code: i, value: _held[i]);
     }
   }
 
@@ -1115,7 +1136,11 @@ class _GameScreenState extends State<GameScreen>
     if (engine == null) return;
     try {
       for (var i = 0; i < _held.length; i++) {
-        engine.button(playerId: 1, code: i, value: 0);
+        engine.input(
+          playerId: 1,
+          code: i,
+          value: _isAxisAt(i) ? MotionControl.idle : 0,
+        );
       }
     } on StateError {
       // The engine is already gone: there is nothing left to release.
@@ -1228,15 +1253,19 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// Tell the mirror that every control is released, without touching the
-  /// round's own sources. The packet is a zero-filled list sized to the
-  /// running game's control count: an *empty* packet is not a release, and a
-  /// short one would leave the device holding whatever the missing controls
-  /// last carried.
+  /// round's own sources. The packet is a full-state list sized to the running
+  /// game's control count: an *empty* packet is not a release, and a short one
+  /// would leave the device holding whatever the missing controls last
+  /// carried. A button is released to 0; an axis is released to idle, because
+  /// 0 is the middle of its travel and would recentre the player's paddle.
   void _sendReleasePacket() {
     final session = _connection.session;
     final game = _mirrorGame;
     if (session == null || game == null) return;
-    unawaited(session.sendGameInput(List<int>.filled(game.controls.length, 0)));
+    unawaited(session.sendGameInput(<int>[
+      for (var i = 0; i < game.controls.length; i++)
+        game.controls[i].isAxis ? MotionControl.idle : 0,
+    ]));
   }
 
   /// Stop the sources that drive a mirror round without touching the round
@@ -1578,7 +1607,7 @@ class _GameScreenState extends State<GameScreen>
       await _restartMirrorGame();
       return;
     }
-    _replayOrStartLocal();
+    await _replayOrStartLocal();
   }
 
   /// Leave the round for the picker. The round is discarded first - asked for
@@ -1697,7 +1726,15 @@ class _GameScreenState extends State<GameScreen>
   Future<void> _setInputMode(_InputMode mode) async {
     if (_inputMode == mode || _mirrorBusy) return;
     if (_phase != _PlayPhase.idle && _phase != _PlayPhase.paused) return;
-    _releaseMirrorInput();
+    // Release whatever the round on screen is holding, on whichever path it
+    // runs: a direction the pads were holding must not stay held across a
+    // change of how the round is steered.
+    if (_isControllerMode) {
+      _releaseMirrorInput();
+    } else {
+      _sendLocalRelease();
+      _releaseAllInput();
+    }
     if (mode == _InputMode.manual) _discardMotion();
     setState(() => _inputMode = mode);
     if (mode == _InputMode.motion && _phase == _PlayPhase.paused) {
@@ -1919,6 +1956,20 @@ class _GameScreenState extends State<GameScreen>
       _pendingPaused = false;
       _pendingInterruption = false;
     });
+    // The slots the round declares are resolved from its own controls, so the
+    // first frame of a motion round carries idle axes rather than zeroes.
+    _recomputeHeld();
+    // The mirror only says what a game declares once it has started, so this
+    // is the first moment the app can tell whether tilt can steer it. Firmware
+    // from before positional motion declares no accelerometer axis: the round
+    // is left on the pads with the reason on screen, rather than looking
+    // steered while nothing moves.
+    if (_inputMode == _InputMode.motion && !_tiltDrivesAxes) {
+      _discardMotion();
+      setState(() => _inputMode = _InputMode.manual);
+      _showMessage("This mirror's firmware does not support tilt control; "
+          'update the firmware to play with motion');
+    }
     // The round exists now; keys belong to the pad rather than to whatever
     // button started it.
     _gameplayFocus.requestFocus();
@@ -2317,25 +2368,13 @@ class _GameScreenState extends State<GameScreen>
     }
     // A paused, finished, or superseded round takes no input.
     if (_phase != _PlayPhase.playing) return;
-    final game = _mirrorGame;
-    if (game == null) return;
-    // Motion goes through the same source path as a finger or a key: a
-    // direction held by tilt and by a pad button is held until both let go.
-    // Axes carry their raw value instead.
-    if (_tiltDrivesAxes) {
-      _setMirrorAxis('TiltX', motion.tiltXAxis);
-      _setMirrorAxis('TiltY', motion.tiltYAxis);
-    } else {
-      // Tilt steers movement only. Where a round's vertical controls are
-      // actions rather than movement (Tetris rotates and soft-drops), tilting
-      // the phone must not fire them.
-      if (_tiltDrivesVertical) {
-        _setTiltHeld('Up', motion.up);
-        _setTiltHeld('Down', motion.down);
-      }
-      _setTiltHeld('Left', motion.left);
-      _setTiltHeld('Right', motion.right);
-    }
+    // The angle the phone is held at is the position the round is driven to.
+    // Which axes a round takes is its own declaration, on the mirror and in
+    // the local simulation alike: a round that declares no accelerometer axis
+    // cannot be steered by tilt, and motion mode is refused before it starts
+    // (see _motionUnavailable).
+    _setAxis('TiltX', motion.posX);
+    _setAxis('TiltY', motion.posY);
   }
 
   /// The accelerometer failed, or stopped reporting while neutral was still
@@ -2360,71 +2399,100 @@ class _GameScreenState extends State<GameScreen>
     });
   }
 
-  /// Whether the round on screen takes analog axes from tilt (the probe
-  /// diagnostic) rather than directions.
-  bool get _tiltDrivesAxes {
-    if (_isControllerMode) {
-      final game = _mirrorGame;
-      return game != null && game.controls.any((c) => c.isAxis);
-    }
-    for (final label in _localControls) {
-      if (_axisLabels.contains(label)) return true;
-    }
-    return false;
-  }
-
   /// The id of the round the pads and the keyboard are driving: the mirror's
   /// game while the mirror runs it, otherwise the local engine's.
   String? get _runningGameId =>
       _isControllerMode ? _mirrorGame?.id : _localGame?.id;
 
-  /// Whether tilt may steer the vertical axis of this round. A round whose
-  /// vertical controls are actions - a control the pad draws under a human
-  /// name, like Tetris's Rotate - is steered horizontally only, so tilting
-  /// the phone cannot rotate a piece or drop it.
-  bool get _tiltDrivesVertical =>
-      _aliasFor(_runningGameId, 'Up') == null &&
-      _aliasFor(_runningGameId, 'Down') == null;
+  /// The tilt axes the round on screen declares, by wire label. A round takes
+  /// tilt when it declares one of the phone's accelerometer axes; a round that
+  /// declares none (any firmware from before positional motion) cannot be
+  /// steered positionally, and [_motionUnavailable] keeps motion mode off it.
+  Set<String> get _tiltAxes {
+    final out = <String>{};
+    if (_isControllerMode) {
+      final game = _mirrorGame;
+      if (game == null) return out;
+      for (final control in game.controls) {
+        if (control.isAxis && _tiltLabels.contains(control.label)) {
+          out.add(control.label);
+        }
+      }
+      return out;
+    }
+    for (final control in _localControls) {
+      if (control.isAxis && _tiltLabels.contains(control.label)) {
+        out.add(control.label);
+      }
+    }
+    return out;
+  }
+
+  /// Whether the round on screen can be steered by tilt at all.
+  bool get _tiltDrivesAxes => _tiltAxes.isNotEmpty;
+
+  /// Why motion mode cannot be used for the round on screen, or null when it
+  /// can. A mirror running firmware that predates positional tilt declares no
+  /// accelerometer axis, and is told so rather than left silently unsteerable.
+  String? get _motionUnavailable {
+    if (_isControllerMode) {
+      final game = _mirrorGame;
+      if (game == null) return null; // no round yet: setup offers manual only
+      if (_tiltDrivesAxes) return null;
+      return 'This mirror\'s firmware does not support tilt control. '
+          'Update the firmware to play with motion.';
+    }
+    if (_localGame == null) return null;
+    if (_tiltDrivesAxes) return null;
+    return 'This game does not take tilt.';
+  }
 
   /// The human name of [wire] in [id], or null when the control is drawn under
   /// its own declared label.
   String? _aliasFor(String? id, String wire) =>
       id == null ? null : _gameCopy[id]?.aliases[wire];
 
-  /// Hold or release the direction labelled [label] from phone tilt. Tilt is
-  /// one source among the others, so a finger holding the same direction is
-  /// not released when the phone comes back to neutral.
-  void _setTiltHeld(String label, bool value) {
-    final index = _controlIndexForLabel(label);
-    if (index == null) return;
-    if (value) {
-      _pressControl(index, const _TiltSource());
-    } else {
-      _releaseControl(index, const _TiltSource());
-    }
+  /// Set one of the round's tilt axes, by wire label, to a position in
+  /// -32767..32767 ([MotionControl.idle] when nobody is driving it). The
+  /// control's own index is found on whichever path the round runs on, so a
+  /// local round and a mirror round are driven by the same code.
+  ///
+  /// Tilt is sampled far faster than either path needs, so a changed axis is
+  /// sent at most once per 20 ms while the readout follows every sample; the
+  /// 100 ms heartbeat carries the newest value in between.
+  void _setAxis(String label, int value) {
+    if (!_tiltLabels.contains(label)) return;
+    final index = _indexOfWire(label);
+    if (index == null || index >= _held.length) return;
+    if (!_isAxisAt(index)) return;
+    if (_axes[index] == value) return;
+    _axes[index] = value;
+    // The resolved state follows every sample; only the *send* is throttled.
+    // Leaving this behind the throttle would leave the local ticker's frame
+    // and the mirror's next heartbeat carrying a stale position.
+    _recomputeHeld();
+    if (mounted) setState(() {});
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastAxisSendMs < 20) return;
+    _lastAxisSendMs = now;
+    _dispatchInput();
   }
 
-  /// Set an axis control's raw value, -32768..32767. Unlike a button, an axis
-  /// keeps its full analog range rather than collapsing to 0/1.
-  ///
-  /// Tilt is sampled far faster than the wire needs, so axis changes are
-  /// throttled to one send per 20 ms while the readout follows every sample;
-  /// the 100 ms heartbeat carries the newest value in between.
-  void _setMirrorAxis(String label, int value) {
-    final game = _mirrorGame;
-    if (game == null) return;
-    for (var i = 0; i < game.controls.length && i < _held.length; i++) {
-      if (game.controls[i].label != label || !game.controls[i].isAxis) continue;
-      if (_axes[i] == value) return;
-      _axes[i] = value;
-      if (mounted) setState(() {});
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastAxisSendMs < 20) return;
-      _lastAxisSendMs = now;
-      _recomputeHeld();
-      _dispatchInput();
-      return;
+  /// The index of the control declared under [label] on the round on screen,
+  /// or null when it declares none.
+  int? _indexOfWire(String label) {
+    if (_isControllerMode) {
+      final game = _mirrorGame;
+      if (game == null) return null;
+      for (var i = 0; i < game.controls.length; i++) {
+        if (game.controls[i].label == label) return i;
+      }
+      return null;
     }
+    for (var i = 0; i < _localControls.length; i++) {
+      if (_localControls[i].label == label) return i;
+    }
+    return null;
   }
 
   /// Send the current full input state to the mirror immediately. Edges call
@@ -2652,7 +2720,7 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _buildHelpSheet() {
     final id = _copyGameId;
-    final name = id == null ? 'This build has no games' : _mirrorGameLabel(id);
+    final name = id == null ? 'This build has no games' : _gameLabel(id);
     final goal = id == null ? null : _goalFor(id);
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -2711,7 +2779,7 @@ class _GameScreenState extends State<GameScreen>
     final name = _aliasFor(id, wire) ?? wire;
     final hint = _keyHints[wire];
     if (hint != null) return '$name  -  $hint';
-    return _axisLabels.contains(wire) ? '$name  -  tilt' : name;
+    return _tiltLabels.contains(wire) ? '$name  -  tilt' : name;
   }
 
   /// The goal sentence as a widget, or nothing at all when this build has no
@@ -2736,7 +2804,9 @@ class _GameScreenState extends State<GameScreen>
       return <String>[for (final c in mirror.controls) c.label];
     }
     for (final game in _games) {
-      if (game.id == id) return game.controls;
+      if (game.id == id) {
+        return <String>[for (final c in game.controls) c.label];
+      }
     }
     return const <String>[];
   }
@@ -2748,13 +2818,13 @@ class _GameScreenState extends State<GameScreen>
     final local = _localGame;
     if (local != null) return local.id;
     final playable = _playableGames;
-    if (playable.isEmpty) return _probeGame?.id;
+    if (playable.isEmpty) return null;
     return playable[_gameIndex < playable.length ? _gameIndex : 0].id;
   }
 
-  /// Display name for a mirror game id: the local simulation's name when the
-  /// app knows the id, otherwise the raw id.
-  String _mirrorGameLabel(String id) {
+  /// Display name for a game id: the local simulation's name when the app
+  /// knows the id, otherwise the raw id.
+  String _gameLabel(String id) {
     for (final g in _games) {
       if (g.id == id) return g.name;
     }
@@ -2902,7 +2972,7 @@ class _GameScreenState extends State<GameScreen>
       return;
     }
     if (_phase == _PlayPhase.over) {
-      _replayOrStartLocal();
+      unawaited(_replayOrStartLocal());
       return;
     }
     _startGame();
@@ -2912,7 +2982,11 @@ class _GameScreenState extends State<GameScreen>
   /// started (including the controller diagnostic), otherwise the picker's
   /// selection. Restart, Play again and Space all go through this, so none of
   /// them can quietly swap the round for another game.
-  void _replayOrStartLocal() {
+  Future<void> _replayOrStartLocal() async {
+    // A round replayed after the app was suspended has no neutral left: the
+    // suspension discarded it, so a motion replay asks for it again first.
+    if (_inputMode == _InputMode.motion && !await _ensureMotionReady()) return;
+    if (!mounted) return;
     final current = _localGame;
     if (current != null) {
       _startLocalGame(current);
@@ -3052,6 +3126,9 @@ class _GameScreenState extends State<GameScreen>
         ),
       );
     }
+    // Neutral comes first: while it is being established there is no round to
+    // show and nothing may start, on the preview exactly as on a mirror.
+    if (_motionPhase == _MotionPhase.calibrating) return _buildCalibrationView();
     if (!_localRound) return _buildLocalSetup();
     // The panel is painted with the designer's veneer and LED settings, and
     // the round's controls are built from the same theme: listen to the
@@ -3133,28 +3210,22 @@ class _GameScreenState extends State<GameScreen>
             _buildControlSummary(selected.id, keyName: 'game-controls'),
             const SizedBox(height: 12),
           ],
+          _buildInputModePicker(verbose: true),
+          const SizedBox(height: 12),
           FilledButton.icon(
             key: const ValueKey<String>('start-game'),
-            onPressed: selected == null ? null : _startGame,
+            onPressed:
+                selected == null || _motionBusy ? null : _startLocalFromSetup,
             icon: const Icon(Icons.play_arrow),
             label: const Text('Start Game'),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Movement on the left, actions on the right.',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+          Text(
+            _inputMode == _InputMode.motion
+                ? 'Tilt steers; actions stay on the right.'
+                : 'Movement on the left, actions on the right.',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
-          if (_probeGame != null) ...<Widget>[
-            const Divider(),
-            // The probe is a controller diagnostic, not a sixth game: it has
-            // its own button and never appears in the picker.
-            OutlinedButton.icon(
-              key: const ValueKey<String>('probe-diagnostic'),
-              onPressed: _startProbe,
-              icon: const Icon(Icons.sensors),
-              label: const Text('Controller diagnostic'),
-            ),
-          ],
         ],
       ),
     );
@@ -3199,11 +3270,36 @@ class _GameScreenState extends State<GameScreen>
             ],
           ),
         ),
-        Expanded(child: _buildPlaySurface(preview: _buildPreview())),
+        // Motion mode draws no movement pad - a pad under a thumb that is not
+        // steering would fight the tilt - but the panel stays on screen, which
+        // is where the probe's dot shows what the phone is doing.
+        Expanded(
+          child: _inputMode == _InputMode.motion
+              ? _buildMotionGamepad(preview: _buildPreview())
+              : _buildPlaySurface(preview: _buildPreview()),
+        ),
         if (_phase == _PlayPhase.paused || terminal)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-            child: _buildRoundActions(terminal: terminal),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _buildRoundActions(terminal: terminal),
+                // The way a paused round is steered is part of the same
+                // decision as resuming it, exactly as on a mirror.
+                if (!terminal) ...<Widget>[
+                  const SizedBox(height: 4),
+                  _buildInputModePicker(verbose: false),
+                  if (_inputMode == _InputMode.motion)
+                    OutlinedButton.icon(
+                      key: const ValueKey<String>('paused-recalibrate'),
+                      onPressed: () => unawaited(_recalibrate()),
+                      icon: const Icon(Icons.screen_rotation),
+                      label: const Text('Recalibrate'),
+                    ),
+                ],
+              ],
+            ),
           ),
       ],
     );
@@ -3265,7 +3361,7 @@ class _GameScreenState extends State<GameScreen>
 
     if (_phase == _PlayPhase.starting) {
       final id = _mirrorGameId;
-      final label = id == null ? 'the game' : _mirrorGameLabel(id);
+      final label = id == null ? 'the game' : _gameLabel(id);
       return _transitionView('Starting $label...');
     }
 
@@ -3418,11 +3514,7 @@ class _GameScreenState extends State<GameScreen>
     } else if (ids.isEmpty) {
       catalogue = const Text('No games on this mirror');
     } else {
-      final playable = <String>[
-        for (final id in ids)
-          if (!_isProbeId(id)) id,
-      ];
-      final diagnostic = ids.contains('probe');
+      final playable = _mirrorPlayableIds;
       catalogue = Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -3437,7 +3529,7 @@ class _GameScreenState extends State<GameScreen>
                 for (final id in playable)
                   DropdownMenuItem<String>(
                     value: id,
-                    child: Text(_mirrorGameLabel(id)),
+                    child: Text(_gameLabel(id)),
                   ),
               ],
               onChanged: (v) {
@@ -3451,7 +3543,7 @@ class _GameScreenState extends State<GameScreen>
           if (_copyGameId != null) ...<Widget>[
             const SizedBox(height: 8),
             Text(
-              _mirrorGameLabel(_copyGameId!),
+              _gameLabel(_copyGameId!),
               key: const ValueKey<String>('game-name'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
@@ -3462,27 +3554,8 @@ class _GameScreenState extends State<GameScreen>
             ],
           ],
           const SizedBox(height: 20),
-          RadioGroup<_InputMode>(
-            groupValue: _inputMode,
-            onChanged: (v) => unawaited(_setInputMode(v ?? _InputMode.manual)),
-            child: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                RadioListTile<_InputMode>(
-                  value: _InputMode.manual,
-                  key: ValueKey<String>('mode-manual'),
-                  title: Text('Manual controls'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-                RadioListTile<_InputMode>(
-                  value: _InputMode.motion,
-                  key: ValueKey<String>('mode-motion'),
-                  title: Text('Motion controls'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ],
-            ),
-          ),
+          _buildInputModePicker(verbose: true),
+          const SizedBox(height: 12),
           FilledButton.icon(
             key: const ValueKey<String>('start-game'),
             onPressed: _mirrorBusy || playable.isEmpty || _motionBusy
@@ -3491,17 +3564,6 @@ class _GameScreenState extends State<GameScreen>
             icon: const Icon(Icons.play_arrow),
             label: const Text('Start Game'),
           ),
-          // The probe is a controller diagnostic rather than a sixth game, so
-          // it starts from its own button and never occupies the picker.
-          if (diagnostic) ...<Widget>[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              key: const ValueKey<String>('probe-diagnostic'),
-              onPressed: _mirrorBusy ? null : () => _startMirrorGame('probe'),
-              icon: const Icon(Icons.sensors),
-              label: const Text('Controller diagnostic'),
-            ),
-          ],
         ],
       );
     }
@@ -3550,6 +3612,43 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// How the round on screen is steered: the pads and the keyboard, or the
+  /// phone's tilt. Shared by the mirror path and the local preview, so the
+  /// choice means the same thing on both and a round that cannot be steered by
+  /// tilt says so instead of offering a mode that would do nothing.
+  Widget _buildInputModePicker({required bool verbose}) {
+    final problem = _motionUnavailable;
+    if (problem != null) {
+      return Text(
+        problem,
+        key: const ValueKey<String>('motion-unavailable'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 12, color: Colors.grey),
+      );
+    }
+    return RadioGroup<_InputMode>(
+      groupValue: _inputMode,
+      onChanged: (v) => unawaited(_setInputMode(v ?? _InputMode.manual)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          RadioListTile<_InputMode>(
+            value: _InputMode.manual,
+            key: const ValueKey<String>('mode-manual'),
+            title: Text(verbose ? 'Manual controls' : 'Manual'),
+            contentPadding: EdgeInsets.zero,
+          ),
+          RadioListTile<_InputMode>(
+            value: _InputMode.motion,
+            key: const ValueKey<String>('mode-motion'),
+            title: Text(verbose ? 'Motion controls' : 'Motion'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The round is frozen on the mirror and every control here is released.
   /// The round itself is still live on the device, so the player chooses
   /// between continuing it, starting it over, and leaving it for the picker.
@@ -3566,7 +3665,7 @@ class _GameScreenState extends State<GameScreen>
             Text('Paused', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              '${_mirrorGameLabel(game.id)} is frozen on the mirror. It stays '
+              '${_gameLabel(game.id)} is frozen on the mirror. It stays '
               'there until it is resumed, restarted, or left behind.',
               textAlign: TextAlign.center,
             ),
@@ -3618,7 +3717,12 @@ class _GameScreenState extends State<GameScreen>
   /// stays frozen until the player resumes it.
   Future<void> _recalibrate() async {
     if (_phase != _PlayPhase.paused) return;
-    _releaseMirrorInput();
+    if (_isControllerMode) {
+      _releaseMirrorInput();
+    } else {
+      _sendLocalRelease();
+      _releaseAllInput();
+    }
     await _calibrateMotion();
   }
 
@@ -3714,8 +3818,7 @@ class _GameScreenState extends State<GameScreen>
   /// Motion mode: tilt steers, so no movement grid is drawn - a pad under a
   /// thumb that is not steering the game would fight the tilt. Action buttons
   /// stay reachable, and a round steered by tilt axes shows them as readouts.
-  Widget _buildMotionGamepad() {
-    final game = _mirrorGame;
+  Widget _buildMotionGamepad({Widget? preview}) {
     final actions = <_PadSpec>[
       for (final spec in _padSpecs())
         if (!spec.isDirection) spec,
@@ -3728,7 +3831,7 @@ class _GameScreenState extends State<GameScreen>
           final side = _padSide(
             availableWidth: constraints.maxWidth,
             availableHeight: constraints.maxHeight,
-            withPreview: false,
+            withPreview: preview != null,
           );
           if (side < _minPadSide) {
             _noteInsufficientSpace();
@@ -3741,7 +3844,9 @@ class _GameScreenState extends State<GameScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   Text(
-                    game == null ? 'Game' : _mirrorGameLabel(game.id),
+                    _runningGameId == null
+                        ? 'Game'
+                        : _gameLabel(_runningGameId!),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),
@@ -3749,6 +3854,13 @@ class _GameScreenState extends State<GameScreen>
                     'Tilt the phone to steer',
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
+                  if (preview != null) ...<Widget>[
+                    const SizedBox(height: 16),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: side * 4),
+                      child: preview,
+                    ),
+                  ],
                   if (actions.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 20),
                     Wrap(
@@ -3801,9 +3913,8 @@ class _GameScreenState extends State<GameScreen>
       return out;
     }
     for (var i = 0; i < _localControls.length; i++) {
-      final wire = _localControls[i];
-      if (_axisLabels.contains(wire)) continue;
-      out.add(_specFor(i, wire));
+      if (_localControls[i].isAxis) continue;
+      out.add(_specFor(i, _localControls[i].label));
     }
     return out;
   }
@@ -3822,9 +3933,8 @@ class _GameScreenState extends State<GameScreen>
       return out;
     }
     for (var i = 0; i < _localControls.length; i++) {
-      final wire = _localControls[i];
-      if (!_axisLabels.contains(wire)) continue;
-      out.add(_specFor(i, wire));
+      if (!_localControls[i].isAxis) continue;
+      out.add(_specFor(i, _localControls[i].label));
     }
     return out;
   }
@@ -4022,7 +4132,7 @@ class _GameScreenState extends State<GameScreen>
       if (mirror == null) return const <String>[];
       return <String>[for (final c in mirror.controls) c.label];
     }
-    return _localControls;
+    return <String>[for (final c in _localControls) c.label];
   }
 
   /// Map a control label to its index in the round on screen, or null when

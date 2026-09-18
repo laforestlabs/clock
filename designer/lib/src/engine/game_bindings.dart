@@ -32,8 +32,8 @@ typedef _PtrToUint8D = Pointer<Uint8> Function(_VoidPtr);
 typedef _PtrToBoolC = Uint8 Function(_VoidPtr);
 typedef _PtrToBoolD = int Function(_VoidPtr);
 
-typedef _ButtonC = Void Function(_VoidPtr, Uint16, Uint16, Int16);
-typedef _ButtonD = void Function(_VoidPtr, int, int, int);
+typedef _InputC = Void Function(_VoidPtr, Uint16, Uint16, Int16);
+typedef _InputD = void Function(_VoidPtr, int, int, int);
 
 typedef _StepC = Void Function(_VoidPtr, Uint32);
 typedef _StepD = void Function(_VoidPtr, int);
@@ -49,6 +49,9 @@ typedef _VoidToIntD = int Function();
 
 typedef _IntIntToStrC = Pointer<Utf8> Function(Int, Int);
 typedef _IntIntToStrD = Pointer<Utf8> Function(int, int);
+
+typedef _IntIntToIntC = Int Function(Int, Int);
+typedef _IntIntToIntD = int Function(int, int);
 
 /// Thrown when the game symbols are missing, which means the CMake build did
 /// not compile gamekit/ into the shared library.
@@ -70,6 +73,8 @@ class GameBindings {
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_game_control_count'),
         gameControlLabel =
             lib.lookupFunction<_IntIntToStrC, _IntIntToStrD>('ml_game_control_label'),
+        gameControlType =
+            lib.lookupFunction<_IntIntToIntC, _IntIntToIntD>('ml_game_control_type'),
         gameOpen =
             lib.lookupFunction<_GameOpenC, _GameOpenD>('ml_game_open'),
         gameClose =
@@ -80,8 +85,8 @@ class GameBindings {
             lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_height'),
         gameTick =
             lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_tick'),
-        gameButton =
-            lib.lookupFunction<_ButtonC, _ButtonD>('ml_game_button'),
+        gameInput =
+            lib.lookupFunction<_InputC, _InputD>('ml_game_input'),
         gameStep =
             lib.lookupFunction<_StepC, _StepD>('ml_game_step'),
         gameIsOver =
@@ -97,12 +102,13 @@ class GameBindings {
   final int Function(int) gameMaxPlayers;
   final int Function(int) gameControlCount;
   final Pointer<Utf8> Function(int, int) gameControlLabel;
+  final int Function(int, int) gameControlType;
   final _VoidPtr Function(Pointer<Utf8>, int, int, int, int) gameOpen;
   final void Function(_VoidPtr) gameClose;
   final int Function(_VoidPtr) gameWidth;
   final int Function(_VoidPtr) gameHeight;
   final int Function(_VoidPtr) gameTick;
-  final void Function(_VoidPtr, int, int, int) gameButton;
+  final void Function(_VoidPtr, int, int, int) gameInput;
   final void Function(_VoidPtr, int) gameStep;
   final int Function(_VoidPtr) gameIsOver;
   final Pointer<Uint8> Function(_VoidPtr) gameRenderRgba;
@@ -141,6 +147,22 @@ class GameBindings {
   }
 }
 
+/// What a declared control is, mirroring `ml_input_type` in `mirror/game.h`.
+///
+/// A button is a level, an axis is an absolute position in the game's own
+/// travel, and a touch is a packed point. The client renders an axis as a
+/// readout and drives it from tilt, and never offers it as something to press.
+enum GameControlType { button, axis, touch }
+
+/// One control a game declares: its label and what kind of input it takes.
+@immutable
+class GameControl {
+  const GameControl(this.label, this.type);
+  final String label;
+  final GameControlType type;
+  bool get isAxis => type == GameControlType.axis;
+}
+
 /// One game the build knows about, for the game picker.
 @immutable
 class GameInfo {
@@ -148,5 +170,5 @@ class GameInfo {
   final String id;
   final String name;
   final int maxPlayers;
-  final List<String> controls;
+  final List<GameControl> controls;
 }

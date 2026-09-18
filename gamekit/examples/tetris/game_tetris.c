@@ -45,6 +45,7 @@ typedef struct {
     uint8_t  held_u;           /* last Up held state, for press edges */
     uint8_t  held_d;           /* last Down held state, for press edges */
     uint8_t  down_active;      /* soft drop engaged for the current piece */
+    int16_t  steer_x;          /* tilt axis, ML_AXIS_IDLE when unused */
     uint32_t board[TETRIS_BH]; /* 1 bit per cell, bw wide */
 } tetris_state;
 
@@ -164,6 +165,7 @@ static void tetris_reset(void *state, ml_game_ctx *ctx)
     s->held_u = 0;
     s->held_d = 0;
     s->down_active = 0;
+    s->steer_x = ML_AXIS_IDLE;
     s->status = TETRIS_PLAYING;
     s->piece = (uint8_t)(ml_ctx_rng(ctx) % 7);
     s->next_piece = (uint8_t)(ml_ctx_rng(ctx) % 7);
@@ -204,6 +206,9 @@ static void tetris_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
     case 3:  /* Right */
         s->held_r = e->value ? 1 : 0;
         break;
+    case 4:  /* Tilt: the phone's angle, as a position to walk toward */
+        s->steer_x = e->value;
+        break;
     default:
         break;
     }
@@ -214,9 +219,17 @@ static void tetris_update(void *state, ml_game_ctx *ctx)
     tetris_state *s = state;
     if (s->status != TETRIS_PLAYING) return;
 
-    /* held moves repeat every tick */
-    if (s->held_l && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
-    if (s->held_r && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+    /* Horizontal: on tilt the piece walks toward the column the phone points
+     * at, one field column per tick and never through a wall or the stack it
+     * is aiming past; on buttons it repeats while held. */
+    if (ml_axis_engaged(s->steer_x)) {
+        const int target = (int)ml_axis_map(s->steer_x, -3, s->bw - 1);
+        if (s->px < target && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+        else if (s->px > target && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
+    } else {
+        if (s->held_l && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
+        if (s->held_r && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+    }
 
     /* soft drop: one row per tick while Down is engaged, so the piece falls
      * at the panel's frame rate instead of dropping straight to the floor */
@@ -360,6 +373,7 @@ static const ml_control_def tetris_controls[] = {
     { .label = "Down",  .code = 1, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Left",  .code = 2, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Right", .code = 3, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "TiltX", .code = 4, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
 };
 
 const ml_game_vt ml_game_tetris = {
@@ -370,7 +384,7 @@ const ml_game_vt ml_game_tetris = {
     .max_players   = 1,
     .state_size    = sizeof(tetris_state),
     .controls      = tetris_controls,
-    .control_count = 4,
+    .control_count = 5,
     .init          = tetris_init,
     .reset         = tetris_reset,
     .input         = tetris_input,

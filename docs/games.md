@@ -252,6 +252,63 @@ client. The cap also lets the host refuse a join from a controller that cannot
 provide what the game needs (most firmly: a touch-only phone into a game that
 needs an accelerometer), and swap players into roles each can actually play.
 
+### A tilt axis is a position, not a direction
+
+A phone has no joystick, so tilt is how a player steers, and the one thing worth
+being precise about is what a tilt axis *means*. `ML_INPUT_AXIS` is an absolute
+position request inside the game's own travel:
+
+- `0` is the middle of the travel, `+32767` and `-32767` are its ends. The
+  mapping is centre-anchored and saturating, so a phone held at a steady angle
+  holds the player still, and holding it further over cannot send the player
+  past the edge.
+- `ML_AXIS_IDLE` (`-32768`) is not a position. It means the controller is not
+  driving that axis at all - the round is on buttons, or it is paused - and the
+  game must hold the position it has.
+- Buttons and axes share one frame. A game asks `ml_axis_engaged()` per axis and
+  takes its positional path only while someone is driving it, which is what lets
+  a round switch between the pads and the phone mid-session without the player
+  jumping.
+- `ml_axis_map(value, lo, hi)` is the one implementation of the mapping
+  (integer only, both ends exact), and games use it rather than re-deriving it.
+
+Every game that takes tilt declares the axis under the label `TiltX` or `TiltY`,
+which is the wire's name for the phone's two accelerometer axes; the app finds
+them by that label and the declared type together. The phone side is calibrated:
+neutral is the angle the player held the phone at to start the round, that angle
+is the middle of the travel, and 30 degrees either side saturates it. A 5%
+dead zone around neutral reports exactly zero so a resting hand cannot shiver the
+player by a pixel, and the angle is low-pass filtered before it is mapped.
+
+The games that cannot use a position say so honestly rather than pretending:
+snake is a grid game with a heading and no coordinate, so it reads the tilt as a
+*vector* and turns toward its dominant component once that is past a deliberate
+angle (about 9 degrees), leaving the one-cell step and the no-reversal rule
+untouched. Tetris keeps its per-tick column step and walks the falling piece
+toward the column the phone points at, stopping at a wall or the stack rather
+than teleporting into it.
+
+### The input frame on the wire
+
+The app sends the round's whole control state rather than edges, one BLE write
+per frame on the `game_in` characteristic (`...05`), every 100 ms while playing,
+plus an immediate write on a button edge and at most one per 20 ms while a tilt
+axis is moving:
+
+```
+byte 0            u8   count (1..16)
+per control:      u8   code
+                  i16  value, little-endian
+                       (0/1 for a button, -32768..32767 for an axis)
+```
+
+The type is deliberately **not** on the wire: both ends resolve it from the
+running game's own `controls[]` table (`game_runner_control_type` on the device,
+`ml_game_input` in the app's local session), so a game that declares more axes
+costs no protocol change. A frame naming a code the running game does not
+declare is rejected whole, and a rejected frame does not refresh the silence
+watchdog. 16 controls and 49 bytes are the hard limits.
+
 ### How many players
 
 One player is the floor; the example targets two because that is the smallest

@@ -1,56 +1,80 @@
 import 'dart:math' as math;
 
-/// Maps phone accelerometer tilt to held direction buttons.
+/// Maps the phone's accelerometer to an absolute position in a game's travel.
 ///
-/// Calibrates a neutral baseline from the first [calibrationSamples] samples
-/// (the player holds the phone still for ~0.4s after starting), then reports
-/// which of Up/Down/Left/Right are held.
+/// The angle the phone is held at *is* the player's position. Neutral — the
+/// angle established at calibration, with the phone held still — is the middle
+/// of the travel, [travel] radians to either side is one end of it, and the
+/// mapping between is linear:
 ///
-/// The tilt angles are low-pass filtered with [smoothing] to remove hand
-/// jitter, and each direction uses hysteresis: it turns on only past
-/// [engageZone] and stays on until the tilt falls back inside [releaseZone].
-/// At the 20 ms sampling rate the screen subscribes with, this reads as a
-/// stable, responsive tilt without flickering at the boundary.
+/// ```
+///   -30 deg  ->  -32767   (one end)
+///      0 deg  ->       0   (the middle)
+///   +15 deg  ->  +16383   (three quarters of the way)
+///   +30 deg  ->  +32767   (the other end)
+/// ```
+///
+/// So a held angle is a held position: the player moves only while the phone
+/// is moving, and nothing drifts or springs back while it is still. That is
+/// the whole point of this mapper — the games it steers are positional, and a
+/// position that kept changing under a still phone would be unusable.
+///
+/// A dead zone of [deadZone] of the travel around neutral reports exactly
+/// zero, so a hand resting on the phone cannot shiver the player by a pixel.
+/// Inside the dead zone the mapping is flat; outside it, everything from the
+/// edge of the dead zone to [travel] is used, so no part of the travel is
+/// unreachable. The angle is low-pass filtered with [smoothing] first, which
+/// costs about 80 ms of settling on a step change and removes hand jitter.
 class MotionControl {
   MotionControl({
     this.calibrationSamples = 20,
-    this.engageZone = 0.1745, // radians, ~10 degrees
-    this.releaseZone = 0.0873, // radians, ~5 degrees
+    this.travel = _defaultTravel,
+    this.deadZone = 0.05,
     this.smoothing = 0.4,
-  });
+  }) : assert(deadZone >= 0 && deadZone < 1),
+       assert(smoothing > 0 && smoothing <= 1);
 
-  final int calibrationSamples; // 20
-  final double engageZone; // radians, ~10 degrees
-  final double releaseZone; // radians, ~5 degrees, must be < engageZone
-  final double smoothing; // EMA coefficient in (0, 1]
+  /// The wire value for an axis nobody is driving, matching `ML_AXIS_IDLE` in
+  /// `gamekit/include/mirror/game.h`: the game holds its position.
+  static const int idle = -32768;
+
+  /// The value at either end of the travel.
+  static const int full = 32767;
+
+  /// 30 degrees: tilting the phone this far from the angle it was calibrated
+  /// at puts the player at the end of its travel.
+  static const double _defaultTravel = 30 * math.pi / 180;
+
+  /// Samples averaged to establish neutral: the player holds the phone still
+  /// for a moment, and that hold becomes the middle of the travel.
+  final int calibrationSamples;
+
+  /// Radians of tilt from neutral that saturate the travel.
+  final double travel;
+
+  /// Fraction of [travel] either side of neutral that reports exactly zero.
+  final double deadZone;
+
+  /// EMA coefficient applied to the tilt angle, in (0, 1].
+  final double smoothing;
 
   int _n = 0;
   double _sx = 0, _sy = 0, _sz = 0;
-  double _baseLeftRight = 0, _baseUpDown = 0;
-  double _lr = 0, _ud = 0; // filtered tilt offsets
+  double _baseRoll = 0, _basePitch = 0;
+  double _roll = 0, _pitch = 0; // filtered tilt offsets, radians
   bool _calibrated = false;
 
-  bool _up = false, _down = false, _left = false, _right = false;
-
+  /// Whether neutral has been established. Until it has, there is no angle to
+  /// report and both axes are [idle].
   bool get calibrated => _calibrated;
-  bool get up => _up;
-  bool get down => _down;
-  bool get left => _left;
-  bool get right => _right;
 
-  /// Controller axis values from the raw filtered tilt, for a game that
-  /// takes analog axes (e.g. the probe diagnostic). Positive X is right,
-  /// positive Y is down, matching a canvas. Each saturates at ~29 degrees of
-  /// tilt; both are 0 before calibration.
-  int get tiltXAxis => _axis(_lr);
-  int get tiltYAxis => _axis(_ud);
+  /// Position on the horizontal axis, in canvas terms: positive moves the
+  /// player right, negative left. [idle] before calibration.
+  int get posX => _calibrated ? _position(_roll) : idle;
 
-  static int _axis(double rad) {
-    const double maxRad = 0.5; // ~29 degrees saturates the axis
-    final double v = rad / maxRad * 32767.0;
-    return v.clamp(-32768.0, 32767.0).round();
-  }
-
+  /// Position on the vertical axis, in canvas terms: positive moves the player
+  /// down, negative up. [idle] before calibration.
+  int get posY => _calibrated ? -_position(_pitch) : idle;
 
   /// One accelerometer sample (x, y, z in m/s², gravity included).
   void addSample(double x, double y, double z) {
@@ -61,25 +85,28 @@ class MotionControl {
       _n++;
       if (_n < calibrationSamples) return;
       final bx = _sx / _n, by = _sy / _n, bz = _sz / _n;
-      _baseLeftRight = _angle(by, bx, bz); // roll  about short edge
-      _baseUpDown = _angle(bx, by, bz); // pitch about long edge
+      _baseRoll = _angle(by, bx, bz); // roll, about the short edge
+      _basePitch = _angle(bx, by, bz); // pitch, about the long edge
       _calibrated = true;
       return;
     }
-    final lr = _angle(y, x, z) - _baseLeftRight;
-    final ud = _angle(x, y, z) - _baseUpDown;
-    _lr = smoothing * lr + (1 - smoothing) * _lr;
-    _ud = smoothing * ud + (1 - smoothing) * _ud;
-    _right = _dir(_lr, _right);
-    _left = _dir(-_lr, _left);
-    _up = _dir(_ud, _up);
-    _down = _dir(-_ud, _down);
+    final roll = _angle(y, x, z) - _baseRoll;
+    final pitch = _angle(x, y, z) - _basePitch;
+    _roll = smoothing * roll + (1 - smoothing) * _roll;
+    _pitch = smoothing * pitch + (1 - smoothing) * _pitch;
   }
 
-  /// Hysteresis for one signed axis value. A direction engages only past
-  /// [engageZone] and, once engaged, releases only below [releaseZone].
-  bool _dir(double value, bool held) =>
-      held ? value > releaseZone : value > engageZone;
+  /// One filtered tilt offset, as a position in the travel. Zero inside the
+  /// dead zone, linear from its edge out to [travel], saturated past it.
+  int _position(double radians) {
+    final double zone = deadZone * travel;
+    final double magnitude = radians.abs();
+    if (magnitude <= zone) return 0;
+    final double scaled = (magnitude - zone) / (travel - zone);
+    final double clamped = scaled > 1.0 ? 1.0 : scaled;
+    final int value = (clamped * full).round();
+    return radians < 0 ? -value : value;
+  }
 
   static double _angle(double a, double b, double c) =>
       math.atan2(a, math.sqrt(b * b + c * c));

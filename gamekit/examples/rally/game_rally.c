@@ -24,7 +24,7 @@
 #define FX_ONE   (1 << FX)
 #define FX_PX(x) ((int)((x) << FX))
 
-enum { RALLY_UP = 0, RALLY_DOWN = 1 };
+enum { RALLY_UP = 0, RALLY_DOWN = 1, RALLY_TILT_Y = 2 };
 
 /* rally is authored for the one panel the hardware ships: 64x32. The view
  * letterboxes this fixed board onto any larger panel; on 64x32 it is 1:1. */
@@ -43,12 +43,14 @@ typedef struct {
     uint16_t score[2];
     uint8_t  present;       /* bitmask: bit0 player1, bit1 player2 */
     uint8_t  held[2];       /* per side: bit0 Up held, bit1 Down held */
+    int16_t  tilt_y[2];     /* per side: tilt axis, ML_AXIS_IDLE when unused */
     uint8_t  serve_to;      /* 0 or 1, who serves next; 2 = ball live */
 } rally_state;
 
 static const ml_control_def rally_controls[] = {
-    { .label = "Up",   .code = RALLY_UP,   .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
-    { .label = "Down", .code = RALLY_DOWN, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "Up",    .code = RALLY_UP,     .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "Down",  .code = RALLY_DOWN,   .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "TiltY", .code = RALLY_TILT_Y, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
 };
 
 static int clampi(int v, int lo, int hi)
@@ -109,6 +111,8 @@ static void rally_reset(void *state, ml_game_ctx *ctx)
     s->paddle_v[1] = 0;
     s->held[0] = 0;
     s->held[1] = 0;
+    s->tilt_y[0] = ML_AXIS_IDLE;
+    s->tilt_y[1] = ML_AXIS_IDLE;
     s->score[0] = 0;
     s->score[1] = 0;
     s->serve_to = 0;
@@ -145,6 +149,12 @@ static void rally_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
      * the full held state every frame (Up then Down), and a momentary
      * set-to-zero here would erase the Up velocity every time. */
     uint8_t mask;
+    if (e->code == RALLY_TILT_Y) {
+        /* The angle the phone is held at, as a position. Stored per side: a
+         * second player's tilt must not steer the first player's paddle. */
+        s->tilt_y[idx] = e->value;
+        return;
+    }
     if (e->code == RALLY_UP)        mask = 1u;
     else if (e->code == RALLY_DOWN) mask = 2u;
     else return;
@@ -190,15 +200,28 @@ static void paddle_bounce(rally_state *s, int idx, int byp)
     s->bvy += s->paddle_v[idx] * FX_ONE;
 }
 
+/* Follow the phone's angle: the paddle's y *is* the tilt's position, so a
+ * held angle is a held paddle and nothing drifts. paddle_v is derived from the
+ * step taken rather than integrated, which keeps the bounce's spin term
+ * (paddle_bounce) honest: a fast sweep imparts spin, a still phone does not. */
+static void paddle_follow(rally_state *s, int idx)
+{
+    int y = (int)ml_axis_map(s->tilt_y[idx], 0, s->panel_h - s->paddle_h);
+    s->paddle_v[idx] = (int16_t)(y - s->paddle_y[idx]);
+    s->paddle_y[idx] = (int16_t)y;
+}
+
 static void rally_update(void *state, ml_game_ctx *ctx)
 {
     rally_state *s = state;
     int ph = s->paddle_h;
 
-    /* paddles */
+    /* paddles: the AI chases, a controller on tilt follows the phone's angle,
+     * a controller on buttons integrates its paddle_v */
     for (int i = 0; i < 2; i++) {
-        if (s->present & (1u << i)) s->paddle_y[i] += s->paddle_v[i];
-        else                        ai_move(s, i, ml_ctx_tick(ctx));
+        if (!(s->present & (1u << i)))          ai_move(s, i, ml_ctx_tick(ctx));
+        else if (ml_axis_engaged(s->tilt_y[i])) paddle_follow(s, i);
+        else                                    s->paddle_y[i] += s->paddle_v[i];
         s->paddle_y[i] = (int16_t)clampi(s->paddle_y[i], 0, s->panel_h - ph);
     }
 
@@ -309,7 +332,7 @@ const ml_game_vt ml_game_rally = {
     .max_players   = 2,
     .state_size    = sizeof(rally_state),
     .controls      = rally_controls,
-    .control_count = 2,
+    .control_count = 3,
     .init          = rally_init,
     .reset         = rally_reset,
     .join          = rally_join,

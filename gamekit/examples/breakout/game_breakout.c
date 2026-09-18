@@ -41,7 +41,7 @@ typedef struct {
     uint8_t  held_l, held_r;
     uint8_t  level;
     uint8_t  brick_rows;
-    uint8_t  pad[2];
+    int16_t  tilt_x;         /* tilt axis, ML_AXIS_IDLE when nobody drives it */
     uint32_t bricks[BRICK_ROWS_MAX][4];  /* 8 rows x 128 bits */
 } breakout_state;
 
@@ -50,6 +50,7 @@ typedef char breakout_state_fits[(sizeof(breakout_state) <= ML_SNAPSHOT_MAX) ? 1
 static const ml_control_def breakout_controls[] = {
     { .label = "Left",  .code = 0, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
     { .label = "Right", .code = 1, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
+    { .label = "TiltX", .code = 2, .caps = ML_CAP_ACCEL,  .type = ML_INPUT_AXIS },
 };
 
 static void serve(breakout_state *s)
@@ -140,6 +141,7 @@ static void breakout_reset(void *state, ml_game_ctx *ctx)
     s->status = BREAKOUT_PLAYING;
     s->held_l = 0;
     s->held_r = 0;
+    s->tilt_x = ML_AXIS_IDLE;
     refill_bricks(s);
     serve(s);
 }
@@ -150,6 +152,7 @@ static void breakout_input(void *state, const ml_input_event *e, ml_game_ctx *ct
     breakout_state *s = state;
     if (e->code == 0) s->held_l = e->value ? 1 : 0;
     else if (e->code == 1) s->held_r = e->value ? 1 : 0;
+    else if (e->code == 2) s->tilt_x = e->value;
 }
 
 static void breakout_update(void *state, ml_game_ctx *ctx)
@@ -158,11 +161,16 @@ static void breakout_update(void *state, ml_game_ctx *ctx)
     breakout_state *s = state;
     if (s->status != BREAKOUT_PLAYING) return;
 
-    /* paddle: 1 px/tick on small panels, 2 on big ones */
-    int sp = s->panel_w / 64 + 1;
-    if (s->held_l) s->px -= sp;
-    if (s->held_r) s->px += sp;
-    s->px = (int16_t)clampi(s->px, 0, s->panel_w - s->paddle_w);
+    /* paddle: the phone's angle is the paddle's position, so a held tilt holds
+     * the paddle; buttons keep their rate, one or two px per tick */
+    if (ml_axis_engaged(s->tilt_x)) {
+        s->px = (int16_t)ml_axis_map(s->tilt_x, 0, s->panel_w - s->paddle_w);
+    } else {
+        int sp = s->panel_w / 64 + 1;
+        if (s->held_l) s->px -= sp;
+        if (s->held_r) s->px += sp;
+        s->px = (int16_t)clampi(s->px, 0, s->panel_w - s->paddle_w);
+    }
 
     /* ball */
     s->bx += s->bvx;
@@ -321,7 +329,7 @@ const ml_game_vt ml_game_breakout = {
     .max_players   = 1,
     .state_size    = sizeof(breakout_state),
     .controls      = breakout_controls,
-    .control_count = 2,
+    .control_count = 3,
     .init          = breakout_init,
     .reset         = breakout_reset,
     .input         = breakout_input,

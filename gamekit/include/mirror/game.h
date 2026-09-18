@@ -69,9 +69,45 @@ void ml_view_compute(ml_view *v, int pref_w, int pref_h, ml_fit_mode fit,
 
 typedef enum {
     ML_INPUT_BUTTON = 0,      /* value: 0 released, 1 pressed */
-    ML_INPUT_AXIS,            /* value: -32768..32767 */
+    ML_INPUT_AXIS,            /* value: an absolute position, see below */
     ML_INPUT_TOUCH            /* value: a touch point the controller UI packs */
 } ml_input_type;
+
+/*
+ * An ML_INPUT_AXIS value is an absolute position request inside the game's own
+ * travel: 0 is the middle, +32767 and -32767 are its ends. A phone steering by
+ * tilt sends the angle it is held at, not a velocity, so the player changes
+ * position only while the phone is moving and a held tilt holds the position.
+ *
+ * ML_AXIS_IDLE is not a position. It means the controller is not driving this
+ * axis at all - the round is on buttons, or it is paused - and the game holds
+ * whatever position it has rather than recentring. Buttons and axes therefore
+ * share one frame: a game asks ml_axis_engaged() per axis and takes the
+ * positional path only while someone is driving it.
+ */
+#define ML_AXIS_IDLE ((int16_t)-32768)
+
+/* Whether a controller is driving this axis in the frame just received. */
+static inline bool ml_axis_engaged(int16_t value) { return value != ML_AXIS_IDLE; }
+
+/*
+ * Centre-anchored, saturating map of an engaged axis into [lo, hi]: 0 lands on
+ * the middle of the travel and +/-32767 land exactly on its ends. Integer only,
+ * so a replay on the host and a tick on the ESP32 agree to the pixel. Never
+ * call it with ML_AXIS_IDLE.
+ */
+static inline int32_t ml_axis_map(int16_t value, int32_t lo, int32_t hi)
+{
+    const int32_t span = hi - lo;
+    const int32_t mid  = lo + span / 2;
+    int32_t v = value;
+    if (v >  32767) v =  32767;
+    if (v < -32767) v = -32767;
+    /* An odd travel is split the way the centre is: the leftover unit belongs
+     * to the far side, so both ends land exactly on lo and hi. */
+    if (v >= 0) return mid + v * (span - span / 2) / 32767;
+    return mid + v * (span / 2) / 32767;
+}
 
 /* What a controller can provide. The host refuses a join the game can't play,
  * and swaps players into roles they can actually reach. */
