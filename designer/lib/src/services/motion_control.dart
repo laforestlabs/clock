@@ -8,10 +8,11 @@ import 'dart:math' as math;
 /// mapping between is linear:
 ///
 /// ```
-///   -30 deg  ->  -32767   (one end)
+///   -20 deg  ->  -32767   (one end)
+///    -10 deg  ->  -16000   (a little under half)
 ///      0 deg  ->       0   (the middle)
-///   +15 deg  ->  +16383   (three quarters of the way)
-///   +30 deg  ->  +32767   (the other end)
+///    +15 deg  ->  +24400   (three quarters of the way)
+///    +20 deg  ->  +32767   (the other end)
 /// ```
 ///
 /// So a held angle is a held position: the player moves only while the phone
@@ -19,19 +20,19 @@ import 'dart:math' as math;
 /// the whole point of this mapper — the games it steers are positional, and a
 /// position that kept changing under a still phone would be unusable.
 ///
-/// A dead zone of [deadZone] of the travel around neutral reports exactly
-/// zero, so a hand resting on the phone cannot shiver the player by a pixel.
-/// Inside the dead zone the mapping is flat; outside it, everything from the
-/// edge of the dead zone to [travel] is used, so no part of the travel is
-/// unreachable. The angle is low-pass filtered with [smoothing] first, which
-/// costs about 80 ms of settling on a step change and removes hand jitter.
+/// [deadZone] radians either side of neutral reports exactly zero, so a hand
+/// resting on the phone cannot shiver the player by a pixel. Inside the dead
+/// zone the mapping is flat; outside it, everything from the edge of the dead
+/// zone out to [travel] is used, so no part of the travel is unreachable. The
+/// angle is low-pass filtered with [smoothing] first, which costs about 80 ms
+/// of settling on a step change and removes hand jitter.
 class MotionControl {
   MotionControl({
     this.calibrationSamples = 20,
     this.travel = _defaultTravel,
-    this.deadZone = 0.05,
+    this.deadZone = _defaultDeadZone,
     this.smoothing = 0.4,
-  }) : assert(deadZone >= 0 && deadZone < 1),
+  }) : assert(deadZone >= 0 && deadZone < travel),
        assert(smoothing > 0 && smoothing <= 1);
 
   /// The wire value for an axis nobody is driving, matching `ML_AXIS_IDLE` in
@@ -41,9 +42,15 @@ class MotionControl {
   /// The value at either end of the travel.
   static const int full = 32767;
 
-  /// 30 degrees: tilting the phone this far from the angle it was calibrated
-  /// at puts the player at the end of its travel.
-  static const double _defaultTravel = 30 * math.pi / 180;
+  /// 20 degrees: tilting the phone this far from the angle it was calibrated
+  /// at puts the player at the end of its travel. Small enough to steer with a
+  /// wrist rather than an arm, which is what 30 degrees turned out to cost.
+  static const double _defaultTravel = 20 * math.pi / 180;
+
+  /// Half a degree either side of neutral reports zero. An absolute angle, not
+  /// a share of the travel, so tightening or loosening [travel] leaves the
+  /// rest position exactly as steady as it was.
+  static const double _defaultDeadZone = 0.5 * math.pi / 180;
 
   /// Samples averaged to establish neutral: the player holds the phone still
   /// for a moment, and that hold becomes the middle of the travel.
@@ -52,7 +59,7 @@ class MotionControl {
   /// Radians of tilt from neutral that saturate the travel.
   final double travel;
 
-  /// Fraction of [travel] either side of neutral that reports exactly zero.
+  /// Radians either side of neutral that report exactly zero.
   final double deadZone;
 
   /// EMA coefficient applied to the tilt angle, in (0, 1].
@@ -99,10 +106,9 @@ class MotionControl {
   /// One filtered tilt offset, as a position in the travel. Zero inside the
   /// dead zone, linear from its edge out to [travel], saturated past it.
   int _position(double radians) {
-    final double zone = deadZone * travel;
     final double magnitude = radians.abs();
-    if (magnitude <= zone) return 0;
-    final double scaled = (magnitude - zone) / (travel - zone);
+    if (magnitude <= deadZone) return 0;
+    final double scaled = (magnitude - deadZone) / (travel - deadZone);
     final double clamped = scaled > 1.0 ? 1.0 : scaled;
     final int value = (clamped * full).round();
     return radians < 0 ? -value : value;

@@ -69,8 +69,12 @@ static const ml_control_def snake_controls[] = {
 /* A grid game has no position to map a tilt onto, so the tilt vector picks a
  * heading instead: the larger component, once it is past a deliberate angle,
  * is the direction to turn at the next cell. Below that the snake keeps its
- * heading, which is what stops a hand resting on a tilt from zig-zagging it. */
-#define SNAKE_TILT_TURN (32767 * 3 / 10)   /* ~9 degrees */
+ * heading, which is what stops a hand resting on a tilt from zig-zagging it.
+ *
+ * Half the travel is about ten degrees of phone, with the twenty degrees the
+ * app scales a full travel to. Renaming this constant in degrees would be
+ * nicer, but the game only ever sees the axis. */
+#define SNAKE_TILT_TURN (32767 / 2)
 
 static const int8_t DX[4] = { 0, 1, 0, -1 };
 static const int8_t DY[4] = { -1, 0, 1, 0 };

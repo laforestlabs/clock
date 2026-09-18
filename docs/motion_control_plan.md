@@ -17,8 +17,11 @@ exact files and call sites, and how to verify — on the host and on the device.
    |---|---|
    | 0° (the starting hold) | exactly centred |
    | +15° | 75% of the way to the top |
-   | +30° | top of the travel |
-   | −30° | bottom of the travel |
+   | +20° | top of the travel |
+   | −20° | bottom of the travel |
+
+   (The worked example was written at ±30°. Playing it cut the travel to ±20 and
+   the dead zone to half a degree; see D2.)
 
    Deliberately implied by that table, and worth stating because it is the
    property the player actually feels: **the player changes position only while
@@ -171,6 +174,13 @@ it is at the centre only, and it compresses nothing at the ends: outside it, the
 mapping is linear to the saturated ends. Smoothing means a step change of angle
 converges over ~80 ms; a *held* angle converges to a held position, which is the
 property in the Goal.
+
+**Revised after playing it (2026-09-17):** saturation at **20°** — 30° is a
+forearm movement, and steering should cost a wrist — and the dead zone becomes an
+absolute **±0.5°**, not a share of the travel, so retuning the travel never
+loosens the rest position. The one constant that is not in the app is snake's
+turn threshold: it is expressed in axis units, so it moved to half the travel
+(≈10° of phone) to keep the snake turning where it used to.
 
 **D3 — sign convention, pinned in one place and verified on the probe.**
 `MotionControl` reports canvas-convention axes: `posX` positive = the player
@@ -373,8 +383,8 @@ Rewrite around one public idea: an angle becomes a position.
 class MotionControl {
   MotionControl({
     this.calibrationSamples = 20,
-    this.travel = 0.523599, // radians: 30 degrees saturates the travel
-    this.deadZone = 0.05,   // fraction of the travel that holds exactly zero
+    this.travel = 0.349066, // radians: 20 degrees saturates the travel (D2)
+    this.deadZone = 0.008727, // radians: half a degree holds exactly zero
     this.smoothing = 0.4,   // EMA coefficient on the angle
   });
 
@@ -395,13 +405,14 @@ class MotionControl {
 - Delete: `up`, `down`, `left`, `right`, `engageZone`, `releaseZone`, `_dir`,
   the old `tiltXAxis`/`tiltYAxis` and the 0.5 rad saturation constant. Nothing
   else in the app uses them.
-- Rewrite `designer/test/motion_control_test.dart`: neutral is `0`; 30° is
-  `±32767` and 45° is still `±32767`; 15° is about half; inside the dead zone is
-  exactly `0`; both physical signs (D3); a single sample does not jump the
-  output; a *held* angle converges and stops (assert the value is identical
-  across further samples once settled); `idle` is only ever sent by the screen,
-  never produced by the mapper; before calibration both are `0`. Feed enough
-  samples (~30) for the EMA to settle and compare with a tolerance.
+- Rewrite `designer/test/motion_control_test.dart`: neutral is `0`; 20° is
+  `±32767` and 45° is still `±32767`; 15° is about three quarters (D2); half a
+  degree is exactly `0` and one degree is just inside 1000; both physical signs
+  (D3); a single sample does not jump the output; a *held* angle converges and
+  stops (assert the value is identical across further samples once settled);
+  `idle` is only ever sent by the screen, never produced by the mapper; before
+  calibration both are `0`. Feed enough samples (~30) for the EMA to settle and
+  compare with a tolerance.
 
 ## Phase 5 — the app's game screen (`designer/lib/src/ui/game_screen.dart`)
 
@@ -498,18 +509,19 @@ On the device (Pixel/Android, mirror over BLE, firmware flashed from the tree):
 
 1. **Probe first — it is the visualiser and the sign reference.** Start it, and
    with the phone still the dot sits centred. Rolling the right edge down moves
-   the dot right; the gesture that used to press Up moves it up. Tilting 30°
-   reaches the edge, 15° about halfway. Holding a tilt holds the dot: no drift,
-   no spring back.
+   the dot right; the gesture that used to press Up moves it up. Tilting 20°
+   reaches the edge, 15° about three quarters. Holding a tilt holds the dot: no
+   drift, no spring back. The point of this pass is the feel: 20° is a wrist
+   movement, and the dot must not shiver while the phone rests.
 2. **Rally**: the paddle starts centred, follows the tilt, reaches the top and
-   bottom of its travel at ±30°, and stays put when the phone is still. Bounce
+   bottom of its travel at ±20°, and stays put when the phone is still. Bounce
    spin still responds to a fast sweep.
 3. **Breakout / invaders**: the paddle/cannon follows the horizontal tilt, with
    the same hold-still-holds-position property.
 4. **Tetris**: tilt walks the piece toward the target column and stops at the
    stack; Rotate and Soft drop still work as buttons.
-5. **Snake**: tilt under ~9° never turns it, a deliberate tilt turns it once, it
-   never reverses into itself.
+5. **Snake**: tilt under ~5° never turns it, a deliberate tilt (about 10°) turns
+   it once, it never reverses into itself.
 6. **Pause/resume**: pause a rally round mid-tilt, resume — the paddle is where
    it was, not at the centre (this is P3's whole point). Suspending the app still
    requires recalibration.
@@ -520,7 +532,7 @@ On the device (Pixel/Android, mirror over BLE, firmware flashed from the tree):
 ## Acceptance
 
 - Rally's paddle position is a direct function of the phone's tilt: centred at
-  the calibrated neutral, top/bottom of travel at ±30°, proportionally between,
+  the calibrated neutral, top/bottom of travel at ±20°, proportionally between,
   and constant while the angle is constant. Same for breakout and invaders
   horizontally, probe on both axes, tetris's column and snake's heading.
 - No hysteresis remains in `motion_control.dart`, and no game reads a direction

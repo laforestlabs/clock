@@ -422,7 +422,7 @@ static void test_snake(void)
         snake_head(low, &x, &y);
         const int lx = x, ly = y;
         for (int i = 0; i < 6; i++)
-            tilt(low, SNAKE_TILT_X, SNAKE_TILT_Y, 6000, 0, 50); /* under 30% */
+            tilt(low, SNAKE_TILT_X, SNAKE_TILT_Y, 6000, 0, 50); /* under half */
         snake_head(low, &x, &y);
         check(x > lx && y == ly, "a small tilt does not turn the snake");
         ml_game_close(low);

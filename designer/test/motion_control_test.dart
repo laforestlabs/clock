@@ -85,19 +85,27 @@ void main() {
       final m = MotionControl();
       calibrate(m);
 
-      // Half the travel from neutral, less the dead zone's share of it.
-      settle(m, _rollSample(15));
-      expect(m.posX, greaterThan(15000));
-      expect(m.posX, lessThan(17000));
-
+      settle(m, _rollSample(3));
+      final int three = m.posX;
+      settle(m, _rollSample(6));
+      final int six = m.posX;
       settle(m, _rollSample(10));
       final int ten = m.posX;
-      settle(m, _rollSample(20));
-      final int twenty = m.posX;
-      settle(m, _rollSample(25));
-      expect(ten, lessThan(twenty));
-      expect(twenty, lessThan(m.posX));
-      expect(m.posX, lessThan(MotionControl.full));
+      settle(m, _rollSample(15));
+      final int fifteen = m.posX;
+
+      // Monotone all the way up, and the end is not reached short of 20
+      // degrees.
+      expect(three, lessThan(six));
+      expect(six, lessThan(ten));
+      expect(ten, lessThan(fifteen));
+      expect(fifteen, lessThan(MotionControl.full));
+
+      // Half the travel sits a little under half the range and three quarters
+      // a little over: the half degree of dead zone comes off the bottom of
+      // the scale, so every angle reads slightly higher than its share.
+      expect(ten, closeTo(16000, 400));
+      expect(fifteen, closeTo(24400, 400));
     });
 
     test('saturates at the ends rather than running past them', () {
@@ -105,21 +113,22 @@ void main() {
       calibrate(m);
       settle(m, _rollSample(45));
       expect(m.posX, MotionControl.full);
-      settle(m, _rollSample(30));
+      settle(m, _rollSample(20));
       expect(m.posX, MotionControl.full);
     });
 
     test('holds exactly zero inside the dead zone', () {
       final m = MotionControl();
       calibrate(m);
-      settle(m, _rollSample(1)); // the dead zone is 5% of 30 degrees
+      settle(m, _rollSample(0.5)); // the dead zone is half a degree
       expect(m.posX, 0);
-      settle(m, _pitchSample(-1));
+      settle(m, _pitchSample(-0.5));
       expect(m.posY, 0);
 
-      // Just outside it the position moves, but only a little.
-      settle(m, _rollSample(2));
-      expect(m.posX, greaterThan(0));
+      // Just outside it the position moves, but only a little: a degree of
+      // tilt is about 840 of the 32767, on a 20 degree travel.
+      settle(m, _rollSample(1));
+      expect(m.posX, closeTo(840, 60));
       expect(m.posX, lessThan(MotionControl.full ~/ 10));
     });
 

@@ -218,9 +218,10 @@ samples, prevents starting in motion mode. While paused, switch Manual/Motion or
 Recalibrate, then explicitly Resume. An ordinary pause retains neutral; app
 suspension requires recalibration.
 
-Tilt is a **position**, not a direction: 30 degrees from neutral reaches the end
+Tilt is a **position**, not a direction: 20 degrees from neutral reaches the end
 of the travel, the middle is where the phone was held at the start, and a held
-angle holds the player still. So Rally's paddle sits centred at neutral and
+angle holds the player still. Half a degree either side of that middle is a dead
+zone, so a resting hand does not shiver the player. So Rally's paddle sits centred at neutral and
 follows the phone from there; Breakout's and Invaders' paddles follow the
 horizontal tilt; Tetris's piece walks toward the column the phone points at and
 stops at a wall or the stack (Rotate and Soft drop stay buttons); Snake, which is

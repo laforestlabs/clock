@@ -276,9 +276,11 @@ Every game that takes tilt declares the axis under the label `TiltX` or `TiltY`,
 which is the wire's name for the phone's two accelerometer axes; the app finds
 them by that label and the declared type together. The phone side is calibrated:
 neutral is the angle the player held the phone at to start the round, that angle
-is the middle of the travel, and 30 degrees either side saturates it. A 5%
-dead zone around neutral reports exactly zero so a resting hand cannot shiver the
-player by a pixel, and the angle is low-pass filtered before it is mapped.
+is the middle of the travel, and 20 degrees either side saturates it — a wrist
+movement, not an arm one. Half a degree either side of neutral reports exactly
+zero, so a resting hand cannot shiver the player by a pixel, and the angle is
+low-pass filtered before it is mapped. Both numbers are absolute angles: the
+dead zone does not stretch or shrink with the travel.
 
 The games that cannot use a position say so honestly rather than pretending:
 snake is a grid game with a heading and no coordinate, so it reads the tilt as a
