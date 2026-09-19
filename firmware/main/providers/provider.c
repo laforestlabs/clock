@@ -2,9 +2,11 @@
 
 #include <string.h>
 
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_tls_errors.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net/wifi.h"
@@ -27,16 +29,41 @@ static int            s_count;
 static volatile bool  s_force_refresh;
 
 /*
- * A connectivity failure means the request never reached the service: the
- * WiFi link is down, DNS did not resolve, or the connect/TLS handshake timed
- * out. There is no service to be polite to, so these retry at the healthy
- * cadence and catch recovery promptly instead of escalating. Only failures
+ * True when the failure says nothing about the service's health: the request
+ * never produced a usable answer, because the link, the socket, the TLS
+ * handshake or the mirror's own memory gave way first. esp_http_client and
+ * esp-tls report those as their own error families (and an mbedTLS code can
+ * surface unchanged, negative), while a service that answered with something
+ * unusable comes back as ESP_ERR_INVALID_RESPONSE.
+ *
+ * The distinction matters because the two need opposite treatment. There is no
+ * service to be polite to when the mirror is the one that failed, so those
+ * retry on the short ladder below and catch recovery in seconds; only failures
  * where the service answered (non-2xx, bad payloads, rate limits) back off.
  */
-static bool is_connectivity_error(esp_err_t err)
+static bool is_local_failure(esp_err_t err)
 {
-    return err == ESP_ERR_HTTP_CONNECT;
+    if (err < 0) return true;                        /* an mbedTLS code, raw */
+    if (err == ESP_ERR_NO_MEM || err == ESP_ERR_TIMEOUT) return true;
+
+    /* 0x7000..0x8fff: the HTTP client's and esp-tls's own error families. */
+    return err >= ESP_ERR_HTTP_BASE && err < ESP_ERR_ESP_TLS_BASE + 0x1000;
 }
+
+/*
+ * How long to wait before retrying a local failure, for the first few of them.
+ *
+ * The provider's own interval is up to six hours, and the mirror's first fetch
+ * after a boot - when panel DMA, WiFi and the BT controller have just taken
+ * their internal RAM - is exactly when a TLS handshake can lose its allocation
+ * race. Waiting out the interval over a hiccup that clears in a second is the
+ * difference between weather arriving on that boot and a quarter of an hour of
+ * stale data, which is the bug this ladder exists to prevent. Three rungs,
+ * then the ordinary cadence: a genuinely broken link still stops hammering.
+ */
+#define RETRY_FAST_FIRST_S 5
+#define RETRY_FAST_FACTOR  3
+#define RETRY_FAST_RUNGS   3
 
 /*
  * Back off after failures, capped.
@@ -47,8 +74,14 @@ static bool is_connectivity_error(esp_err_t err)
  */
 static int64_t backoff_us(const ml_provider *def, int failures, esp_err_t err)
 {
-    if (is_connectivity_error(err)) {
-        return (int64_t)def->interval_s * 1000000;
+    if (is_local_failure(err)) {
+        if (failures > RETRY_FAST_RUNGS) {
+            return (int64_t)def->interval_s * 1000000;
+        }
+        /* 5s, 15s, 45s. */
+        int64_t seconds = RETRY_FAST_FIRST_S;
+        for (int i = 1; i < failures; i++) seconds *= RETRY_FAST_FACTOR;
+        return seconds * 1000000;
     }
 
     /*
@@ -133,9 +166,20 @@ static void provider_task(void *arg)
                 st->failures++;
                 const int64_t wait = backoff_us(def, st->failures, err);
                 st->next_due_us = esp_timer_get_time() + wait;
-                ESP_LOGW(TAG, "%s: failed (%s), attempt %d, retry in %llds",
+                /* The internal-RAM figures are the ones that matter and the
+                 * ones nothing else reports: this board has megabytes of PSRAM
+                 * and only a few KB of internal DRAM left once the panel's DMA
+                 * buffers, WiFi and the BT controller have taken theirs, and a
+                 * fetch that dies of an allocation failure looks like a
+                 * transport error from here. */
+                ESP_LOGW(TAG, "%s: failed (%s), attempt %d, retry in %llds "
+                         "(internal RAM free %u, largest %u; DMA-capable %u/%u)",
                          def->name, esp_err_to_name(err), st->failures,
-                         (long long)(wait / 1000000));
+                         (long long)(wait / 1000000),
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
             }
         }
 

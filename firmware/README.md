@@ -202,12 +202,69 @@ allocation failure.
 snapshot of the model and draws it, so a DNS timeout or a router reboot cannot
 stall or tear the display. Worst case the mirror shows stale data.
 
-## Memory
+## Memory and storage
 
 The DMA buffer must live in internal SRAM. PSRAM-backed HUB75 buffers cap the
 shift clock near 13MHz and flicker visibly. The canvas and frame buffers do go
 in PSRAM, since only the CPU reads them, which keeps internal SRAM free for
-DMA. The log reports which pool each allocation landed in at boot.
+DMA.
+
+**Internal SRAM is the scarce pool, and the device reports it.** One line at
+boot, and the same figures on the 30-second status line, so the pool can be
+watched without a debugger:
+
+```
+I (1621) mirror: memory: internal free 28607 (largest 20480), DMA-capable largest 20480, PSRAM free 8301436
+I (1631) mirror: nvs: 190 of 756 entries used (4 namespaces)
+I (1280) layout: storage: 10793 of 956561 bytes used (1%)
+I (30726) mirror: up 30s, wifi up (192.168.0.137, -30 dBm), clock set, weather ok; internal free 28743 (largest 18432), PSRAM free 8291244
+```
+
+That first number is the one to watch, and the reason it is logged. The panel's
+DMA buffers and descriptor chains, the WiFi driver's static RX/TX buffers and
+the BT controller's per-activity state are all internal and cannot move to
+PSRAM, while the weather fetch's TLS handshake needs a couple of KB of
+contiguous DMA-capable internal RAM mid-handshake — the hardware AES path
+bounces PSRAM record buffers through an internal staging buffer
+(`esp_aes_dma_core.c`, two buffers of up to 1600 bytes). When the pool runs dry
+the handshake fails, and from the provider's side that is indistinguishable from
+the network being down.
+
+Measured budget with the shipped `sdkconfig.defaults` (2026-09-19, board on
+USB, `0.2.30`):
+
+| Pool | Total | Free | Used |
+|---|---|---|---|
+| Internal SRAM heap | 237 KB at boot | **28.6 KB**, 18–20 KB of it contiguous | 208 KB — panel 94 KB, WiFi 54 KB, BT/httpd/mDNS/providers 47 KB, app 12 KB |
+| PSRAM | 8.0 MB | **7.9 MB (99%)** | 87–98 KB — canvas+frame 12 KB, TLS and LWIP buffers, transient layout/JSON blocks |
+| App slot | 4 MB × 2 | **2.88 MB free per slot (69%)** | 1.31 MB image |
+| SPIFFS (`storage`) | 956 KB | **946 KB (99%)** | 10.8 KB — stored layout ~0.9 KB, network log ~9.9 KB, ceiling 33 KB |
+| NVS (`nvs`) | 756 entries (24 KB) | **566 entries (75%)** | 190 entries — credentials, owner config, station hint, WiFi driver |
+| Flash, unpartitioned | 16 MB total | **6.9 MB unallocated** | — |
+
+Reading the numbers by pool: internal SRAM is the only pool that is *tight*, and
+it is tight by design — the panel's DMA memory cannot be anywhere else, and the
+two things that could be moved (mbedTLS buffers, NimBLE host allocations)
+already are. A TLS handshake needs roughly 4 KB of contiguous internal RAM
+(2 × 1600-byte staging buffers plus descriptors), so the current 18–20 KB block
+is about five times what it needs. Connecting the phone over BLE does not move
+the figure measurably (28,743 free before and after a live connection: the
+controller's buffers are allocated at init, the host's in PSRAM).
+
+The sizing decisions that keep it there are commented in `sdkconfig.defaults`
+(WiFi RX/TX buffer counts, BLE activity count, mbedTLS buffers in PSRAM).
+Reducing any of them again is safe on paper and not in practice: at the ESP-IDF
+defaults this board landed at 5 KB free with a 1.6 KB largest block, and the
+first weather fetch after a boot failed its TLS handshake about half the time —
+the exact failure that made an OTA look like it had broken the weather. Roughly
+14 KB of new *contiguous* internal demand is what the current margin absorbs
+before that returns.
+
+Flash, SPIFFS and NVS are nowhere near a limit: two app slots hold two copies of
+a 1.31 MB image, the storage partition that holds the pushed layout and the
+network log is at 1% of its 956 KB and stabilises below 4% once the log ring
+fills, and 6.9 MB of the 16 MB flash is not even partitioned. If a future
+feature needs space rather than RAM, it is there.
 
 ## OTA updates
 
@@ -302,6 +359,20 @@ established (WiFi down, DNS failure, connect/TLS timeout) retry at the normal
 interval instead: they never reached the service, so there is nothing to be
 polite to, and the healthy cadence catches recovery fastest. When the WiFi
 association drops and returns, the backoff is cleared immediately.
+
+**Failures the mirror causes itself retry in seconds first.** A TLS handshake
+that could not allocate internal RAM, a socket that died mid-request, an
+`esp-tls` setup failure: none of those say anything about Open-Meteo's health,
+and the provider's own interval is fifteen minutes. Those go on a 5s/15s/45s
+ladder before the ordinary cadence applies, so a hiccup that clears in a second
+costs a second of staleness rather than a quarter of an hour of it — and the
+panel's grace period is three intervals, so it never even flips to a
+placeholder. The distinction is made in `provider.c` (`is_local_failure`): the
+HTTP client's and esp-tls's error families, plus `ESP_ERR_NO_MEM` and
+`ESP_ERR_TIMEOUT`, are local; `ESP_ERR_INVALID_RESPONSE` means the service
+answered and gets the polite treatment. A failure log carries the internal-RAM
+figures with it, because on this board that is the usual cause and nothing else
+reports it.
 
 ### Threading
 

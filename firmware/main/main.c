@@ -21,6 +21,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
@@ -180,16 +181,23 @@ static void render_task(void *arg)
             ota_mark_valid();
         }
 
-        /* Roughly every 30 seconds. */
+        /* Roughly every 30 seconds. Internal SRAM, not the total: this board
+         * has megabytes of PSRAM and a few KB of internal RAM left once the
+         * panel, WiFi and the BT controller have taken theirs, and the second
+         * number is what decides whether a TLS handshake fits. A total free
+         * heap of 8MB reads like room to spare and is not. */
         if ((frames % (30000 / RENDER_PERIOD_MS)) == 0) {
             ESP_LOGI(TAG,
-                     "up %lus, wifi %s (%s, %d dBm), clock %s, weather %s, free heap %u",
+                     "up %lus, wifi %s (%s, %d dBm), clock %s, weather %s; "
+                     "internal free %u (largest %u), PSRAM free %u",
                      (unsigned long)model.uptime_s,
                      model.online ? "up" : "down",
                      wifi_ip(), model.wifi_rssi,
                      model.now.valid ? "set" : "unset",
                      model.weather.valid ? "ok" : "stale",
-                     (unsigned)esp_get_free_heap_size());
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         }
         frames++;
 
@@ -313,6 +321,35 @@ void app_main(void)
 #if CONFIG_BT_ENABLED
     ESP_ERROR_CHECK(ble_init());
 #endif
+
+    /*
+     * The boot's most valuable memory numbers, and the ones nothing else
+     * prints. This board runs megabytes of PSRAM and a few KB of internal
+     * DRAM: after the panel's DMA buffers, WiFi and the BT controller have
+     * taken theirs, the pool left is what a TLS handshake has to fit into. A
+     * provider that cannot allocate there looks like a transport failure, so
+     * the numbers are here rather than reconstructable only from a failure
+     * log.
+     */
+    ESP_LOGI(TAG,
+             "memory: internal free %u (largest %u), DMA-capable largest %u, "
+             "PSRAM free %u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    /* NVS is the other pool with a fixed size (the "nvs" partition, 24KB) that
+     * holds the credentials, the owner config, the station hint and whatever
+     * the WiFi driver persists. NVS pages are written whole, so what matters is
+     * entries rather than bytes; this is the number to watch if a future
+     * setting per key ever multiplies. */
+    nvs_stats_t nvs;
+    if (nvs_get_stats(NULL, &nvs) == ESP_OK) {
+        ESP_LOGI(TAG, "nvs: %u of %u entries used (%u namespaces)",
+                 (unsigned)nvs.used_entries, (unsigned)nvs.total_entries,
+                 (unsigned)nvs.namespace_count);
+    }
 
     ESP_LOGI(TAG, "running");
 }

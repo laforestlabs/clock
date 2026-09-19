@@ -91,15 +91,37 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
+# The controller's per-activity state is internal DRAM and cannot move to
+# PSRAM. The default of 6 activities is sized for a device that scans,
+# advertises and hosts several links at once; this mirror has exactly one
+# connection (above) plus its advertising, so 3 leaves a spare for a scan and
+# returns several KB to the internal pool that the weather TLS handshake has
+# to fit into. Measured on the bench: see the "internal RAM" note below.
+CONFIG_BT_CTRL_BLE_MAX_ACT=3
+# WiFi static RX/TX buffers are internal DMA memory (1.6KB each) allocated at
+# esp_wifi_init and never freed. 16+16 is the ESP-IDF default *for a board
+# with PSRAM*, and it costs ~51KB of internal DRAM on a device where the
+# panel's DMA buffers have already taken theirs. 10+10 is IDF's own default
+# for boards without PSRAM and still leaves the OTA upload and the LAN API
+# with far more RX headroom than a 1MB/s HTTP stream needs.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
 # mbedTLS: the weather TLS handshake needs contiguous internal RAM, which is
-# scarce after panel DMA, WiFi and the BT controller (largest free block is
-# ~12KB when the provider fetches). The default 16KB record buffers mean
-# mbedtls_ssl_setup returns ALLOC_FAILED and the clock never shows weather.
-# 4KB records stream the ~1.5KB Open-Meteo response fine; dynamic buffers
-# allocate them lazily so ssl_setup itself only needs a few KB. Even then the
-# 4096-bit root signature check runs out of MPI memory mid-handshake, so all
-# mbedTLS allocations live in PSRAM. The mirror's only TLS traffic is that
-# one provider.
+# scarce after panel DMA, WiFi and the BT controller. The default 16KB record
+# buffers mean mbedtls_ssl_setup returns ALLOC_FAILED and the clock never shows
+# weather. 4KB records stream the ~1.5KB Open-Meteo response fine; dynamic
+# buffers allocate them lazily so ssl_setup itself only needs a few KB. Even
+# then the 4096-bit root signature check runs out of MPI memory mid-handshake,
+# so all mbedTLS allocations live in PSRAM. The mirror's only TLS traffic is
+# that one provider.
+#
+# Living in PSRAM is not free: the hardware AES path cannot read a PSRAM record
+# buffer, so it stages each one through an internal DMA-capable buffer. That
+# allocation is what fails when the internal pool is exhausted, which is why
+# the WiFi and BLE budgets above matter to a TLS handshake. Measured with them
+# as they now stand: 28KB free and a 20KB largest block after the BT stack
+# comes up, against 5KB/1.6KB at the ESP-IDF defaults.
 CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=4096
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
@@ -107,11 +129,10 @@ CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 # NimBLE host memory (msys pools, ACL buffers, GATT db) lives in PSRAM.
 # Internal DRAM is nearly exhausted by the panel's DMA buffers, WiFi and the
-# BT controller (the largest contiguous internal block is ~7.5KB once the BT
-# stack initializes), and the NimBLE host task needs 4KB of it. Without this,
-# either the host task or the "ble_commit" worker fails to be created and the
-# board never advertises. The controller's own memory cannot leave internal
-# DRAM; only the host's allocations move.
+# BT controller, and the NimBLE host task needs 4KB of it. Without this, either
+# the host task or the "ble_commit" worker fails to be created and the board
+# never advertises. The controller's own memory cannot leave internal DRAM;
+# only the host's allocations move.
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
 # SNTP: send the first request immediately instead of after a random 0-5s

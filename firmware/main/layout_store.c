@@ -113,6 +113,19 @@ static esp_err_t mount_spiffs(void)
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "could not mount SPIFFS: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* What the storage partition costs and what it holds. Half of the mirror's
+     * resources are reported because they run out (RAM); this one is here
+     * because it is a fixed 1MB that a stored layout and the network log share
+     * with nothing else, and "am I out of room?" should not need a flash
+     * reader. */
+    size_t total = 0, used = 0;
+    if (esp_spiffs_info(conf.partition_label, &total, &used) == ESP_OK) {
+        ESP_LOGI(TAG, "storage: %u of %u bytes used (%u%%)",
+                 (unsigned)used, (unsigned)total,
+                 total != 0 ? (unsigned)(used * 100 / total) : 0);
     }
     return err;
 }

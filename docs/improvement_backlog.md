@@ -53,6 +53,25 @@ the 36 skipped designer tests **ran for the first time, and two of them failed**
 stale expectations, both are fixed, and the suite now reports 238 passing with nothing
 skipped.
 
+### Second batch, from a field report, implemented 2026-09-18
+
+A mirror was OTA'd from `0.2.22` to `0.2.28` and weather never came back. The device was on
+the bench with a UART and a second phone for this batch, so every claim below is a
+reproduction on the board rather than a reading. Two independent defects had to line up for
+the symptom, and both are fixed.
+
+| Item | Change | Verified by |
+|---|---|---|
+| M14 | The provider distinguishes failures the mirror caused itself (no answer, TLS setup, an allocation that could not be satisfied) from the service answering badly, and puts the former on a 5s/15s/45s ladder instead of the provider's 15-minute cadence. A failure log now carries the internal-RAM figures | Boot logs show the failing handshake reproducing before the fix (`ESP_ERR_HTTP_WRITE_DATA`, "retry in 900s") and a clean fetch after it |
+| H15 (new) | `sdkconfig.defaults` restores the internal-SRAM budget the TLS handshake needs: WiFi static RX/TX buffers 16→10, cache TX 32→16, BT controller activities 6→3 | Measured across the boot: **5KB free / 1.6KB largest block → 28KB free / 20KB largest block** at the point the provider fetches; 3/3 boots fetched on the first attempt, and every boot since |
+| H16 (new) | `setup.sh` applies the app's whole Android permission set, not just the location line: the API-31 Bluetooth permissions were the only ones declared, so on Android 11 and below the platform refused to hand out a scanner at all (`SecurityException` on `getBluetoothLeScanner`) | Pixel 2 (API 30) scans, connects and pushes config over BLE; `dumpsys package` shows the install-time `BLUETOOTH` grant |
+
+The OTA itself was never the cause and cannot be: the upload writes only the target app
+partition and `otadata`, the credentials and owner config live in the `nvs` partition, and no
+NVS key was renamed between the two builds. What the update did change is the transport —
+`0.2.23` moved the weather fetch from plain HTTP to HTTPS — and that is what turned a latent
+internal-RAM shortage into a weather outage. See M14 for the full chain.
+
 ---
 
 ## Backlog index
@@ -74,6 +93,8 @@ skipped.
 | H10 | Bound breakout's brick indexing | HIGH | XS | — | Open |
 | H11 | Mask breakout's phantom brick bits (level-clear unreachable) | HIGH | XS | — | Open |
 | H12 | Drain controller endpoints in the game transport | HIGH | S | — | Open |
+| H15 | Internal SRAM too tight for the weather TLS handshake (field: weather never returned after an OTA) | HIGH | S | — | Done 2026-09-18 |
+| H16 | No Bluetooth permission for Android 11 and below, so BLE scanning throws | HIGH | XS | — | Done 2026-09-18 |
 | **Tier 2 — you can lose work, or the app/renderer crashes or shows something wrong** | | | | | |
 | H4 | Confirm before New/Open/preset discards unsaved work | HIGH | S | — | Done 2026-09-14 |
 | H5 | Route layout properties through the undo/dirty funnel | HIGH | S | — | Done 2026-09-14 |
@@ -94,7 +115,7 @@ skipped.
 | M8 | Gate `ota_mark_valid()` on a successfully started render task | MEDIUM | XS | — | Done 2026-09-14 |
 | M9 | Fix or remove the MBI5124 driver option | MEDIUM | XS | *decision 4* | Open |
 | M12 | Gamekit runtime and host-harness defects | MEDIUM | M | — | Open |
-| M14 | The first weather fetch after a boot can fail its TLS handshake | MEDIUM | S | — | Open |
+| M14 | The first weather fetch after a boot can fail its TLS handshake | MEDIUM | S | — | Done 2026-09-18 |
 | L1–L15 | Assorted LOW items | LOW | S | — | Open |
 | **Tier 4 — test and CI infrastructure (unblocks confident work on Tier 3)** | | | | | |
 | I1 | Add CI: core check, firmware build, designer analyze + test | — | S | — | Open |
@@ -347,6 +368,90 @@ current", which is why Buenos Aires and Santiago were left out.
 
 **Done when.** Confirmed against IANA and either given the real DST rule or removed from the
 table, with a unit test asserting the offset inside and outside the DST window.
+
+### H15 — Internal SRAM is too tight for the weather TLS handshake **(V)** · Done 2026-09-18 · Effort: S
+
+`firmware/sdkconfig.defaults`, `firmware/main/providers/provider.c`
+
+**Was:** the field mirror that reported "weather never came back after the OTA". The OTA was
+not the cause and could not be — it writes only the app partition and `otadata`, and the WiFi
+credentials, coordinates and timezone are in `nvs` under keys that did not change between the
+two builds. What `0.2.23` did change is the transport: the weather fetch moved from plain
+HTTP to HTTPS, and an HTTPS fetch on this board has to fit a TLS handshake into a pool that
+was already spent.
+
+Measured with the ESP-IDF defaults (`0.2.28`, board on USB, temporary probes at each boot
+stage):
+
+| After | Internal free | Largest block |
+|---|---|---|
+| start | 237 KB | 139 KB |
+| panel (`panel_init`) | 143 KB | 61 KB |
+| render task | 130 KB | 53 KB |
+| WiFi (`provision_start`) | 55 KB | 31 KB |
+| BT controller (`ble_init`) | **5.4 KB** | **3.5 KB** |
+| — fetch time | 5.9 KB | DMA-capable 2.2 KB free, 1.6 KB largest |
+
+The panel's DMA buffers (32 KB) and descriptor chains (48 KB), WiFi's static RX/TX buffers
+(51 KB at 16+16) and the BT controller's per-activity state are all internal DRAM that cannot
+move to PSRAM, and they are claimed before the provider runs. The AES hardware path stages
+each PSRAM TLS record through an internal DMA-capable buffer, which needs two of them: at a
+1.6 KB largest block that fails, and the fetch dies as a transport error. It only *usually*
+failed: the same 5.9 KB boot sometimes fetched fine, so the symptom read as a flaky network
+rather than a memory bug.
+
+**Fixed:** three of the four consumers were sized for a board with room to spare, and now are
+not. WiFi static RX and TX buffers 16→10 (IDF's own default for boards without PSRAM; the OTA
+upload and the LAN API run far below what 10 RX buffers serve), WiFi cache TX 32→16, and the
+BT controller's activities 6→3 (this mirror advertises and holds one connection;
+`CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1` already said so). mbedTLS buffers stay in PSRAM —
+moving them internal would cost more than the staging they avoid.
+
+**Verified:** the same boot probe now reports `internal RAM free 28.3 KB (largest block
+19.5 KB)`, DMA-capable `19.5/20.5 KB` after `ble_init`; 3/3 consecutive reboots fetched on the
+first attempt and a post-OTA boot fetched in 355 ms; a 1.3 MB OTA upload over the reduced RX
+buffers completed in 10.8 s with `{"ok":true}`; the phone stays connected over BLE through a
+reboot and a config push, and the fetch after linking up still succeeds.
+
+The mirror now reports the pools it can run out of, at boot and on the 30 s status line, so
+this cannot regress silently again: `memory: internal free 28607 (largest 20480), DMA-capable
+largest 20480, PSRAM free 8301436`, plus `nvs: 190 of 756 entries used` and
+`storage: 10793 of 956561 bytes used (1%)`. Measured on `0.2.30`: PSRAM 99% free, each 4 MB
+app slot 69% free, SPIFFS at 1% of its 956 KB (ceiling ~4% once the log ring fills), NVS at
+25% of its 756 entries, and 6.9 MB of the 16 MB flash unpartitioned. Only internal SRAM is
+tight, and it has ~5× the contiguous block the handshake needs; see the "Memory and storage"
+section of `firmware/README.md` for the table.
+
+### H16 — The app had no Bluetooth permission below Android 12 **(V)** · Done 2026-09-18 · Effort: XS
+
+`designer/setup.sh` (the manifest patch step)
+
+**Was:** on a Pixel 2 running Android 11 (API 30), *Mirror → Scan* answered
+
+```
+flutter: ensureBle: sdk=30 os=RP1A.201005.004.A1
+E/flutter: [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception:
+    SecurityException: Need BLUETOOTH permission
+        at android.bluetooth.BluetoothAdapter.getBluetoothLeScanner
+```
+
+The manifest declared `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`, which do not exist below
+API 31, and never declared the install-time `android.permission.BLUETOOTH` that the platform
+requires to hand out a scanner on those versions. The app's runtime path was right — it asks
+for the location grant instead below API 31 — but the install-time permission was simply
+absent, and `flutter_blue_plus` declares no permissions at all by design, so nothing else
+filled it. The app was unconfigurable on any phone older than Android 12: no scan, no
+connect.
+
+**Fixed:** `setup.sh` now applies the app's whole permission set to the generated manifest
+(the file is gitignored, so this is the only reproducible place), rewriting only lines that
+are missing or still in their generated form. It keeps the location line uncapped for the
+wizard's "Use my location" button and adds `BLUETOOTH`/`BLUETOOTH_ADMIN` capped at API 30, so
+12+ keeps the runtime pair it already had. Idempotent: a second run changes nothing.
+
+**Verified:** `dumpsys package` on the phone shows `android.permission.BLUETOOTH:
+granted=true`; the Pixel now scans, finds "Twirling Elephant", connects, and pushes a config
+change over BLE (the device logs `ble: committed 16 bytes` and applies it).
 
 ### M5a — A 32-character WiFi name can never be joined **(V)** · Effort: XS · See also M5b
 
@@ -647,7 +752,7 @@ remove the choice.
 | `ffi/game_ffi.h:50` | Only control labels are exposed — no codes, types or axes — so the designer's simulation cannot drive the tilt controls the probe game declares. **Partly fixed 2026-09-17:** `ml_game_control_type` exposes each control's declared type and `ml_game_input` resolves it (replacing `ml_game_button`, which hardcoded BUTTON), so the app's own simulation now drives the tilt axes and no longer guesses them from labels. Control *codes* are still not exposed: the app assumes code == catalogue index, which every shipped game satisfies and which the Bluetooth frame's writer assumes too |
 | `gamenet.h:30` | The handshake messages are declared but never sent, and a peer's random seed is zero — a fixed point of the generator |
 
-### M14 — The first weather fetch after a boot can fail its TLS handshake **(V)** · Effort: S
+### M14 — The first weather fetch after a boot can fail its TLS handshake **(V)** · Done 2026-09-18 · Effort: S
 
 Observed on the UART console of the board at `192.168.0.165`, on the boot after an OTA —
 where the fetch is triggered the moment the link comes up, seconds after the BLE stack and
@@ -669,12 +774,50 @@ fifteen minutes of `weather stale` on the panel, on the boot the owner is most l
 watching (right after an update). The 30 s status line kept reporting `weather stale` for at
 least ten minutes afterwards.
 
-**Fix (candidate):** fail fast and retry in seconds rather than the provider's 900 s cadence,
-and/or take the TLS buffers (AES context, CTR_DRBG) from a reserved pool at init, the way the
-panel already claims its DMA block before WiFi fragments the heap.
+**Reproduced on the bench** (2026-09-18, board on USB, same code path, `0.2.28`), which also
+showed the error class the earlier capture did not:
 
-**Done when.** A fresh boot's first fetch either succeeds or retries within ~10 s, with the
-allocation failure logged once.
+```
+W (11539) provider: TEMP weather: before fetch int free 5895 largest 3584, dma free 2207 largest 1600
+E (12628) esp-aes: Failed to allocate memory
+E (12628) esp-tls-mbedtls: write error :-0x0001
+W (12639) http: connect failed: ESP_ERR_HTTP_WRITE_DATA
+W (12695) provider: weather: failed (ESP_ERR_HTTP_WRITE_DATA), attempt 1, retry in 900s
+```
+
+Two things follow from that second class. `ESP_ERR_HTTP_WRITE_DATA` is not
+`ESP_ERR_HTTP_CONNECT`, and `is_connectivity_error()` recognised only the latter — so a
+failure the mirror caused itself got the *harshest* backoff the provider has (the full
+interval, then doubling), which is why the outage lasted as long as it did. And the numbers
+say what ran out: with 2207 bytes of DMA-capable internal RAM free and a 1600-byte largest
+block, the hardware AES path cannot stage the two PSRAM record buffers it needs (it bounces
+them through internal memory, `esp_aes_dma_core.c:268/277`), so the handshake dies mid-write.
+That memory is claimed by the panel's DMA buffers and descriptor chains, WiFi's static
+buffers and the BT controller, in that order, before the provider ever runs — see **H15**.
+
+**Fixed — two halves, both needed.**
+1. `provider.c`: `is_local_failure()` separates "the request never produced a usable answer"
+   (the HTTP client's and esp-tls's error families, `ESP_ERR_NO_MEM`, `ESP_ERR_TIMEOUT`, a
+   raw negative mbedTLS code) from "the service answered badly"
+   (`ESP_ERR_INVALID_RESPONSE`). The first kind retries on a 5s/15s/45s ladder and only then
+   falls back to the provider's cadence; the second keeps its exponential backoff. A failure
+   log now carries the internal-RAM figures, because that is the usual cause here and nothing
+   else reported it.
+2. `sdkconfig.defaults` (see H15): the internal pool the handshake needs is restored, so the
+   ladder is the safety net rather than the mechanism.
+
+**Verified.** The failing boot above reproduces with the WiFi/BT budgets at their ESP-IDF
+defaults and a fixed one does not: `internal RAM free 28331 (largest block 19456)` at boot,
+`provider: weather: updated in 355ms` on the same boot, and 3/3 deliberate reboots fetched on
+the first attempt with no failure logged.
+
+The ladder is the safety net for what the memory fix does not cover, and the board produced
+its own example: on one later boot the fetch failed 14 s after link-up
+(`WEATHER_FETCH_FAIL ... connect` — this AP takes two association attempts on most boots, and
+something in that window is still occasionally not ready), and the retry five seconds later
+succeeded: `+22s FAIL`, `+28s OK`. Six seconds of stale data instead of fifteen minutes of
+it. The ladder was also exercised directly by pointing the provider at a dead host —
+`retry in 5s` → `15s` → `45s` → `900s`, with the internal-RAM figures on every line.
 
 ### L1–L15 — Assorted LOW items
 
