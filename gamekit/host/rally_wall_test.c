@@ -1,6 +1,6 @@
 /*
- * rally_wall_test.c - regression test for the ball against the top and bottom
- * walls.
+ * rally_wall_test.c - regression test for the ball's physics: the walls, and
+ * what the paddle's face and the paddle's own motion do to it.
  *
  * The bug: a ball whose vertical speed is smaller than one pixel per tick gets
  * stuck on the top edge instead of bouncing off. The walls were done by
@@ -15,6 +15,12 @@
  * hit one row off the centre of a still paddle gives 32 - an eighth of a pixel
  * per tick, which crawls rather than moves. Any of those balls that reaches a
  * wall used to freeze there.
+ *
+ * The paddle's own motion is the same story told about the player's hand: it
+ * used to be worth a whole pixel per tick, twice what a hit at the paddle's
+ * very end is worth, so a fast hand beat the player's aim. It is worth half
+ * now, and every hit winds the ball up by an eighth until it tops out at twice
+ * the serve speed, so a long rally gets faster rather than staying flat.
  *
  * Observable: the state is driven by the game's own init/reset/update/draw and
  * the ball is read off the drawn panel, where it is the only pure white pixel.
@@ -262,6 +268,72 @@ static void test_shallow_deflection(void)
     fx_close(&f);
 }
 
+/* ---- the paddle's answer ------------------------------------------------- */
+
+/* Take one hit on the right paddle's centre with the ball travelling at the
+ * speed the rally has reached, and return the horizontal speed it leaves with.
+ * The ball is placed just short of the paddle's face on the paddle's own centre
+ * row, so the bounce's positional term is zero, and the paddle is not moving,
+ * so the spin term is too: what comes back is the racket's speed alone. */
+static int32_t fx_hit_right(fixture *f)
+{
+    const int face = f->st.face[1];
+    const int centre = f->st.paddle_y[1] + f->st.paddle_h / 2;
+    const int32_t v = f->st.bvx < 0 ? -f->st.bvx : f->st.bvx;
+    fx_place(f, face - 1, centre, v, 0);
+    for (int t = 0; t < 8 && f->st.bvx > 0; t++) fx_step(f);
+    return f->st.bvx;
+}
+
+/* A rally used to run at one fixed pace for as long as it lasted. Now every hit
+ * winds the ball up by an eighth until it tops out at twice the serve, so the
+ * pressure of a long rally comes from the ball rather than only from the
+ * player's own hand. */
+static void test_speed_ramp(void)
+{
+    printf("rally: a rally winds the ball up, then holds the cap\n");
+    fixture f;
+    if (!fx_open(&f)) { check(0, "fixture opens"); return; }
+
+    check(f.st.ball_speed == FX_ONE * 3 / 4, "the serve is the rally's slowest ball");
+
+    const int32_t first = fx_hit_right(&f);
+    check(first == -216, "the first hit leaves at 192 + 192/8 = 216");
+
+    int32_t v = first;
+    for (int i = 1; i < 12; i++) v = fx_hit_right(&f);
+    check(v == -RALLY_SPEED_MAX, "the twelfth hit is at the cap, not past it");
+
+    const int32_t extra = fx_hit_right(&f);
+    check(extra == -RALLY_SPEED_MAX, "and a thirteenth hit holds the cap");
+
+    fx_close(&f);
+}
+
+/* The paddle's own motion used to be worth a whole pixel per tick of spin - twice
+ * what a hit at the paddle's very end is worth - so a fast hand decided the angle
+ * and the player's aim barely showed. It is now worth half. */
+static void test_spin_is_half(void)
+{
+    printf("rally: the paddle's motion is worth half a pixel of spin\n");
+    fixture f;
+    if (!fx_open(&f)) { check(0, "fixture opens"); return; }
+
+    /* The paddle sweeps at full speed while the ball comes in on the row below
+     * its centre. Two ticks later the hit lands one row above the paddle's (now
+     * lower) centre, so the positional term is -32, and half a pixel of the
+     * paddle's own speed is +128. */
+    f.st.paddle_v[1] = (int16_t)paddle_speed();
+    fx_place(&f, f.st.face[1] - 1, f.st.paddle_y[1] + f.st.paddle_h / 2 + 1,
+             FX_ONE * 3 / 4, 0);
+    for (int t = 0; t < 8 && f.st.bvx > 0; t++) fx_step(&f);
+
+    check(f.st.bvx < 0, "the moving paddle sends the ball back");
+    check(f.st.bvy == 96, "one row off the centre (-32) plus half a pixel (+128), not 224");
+
+    fx_close(&f);
+}
+
 int main(void)
 {
     test_ceiling();
@@ -269,6 +341,8 @@ int main(void)
     test_leaving_the_floor();
     test_fast_ball();
     test_shallow_deflection();
+    test_speed_ramp();
+    test_spin_is_half();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures) { printf("FAIL\n"); return 1; }

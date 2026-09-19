@@ -39,7 +39,9 @@ CLI     := $(BUILD)/game-cli
 #   make -f Makefile.host check
 TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_input_test \
             $(BUILD)/breakout_progression_test $(BUILD)/motion_axis_test \
-            $(BUILD)/rally_wall_test
+            $(BUILD)/rally_wall_test $(BUILD)/breakout_bounce_test \
+            $(BUILD)/invaders_rounds_test $(BUILD)/snake_pace_test \
+            $(BUILD)/tetris_preview_test
 
 .PHONY: all clean cli core check
 
@@ -67,22 +69,51 @@ $(BUILD)/ffi/game_ffi.o: ffi/game_ffi.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Iffi -c $< -o $@
 
+# What a link actually takes: the test source (the first prerequisite of every
+# test rule) and the objects/archives - never the game source a fixture
+# includes, nor its headers, both of which arrive as later prerequisites from
+# the dep files at the bottom of this file.
+LINK_INPUTS = $< $(filter %.o %.a,$^)
+
 $(BUILD)/%_test: host/%_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(EX_OBJ) $(CORE_LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) -Iffi $(LINK_INPUTS) $(LDLIBS) -o $@
 
 # The breakout fixture includes examples/breakout/game_breakout.c to drive the
 # game's own static lifecycle and state without a production test API, so it
 # defines ml_game_breakout itself and must not also link the game's object.
 $(BUILD)/breakout_progression_test: host/breakout_progression_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(filter-out $(BUILD)/examples/breakout/game_breakout.o,$(EX_OBJ)) $(CORE_LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) -Iffi $(LINK_INPUTS) $(LDLIBS) -o $@
 
 # Same pattern for the rally fixture, which places the ball in the state the
 # wall bug needs.
 $(BUILD)/rally_wall_test: host/rally_wall_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(filter-out $(BUILD)/examples/rally/game_rally.o,$(EX_OBJ)) $(CORE_LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Iffi $^ $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) -Iffi $(LINK_INPUTS) $(LDLIBS) -o $@
+
+# And for the paddle-angle fixture, which parks the ball on the paddle's row.
+$(BUILD)/breakout_bounce_test: host/breakout_bounce_test.c $(BUILD)/ffi/game_ffi.o $(GK_OBJ) $(filter-out $(BUILD)/examples/breakout/game_breakout.o,$(EX_OBJ)) $(CORE_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Iffi $(LINK_INPUTS) $(LDLIBS) -o $@
+
+# Fixtures that include a game's own translation unit and provide the ctx services
+# themselves: they link the view helper and the core, never the runtime (whose
+# ml_ctx_* the fixture replaces) and never the game's own object.
+FIXTURE_DEPS := $(BUILD)/src/view.o $(CORE_LIB)
+
+$(BUILD)/invaders_rounds_test: host/invaders_rounds_test.c $(FIXTURE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
+
+# And the pace fixture, which needs no object of the game it includes at all.
+$(BUILD)/snake_pace_test: host/snake_pace_test.c $(FIXTURE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
+
+$(BUILD)/tetris_preview_test: host/tetris_preview_test.c $(FIXTURE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
 
 check: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t"; $$t > /dev/null || { $$t; exit 1; }; done
@@ -93,4 +124,7 @@ clean:
 	@echo "  CLEAN $(BUILD)"
 
 -include $(GK_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(EX_OBJ:.o=.d) $(PNG_OBJ:.o=.d)
+# A fixture test includes a game's translation unit, so the generated dep file is
+# the only thing that knows the test must be relinked when that game changes.
+-include $(TEST_BIN:=.d)
 CFLAGS += -MMD -MP

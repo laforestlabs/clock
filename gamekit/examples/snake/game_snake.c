@@ -14,10 +14,14 @@
  * full-ring game is a win, not a wrap-around bug. A static assert below pins
  * the budget so a future edit that grows the state fails to compile.
  *
- * Speed is panel-constant, not panel-relative: the snake steps one cell every
- * w/16 ticks (min 1), so roughly 640 px/s on every panel. A 64-wide panel is
- * no faster than a 128-wide one; the width only changes how far there is to
- * go. That is rally's constant ball speed, in cell units.
+ * Speed starts panel-constant and then climbs with the score: the snake steps
+ * one cell every w/16 ticks (min 2) to begin with, and gains a tick's worth of
+ * speed for every four foods it eats, down to two ticks a cell. On the shipped
+ * 64-wide panel that is 6 cells/s at the start and 12 once it has eaten eight,
+ * so a long snake is a quicker one and the run gets harder as it grows. A
+ * 128-wide panel starts and ends no faster: the width only changes how far
+ * there is to go. That is rally's constant ball speed, in cell units, with a
+ * ramp on it.
  */
 #include <stdio.h>
 #include <string.h>
@@ -42,13 +46,13 @@ typedef struct {
     int16_t  panel_w, panel_h;
     uint16_t len;            /* body length */
     uint16_t head;           /* ring index of the head segment */
-    uint16_t score;          /* food eaten */
+    uint16_t score;          /* food eaten; the pace derives from it */
+    uint8_t  move_ctr;       /* ticks left before the next step */
     uint8_t  dir;            /* 0 up, 1 right, 2 down, 3 left */
     uint8_t  next_dir;       /* queued turn, applied at the next step */
     uint8_t  grow;           /* growth owed, consumed one per step */
     uint8_t  status;         /* SNAKE_* */
     uint8_t  food_x, food_y;
-    uint8_t  move_every;     /* ticks between steps: w/16, min 1 */
     int16_t  steer_x;        /* tilt vector, ML_AXIS_IDLE when unused */
     int16_t  steer_y;
     uint8_t  sx[SNAKE_MAX];  /* ring buffer, tail .. head */
@@ -132,8 +136,6 @@ static void snake_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
     memset(s, 0, sizeof(*s));
     s->panel_w = (int16_t)cfg->panel_w;
     s->panel_h = (int16_t)cfg->panel_h;
-    int me = cfg->panel_w / 16;
-    s->move_every = (uint8_t)(me < 1 ? 1 : me);
 }
 
 static void snake_reset(void *state, ml_game_ctx *ctx)
@@ -151,6 +153,7 @@ static void snake_reset(void *state, ml_game_ctx *ctx)
     s->steer_y = ML_AXIS_IDLE;
     s->grow = 0;
     s->score = 0;
+    s->move_ctr = 0;
     s->status = SNAKE_PLAYING;
     place_food(s, ctx);
 }
@@ -234,12 +237,30 @@ static void snake_step(snake_state *s, ml_game_ctx *ctx)
     }
 }
 
+/* Ticks between steps: the snake starts at one cell per w/16 ticks (min 2) and
+ * gains a tick's worth of speed for every four foods, down to two ticks a cell.
+ * On the 64-wide panel that is 6 cells/s to begin with and 12 once it has eaten
+ * eight, so a growing snake is also a quicker one. */
+static uint8_t snake_interval(const snake_state *s)
+{
+    int base = s->panel_w / 16;
+    int iv;
+    if (base < 2) base = 2;
+    iv = base - (int)(s->score / 4);
+    return (uint8_t)(iv < 2 ? 2 : iv);
+}
+
 static void snake_update(void *state, ml_game_ctx *ctx)
 {
     snake_state *s = state;
     if (s->status != SNAKE_PLAYING) return;
     snake_steer(s);
-    if (ml_ctx_tick(ctx) % s->move_every != 0) return;
+    /* The countdown reloads from the interval after every step, so the spacing is
+     * exactly the interval even while the interval shrinks with the score.
+     * Stepping off the absolute tick instead would bunch two steps together every
+     * time the interval dropped. */
+    if (s->move_ctr > 0) { s->move_ctr--; return; }
+    s->move_ctr = (uint8_t)(snake_interval(s) - 1);
     snake_step(s, ctx);
 }
 

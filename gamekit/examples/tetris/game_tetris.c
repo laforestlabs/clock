@@ -83,6 +83,15 @@ static bool tetris_collide(const tetris_state *s, uint16_t mask, int px, int py)
     return false;
 }
 
+/* Where the piece would come to rest if the player did nothing: step a copy of it
+ * down until it collides. Pure arithmetic on the state, so draw stays pure. */
+static int tetris_landing_y(const tetris_state *s)
+{
+    int gy = s->py;
+    while (!tetris_collide(s, s->mask, s->px, gy + 1)) gy++;
+    return gy;
+}
+
 static void tetris_lock(tetris_state *s, ml_game_ctx *ctx)
 {
     for (int row = 0; row < 4; row++) {
@@ -298,6 +307,24 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
 
     /* falling piece in its own colour */
     ml_rgb pc = tetris_piece_color(s->piece);
+
+    /* The landing preview, under the piece and a third of its colour: dark enough
+     * that the falling piece still reads first, light enough to see. A third caps
+     * every channel at 85 before gamma and 20 after it, which is under the 90
+     * every pixel-reading tetris test uses to recognise a piece cell. */
+    int gy = tetris_landing_y(s);
+    if (gy != s->py) {
+        ml_rgb dim = ML_RGB(pc.r / 3, pc.g / 3, pc.b / 3);
+        for (int row = 0; row < 4; row++) {
+            for (int col = 0; col < 4; col++) {
+                if (!(s->mask & (1u << (row * 4 + col)))) continue;
+                int bx = s->ox + s->px + col, by = s->oy + gy + row;
+                if (bx < 0 || bx >= W || by < 0 || by >= H) continue;
+                ml_canvas_set(c, bx, by, dim);
+            }
+        }
+    }
+
     for (int row = 0; row < 4; row++) {
         for (int col = 0; col < 4; col++) {
             if (!(s->mask & (1u << (row * 4 + col)))) continue;

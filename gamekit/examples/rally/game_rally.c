@@ -6,10 +6,12 @@
  * is authored for a fixed panel (64x32, the size the hardware ships today; the
  * view letterboxes it onto anything larger), and two players share one host
  * (player 1 left, player 2 right, each on its own controller; an absent side
- * falls back to a deterministic AI so a single player is still playable). The
- * state is plain POD, snapshot/restore are a memcpy, and no RNG is read
- * anywhere: the serve is a fixed flat line and all the angle comes from the
- * paddles. One binary, one player or two, frames reproducible from a seed.
+ * falls back to a deterministic AI so a single player is still playable). Every
+ * paddle hit winds the ball up towards twice its serve speed, so a long rally is
+ * also a fast one. The state is plain POD, snapshot/restore are a memcpy, and no
+ * RNG is read anywhere: the serve is a fixed flat line and all the angle comes
+ * from the paddles. One binary, one player or two, frames reproducible from a
+ * seed.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +25,10 @@
 #define FX 8
 #define FX_ONE   (1 << FX)
 #define FX_PX(x) ((int)((x) << FX))
+
+/* The fastest ball a rally reaches: twice the serve's 0.75 px/tick, so a rally
+ * winds up over several hits and then holds a playable pace. */
+#define RALLY_SPEED_MAX (FX_ONE * 3 / 2)
 
 enum { RALLY_UP = 0, RALLY_DOWN = 1, RALLY_TILT_Y = 2 };
 
@@ -40,6 +46,7 @@ typedef struct {
     int16_t paddle_v[2];   /* px/tick, integer */
     int32_t bx, by;        /* ball position, Q8.8 */
     int32_t bvx, bvy;      /* ball velocity, Q8.8 px/tick */
+    int16_t ball_speed;    /* the rally's current horizontal speed, Q8.8 */
     uint16_t score[2];
     uint8_t  present;       /* bitmask: bit0 player1, bit1 player2 */
     uint8_t  held[2];       /* per side: bit0 Up held, bit1 Down held */
@@ -61,22 +68,16 @@ static int clampi(int v, int lo, int hi)
 /* 1 px/tick at the 25ms tick: the paddle crosses the 32-row board in 32 ticks,
  * the pace tuned for the 64x32 panel rally targets. */
 static int paddle_speed(void) { return 1; }
-static int ball_speed(void)
-{
-    /* Constant 1 px/tick: the board is a fixed 64x32, so the ball's pace is
-     * fixed too. How long a rally lasts is set by the paddles, not the panel. */
-    return 1;
-}
 
 static void serve(rally_state *s, int to)
 {
     s->bx = (s->panel_w / 2) << FX;
     s->by = (s->panel_h / 2) << FX;
-    /* 0.75 px/tick: 30 px/s at the 25ms tick, the pace the old 1.5 px/tick
-     * had at 50ms. */
-    int spd = ball_speed() * FX_ONE * 3 / 4;
+    /* 0.75 px/tick: 30 px/s at the 25ms tick. The serve is the slowest ball of a
+     * rally; every paddle hit winds it up from here. */
+    s->ball_speed = FX_ONE * 3 / 4;
     int dir = (to == 0) ? -1 : 1;
-    s->bvx = dir * spd;
+    s->bvx = dir * s->ball_speed;
     /* Flat serve straight across the middle: the opening shot is always the
      * same line, and angle enters the rally only through the paddles. */
     s->bvy = 0;
@@ -186,18 +187,24 @@ static void ai_move(rally_state *s, int idx, uint32_t tick)
     else if (dy < 0) s->paddle_y[idx] -= sp;
 }
 
-/* Bounce off paddle idx. Where on the paddle the ball hits steers the
- * vertical direction: the offset from the paddle's centre, normalised so a
- * hit at the very edge adds half a px/tick, biases the bounce up or down while
- * a centre hit leaves the incoming angle alone. The paddle's own motion still
- * adds on top, so a moving paddle imparts extra spin either way. */
+/* Bounce off paddle idx. Where on the paddle the ball hits steers the vertical
+ * direction: the offset from the paddle's centre, normalised so a hit at the very
+ * edge adds half a px/tick. The paddle's own motion adds half of its speed as
+ * spin — it used to add all of it, twice what a hit at the edge adds, so the
+ * player's motion decided the angle and their aim only nudged it. Every hit also
+ * winds the ball up, so a long rally gets faster until it tops out at twice the
+ * serve speed. */
 static void paddle_bounce(rally_state *s, int idx, int byp)
 {
     int ph = s->paddle_h;
     int rel = byp - (s->paddle_y[idx] + ph / 2);
-    s->bvx = -s->bvx;
+    s->ball_speed = (int16_t)(s->ball_speed + s->ball_speed / 8);
+    if (s->ball_speed > RALLY_SPEED_MAX) s->ball_speed = RALLY_SPEED_MAX;
+    /* The ball leaves at the rally's speed, not at whatever it arrived with,
+     * and it leaves the way it came from: the paddle reflects the sign. */
+    s->bvx = s->bvx < 0 ? (int32_t)s->ball_speed : (int32_t)-s->ball_speed;
     s->bvy += (rel * FX_ONE) / ph;
-    s->bvy += s->paddle_v[idx] * FX_ONE;
+    s->bvy += s->paddle_v[idx] * FX_ONE / 2;
 }
 
 /* Follow the phone's angle: the paddle's y *is* the tilt's position, so a
@@ -274,9 +281,10 @@ static void rally_update(void *state, ml_game_ctx *ctx)
         return;
     }
 
-    /* clamp the vertical speed so a rally can't send the ball straight
-     * across; twice the horizontal speed, the same ceiling angle as before */
-    int max_v = 3 * FX_ONE / 2;
+    /* Clamp the vertical speed so a rally can't send the ball straight across:
+     * half again the ball's current speed, which is the same ceiling angle at
+     * every speed in the ramp. */
+    int max_v = s->ball_speed + s->ball_speed / 2;
     if (s->bvy >  max_v) s->bvy =  max_v;
     if (s->bvy < -max_v) s->bvy = -max_v;
 }

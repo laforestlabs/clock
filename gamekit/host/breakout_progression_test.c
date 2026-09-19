@@ -33,6 +33,13 @@
  * wall band must remain pixel-identical to a fresh reset wall after one
  * update, while the ball passes upward through the empty right-hand space.
  * Before the fix this indexed the following row's masks and cleared (72,2).
+ *
+ * It also pins what a cleared wall comes back as: not the same solid wall but
+ * the next level's own pattern (levels cycle solid, brickwork, pyramid,
+ * checkerboard) and with the next level's paddle, one pixel narrower. The
+ * level-2 frame is compared against one drawn from a fixture the test moved to
+ * level 2 itself, so a refill that ignored the level would fail on the walls
+ * alone.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -140,7 +147,10 @@ static int fx_band_same(const fixture *f, const fixture *ref)
 /* ---- scripts ------------------------------------------------------------ */
 
 /* Clearing the last visible brick must reach the level-cleared path on any
- * panel up to the storage bound. */
+ * panel up to the storage bound, and the wall that comes back must be the next
+ * level's own pattern, drawn by a fixture that took the same level, score and
+ * intro (the band includes the HUD rows, so the two frames may differ only in
+ * the wall). */
 static int case_progression(int w)
 {
     fixture f;
@@ -156,20 +166,29 @@ static int case_progression(int w)
     fx_step(&f, 1);
     fx_draw(&f);
 
-    ml_rgb want = breakout_row_color(0);
-    ml_rgb edge = fx_px(&f, w - 1, 0);
-    int start = fx_same(fx_px(&f, 0, 0), want);
-    int refilled = fx_same(edge, want);
     int scored = f.st.level == 2 && f.st.score == 110;
     int served = f.st.bx == ((w / 2) << FX);
-    int ok = start && refilled && scored && served;
+    int paddle = f.st.paddle_w == level_paddle_w(w, 2);
 
-    printf("width %3d: edge=(%3u,%3u,%3u) want=(%3u,%3u,%3u) start=%d level=%u "
-           "score=%u served=%d: %s\n",
-           w, (unsigned)edge.r, (unsigned)edge.g, (unsigned)edge.b,
-           (unsigned)want.r, (unsigned)want.g, (unsigned)want.b,
-           start, (unsigned)f.st.level, (unsigned)f.st.score, served,
-           ok ? "ok" : "FAIL");
+    /* The level-2 wall as the game itself builds it, drawn from a fresh
+     * fixture moved to the same level. */
+    fixture ref;
+    int wall = 0;
+    if (fx_open(&ref, w, PANEL_H)) {
+        ref.st.level = f.st.level;
+        ref.st.score = f.st.score;
+        ref.st.intro = f.st.intro;
+        ref.st.paddle_w = f.st.paddle_w;
+        refill_bricks(&ref.st);
+        fx_draw(&ref);
+        wall = fx_band_same(&f, &ref);
+        fx_close(&ref);
+    }
+    int ok = scored && served && paddle && wall;
+
+    printf("width %3d: level=%u score=%u served=%d paddle_w=%d wall=%d: %s\n",
+           w, (unsigned)f.st.level, (unsigned)f.st.score, served,
+           (int)f.st.paddle_w, wall, ok ? "ok" : "FAIL");
 
     fx_close(&f);
     return ok;
@@ -196,7 +215,10 @@ static int case_wide_panel(void)
     fx_step(&f, 1);
     fx_draw(&f);
 
-    /* The untouched wall as drawn, with the ball parked clear of its rows. */
+    /* The untouched wall as drawn, with the ball parked clear of its rows.
+     * Same blink phase as the frame under test: the HUD occupies the wall
+     * band's top rows while a level's intro is running. */
+    ref.st.intro = f.st.intro;
     fx_place_ball(&ref, 200, 20, 0, 0);
     fx_draw(&ref);
 

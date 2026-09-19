@@ -21,7 +21,10 @@
  * Observable: on a 64x32 panel the field is the 32-wide center (origin x=16,
  * frame at columns 15 and 48, row 31). Every piece is 4 lit cells; a locked
  * piece adds 4 settled cells. The score text sits at (1,1), outside the
- * field, so counting lit cells inside the field isolates the pieces.
+ * field, so counting lit cells inside the field isolates the pieces. The field
+ * also holds the falling piece's landing preview, which is a third of the
+ * piece's colour and so is excluded by brightness - a channel past 30 in the
+ * gamma-corrected frame - rather than by colour, the way the grey frame is.
  *
  * Script: no input for 100 ticks (piece falls 5 rows by gravity), Down held
  * for 10 ticks (soft drop, 10 rows, no lock), released for 10 ticks, then
@@ -54,7 +57,11 @@
  * is the only gray on the panel (every piece colour and the settled stack
  * have unequal channels), and the black background is zero. The score text
  * sits at (1,1), outside the field, and the next-piece preview in the right
- * margin is beyond x=48. */
+ * margin is beyond x=48. A cell is the piece (or the settled stack) when a
+ * channel is past 30 in the rendered, gamma-corrected frame: the landing
+ * preview is a third of the piece's colour, so it tops out at 20, while the
+ * dimmest thing the counts must include, the settled stack, is 41. The grey
+ * frame is excluded by its equal channels. */
 static int lit_cells(ml_game_session *s)
 {
     const uint8_t *rgba = ml_game_render_rgba(s);
@@ -64,10 +71,8 @@ static int lit_cells(ml_game_session *s)
     for (int y = FIELD_Y; y < FIELD_Y + FIELD_H; y++) {
         for (int x = FIELD_X; x < FIELD_X + FIELD_W; x++) {
             const uint8_t *p = rgba + ((size_t)y * PANEL_W + x) * 4;
-            if (p[0] || p[1] || p[2]) {
-                /* frame gray is r == g == b; any piece cell is not */
-                if (!(p[0] == p[1] && p[1] == p[2])) count++;
-            }
+            if ((p[0] > 30 || p[1] > 30 || p[2] > 30) &&
+                !(p[0] == p[1] && p[1] == p[2])) count++;
         }
     }
     return count;
