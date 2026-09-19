@@ -211,12 +211,15 @@ Controls remain at least 48 logical pixels; setup and paused content scroll.
 An undersized play area pauses and asks for more space rather than clipping pads.
 
 **Motion controls** are offered in the local preview and on a mirror. The phone
-establishes neutral from 20 accelerometer samples before the round starts: hold
-it still, and that angle becomes the middle of the round's travel. Cancel or
-Manual controls leaves setup usable. A sensor error, or two seconds without
-samples, prevents starting in motion mode. While paused, switch Manual/Motion or
-Recalibrate, then explicitly Resume. An ordinary pause retains neutral; app
-suspension requires recalibration.
+establishes neutral from 20 samples taken while it is still, before the round
+starts: hold it still, and that angle becomes the middle of the round's travel.
+Moving during the hold does not advance it, so the count reads 4/20 rather than
+completing over a wrong middle; a hold that never settles says "Could not
+calibrate: hold the phone still" and motion mode stays selected for another try.
+Cancel or Manual controls leaves setup usable. A sensor error, or two seconds
+without samples, prevents starting in motion mode. While paused, switch
+Manual/Motion or Recalibrate, then explicitly Resume. An ordinary pause retains
+neutral; app suspension requires recalibration.
 
 Tilt is a **position**, not a direction: 20 degrees from neutral reaches the end
 of the travel, the middle is where the phone was held at the start, and a held
@@ -228,6 +231,16 @@ stops at a wall or the stack (Rotate and Soft drop stay buttons); Snake, which i
 a grid game with a heading rather than a coordinate, turns only on a deliberate
 tilt. The pads and keys are unchanged when Manual is selected, and switching
 modes mid-round continues from wherever the player is.
+
+The angle is fused from the accelerometer **and the gyroscope**, so moving the
+phone without tilting it no longer steers: the accelerometer alone reads the
+hand's acceleration as gravity, which is what a sideways move used to be sent
+as. The gyroscope carries the estimate through the movement and the
+accelerometer keeps it from drifting, and neither is believed when the two
+disagree by more than a few degrees. On a device with no gyroscope the round
+still runs on the accelerometer alone — the surface says "accelerometer only"
+and the app says so once on screen, because in that mode a brisk movement still
+reads as tilt.
 
 A mirror whose game declares no tilt axis - any firmware from before positional
 motion - leaves the round on the pads and says so, rather than looking steered

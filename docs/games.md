@@ -272,15 +272,45 @@ position request inside the game's own travel:
 - `ml_axis_map(value, lo, hi)` is the one implementation of the mapping
   (integer only, both ends exact), and games use it rather than re-deriving it.
 
-Every game that takes tilt declares the axis under the label `TiltX` or `TiltY`,
-which is the wire's name for the phone's two accelerometer axes; the app finds
-them by that label and the declared type together. The phone side is calibrated:
-neutral is the angle the player held the phone at to start the round, that angle
-is the middle of the travel, and 20 degrees either side saturates it — a wrist
-movement, not an arm one. Half a degree either side of neutral reports exactly
-zero, so a resting hand cannot shiver the player by a pixel, and the angle is
-low-pass filtered before it is mapped. Both numbers are absolute angles: the
-dead zone does not stretch or shrink with the travel.
+Every game that takes tilt declares the axis under the label `TiltX` or `TiltY`;
+the app finds them by that label and the declared type together. The phone side
+is calibrated: neutral is the angle the player held the phone at to start the
+round, that angle is the middle of the travel, and 20 degrees either side
+saturates it — a wrist movement, not an arm one. Half a degree either side of
+neutral reports exactly zero, so a resting hand cannot shiver the player by a
+pixel, and the angle is low-pass filtered before it is mapped. Both numbers are
+absolute angles: the dead zone does not stretch or shrink with the travel.
+
+The angle is not read off the accelerometer alone, because an accelerometer
+measures gravity *plus* the hand's acceleration: moving a held phone sideways
+tilts that reading by degrees — 1.5 m/s² is 8.7°, most of the travel — while the
+phone's own angle has not changed at all, and that used to arrive as steering.
+The mapper carries one estimate of the gravity direction and fuses the two
+sensors instead. The gyroscope rotates that estimate by the rate it measures,
+which is immune to translation and therefore carries the estimate through a
+movement; the accelerometer pulls it back toward the direction it measures,
+which is absolute and therefore removes the gyro's slow drift — but only as far
+as the two agree. Past a few degrees of disagreement the accelerometer is not
+believed at all, because a disagreement that large is what a hand movement looks
+like; a gyro bias settles at a third of a degree, well inside that. A
+disagreement that lasts and that no acceleration explains is taken as the gyro's
+fault instead, and recovered from slowly, so a gyroscope reporting nonsense
+cannot leave the player stuck at the wrong position.
+
+Neutral comes only from samples taken while the phone is at rest. Twenty of
+them: each is refused while the phone is rotating, while the magnitude says it is
+being accelerated along gravity, or while its direction disagrees with the
+samples already taken — the third is what a movement during the hold fails. The
+"hold still" view counts the accepted ones, so a player who is moving sees 4/20
+rather than a completed bar over a wrong middle, and a hold that never settles
+fails with its own message instead of hanging.
+
+A phone with no gyroscope still steers, and says so. With nothing to predict a
+rotation with, a real rotation would look exactly like the corruption the
+innovation test refuses, so that path trusts the accelerometer directly and
+rejects on *magnitude* alone: it catches a brisk movement and does nothing about
+a slow one. The motion surface reads "accelerometer only" in that mode, and the
+player is told once, rather than a degraded round looking like a healthy one.
 
 The games that cannot use a position say so honestly rather than pretending:
 snake is a grid game with a heading and no coordinate, so it reads the tilt as a

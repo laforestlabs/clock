@@ -130,6 +130,7 @@ class _Connection extends MirrorConnection {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
+  const gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
   const sensorMethods =
       MethodChannel('dev.fluttercommunity.plus/sensors/method');
   setUp(() {
@@ -138,6 +139,8 @@ void main() {
     messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
     messenger.setMockMethodCallHandler(
         const MethodChannel(sensorChannel), (_) async => null);
+    messenger.setMockMethodCallHandler(
+        const MethodChannel(gyroChannel), (_) async => null);
   });
   tearDown(() {
     final messenger =
@@ -145,6 +148,7 @@ void main() {
     messenger.setMockMethodCallHandler(sensorMethods, null);
     messenger.setMockMethodCallHandler(
         const MethodChannel(sensorChannel), null);
+    messenger.setMockMethodCallHandler(const MethodChannel(gyroChannel), null);
   });
 
   Future<void> sample(WidgetTester tester, double x, double y, double z) async {
@@ -153,6 +157,29 @@ void main() {
         const StandardMethodCodec().encodeSuccessEnvelope(<double>[x, y, z, 0]),
         (_) {});
     await tester.pump(const Duration(milliseconds: 20));
+  }
+
+  /// One gyroscope sample, in rad/s. A motion round runs without these too:
+  /// that is the accelerometer-only path, which is what a device with no
+  /// gyroscope delivers and what every test that does not call this exercises.
+  Future<void> sampleGyro(WidgetTester tester, double x, double y, double z) async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        gyroChannel,
+        const StandardMethodCodec().encodeSuccessEnvelope(<double>[x, y, z, 0]),
+        (_) {});
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+
+  /// The gyroscope's "there is no gyroscope on this device" error, as the
+  /// plugin sends it from its own `onListen`.
+  Future<void> gyroMissing(WidgetTester tester) async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        gyroChannel,
+        const StandardMethodCodec().encodeErrorEnvelope(
+            code: 'NO_SENSOR', message: 'Sensor not found'),
+        (_) {});
+    await tester.pump();
+    await tester.pump();
   }
 
   Future<void> beginCalibration(WidgetTester tester) async {
@@ -289,6 +316,104 @@ void main() {
     expect(find.text('Start Game'), findsOneWidget);
   });
 
+  testWidgets('a device with no gyroscope still steers, and says so',
+      (tester) async {
+    final (session, connection) = await boot(tester);
+    await beginCalibration(tester);
+    await gyroMissing(tester);
+
+    // The accelerometer is the only sensor the round can be steered by, and it
+    // is enough to start: a missing gyroscope is not a failed mode.
+    for (var i = 0; i < 20; i++) {
+      await sample(tester, 0, 0, 9.8);
+    }
+    if (session.started.isEmpty) {
+      await tester.tap(find.text('Start Game'));
+      await tester.pump();
+    }
+    expect(session.started, ['snake']);
+    session.acknowledge(controls: _withTilt);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing);
+    expect(find.byTooltip('Pause'), findsOneWidget);
+    expect(find.text('Motion unavailable; use manual controls'), findsNothing);
+    expect(find.textContaining('No gyroscope'), findsWidgets);
+    expect(connection.session, isNotNull);
+  });
+
+  testWidgets('a hold that never becomes still fails with its own message',
+      (tester) async {
+    final (session, _) = await boot(tester);
+    await beginCalibration(tester);
+
+    // Samples keep arriving — the sensor is fine — but the phone is moving
+    // throughout: 3 m/s², alternating, so no sample can be accepted as rest.
+    for (var i = 0; i < 14; i++) {
+      await sample(tester, 0, i.isEven ? 3.0 : -3.0, 9.8);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    expect(session.started, isEmpty);
+    expect(find.text('Could not calibrate: hold the phone still'),
+        findsWidgets);
+    expect(find.text('Motion unavailable; use manual controls'), findsNothing);
+    // The sensors are not at fault, so motion mode is still the choice.
+    expect(find.byKey(const ValueKey<String>('mode-motion')), findsOneWidget);
+    expect(find.text('Start Game'), findsOneWidget);
+  });
+
+  testWidgets('with a gyroscope, a shove is not a tilt', (tester) async {
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = ['tetris']);
+    await beginCalibration(tester);
+    // A gyro that is reporting and quiet: the phone is held still for neutral.
+    for (var i = 0; i < 20; i++) {
+      await sampleGyro(tester, 0, 0, 0);
+      await sample(tester, 0, 0, 9.8);
+    }
+    if (session.started.isEmpty) {
+      await tester.tap(find.text('Start Game'));
+      await tester.pump();
+    }
+    expect(session.started, ['tetris']);
+    session.acknowledge(controls: _withTilt);
+    await tester.pump();
+    await tester.pump();
+    // The gyro samples are reaching the mapper: the surface says so.
+    expect(find.textContaining('gyro-assisted'), findsOneWidget,
+        reason: 'the gyroscope samples never reached the mapper');
+    final int before = session.inputs.length;
+
+    // The hand accelerates the phone sideways while the gyroscope reports no
+    // rotation at all. The accelerometer reads 17 degrees of tilt; the fusion
+    // must refuse it, and this is the report that started the work.
+    for (var i = 0; i < 25; i++) {
+      await sampleGyro(tester, 0, 0, 0);
+      await sample(tester, 0, 3.0, 9.8);
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    // Idle (-32768, "nobody is driving this axis") is not a position; the
+    // middle (0) is the level hold. Neither is the shove.
+    expect(
+        session.inputs
+            .sublist(before)
+            .every((p) => p[4] == 0 || p[4] == -32768),
+        isTrue,
+        reason: 'a shove moved the player');
+
+    // A real rotation — the gyroscope and the accelerometer describing the
+    // same movement — does steer: ten 20 ms samples at 1.745 rad/s is 20
+    // degrees, and the accelerometer agrees it is there.
+    for (var i = 0; i < 10; i++) {
+      await sampleGyro(tester, 1.745, 0, 0);
+    }
+    await sample(tester, 0, 9.8 * 0.342, 9.8 * 0.9397);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(session.inputs.any((p) => p[4] > 1000), isTrue,
+        reason: 'a real tilt was refused too');
+  });
+
   testWidgets('tilt drives the axes and never the buttons', (tester) async {
     final (session, _) =
         await boot(tester, configure: (s) => s.catalogue = ['tetris']);
@@ -307,8 +432,13 @@ void main() {
     // Rolling the phone right sends a position on TiltX. The buttons that
     // would have been pressed by the old threshold mapper stay released: tilt
     // is a position now, not a direction.
-    for (var i = 0; i < 12; i++) {
-      await sample(tester, 0, 5, 9.8);
+    //
+    // The samples are tilts, not shoves: a 30 degree roll is gravity at
+    // (0, g·sin30, g·cos30), magnitude g. No gyroscope is reporting here, so
+    // this is the accelerometer-only path — and a sample whose *magnitude* is
+    // 11 m/s² is a movement to that path, which refuses it, correctly.
+    for (var i = 0; i < 24; i++) {
+      await sample(tester, 0, 4.905, 8.494);
     }
     expect(session.inputs, isNotEmpty);
     expect(session.inputs.any((p) => p[4] > 0), isTrue,
@@ -318,8 +448,8 @@ void main() {
 
     // Tipping the phone's top edge away moves the player up: the canvas axis
     // is positive downwards, so the value goes negative.
-    for (var i = 0; i < 12; i++) {
-      await sample(tester, 5, 0, 9.8);
+    for (var i = 0; i < 24; i++) {
+      await sample(tester, 4.905, 0, 8.494);
     }
     expect(session.inputs.any((p) => p[5] < 0), isTrue,
         reason: 'a forward pitch drives TiltY negative (up)');

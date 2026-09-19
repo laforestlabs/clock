@@ -1,5 +1,11 @@
 # Plan: proportional motion controls, and the tilt visualiser
 
+> **Superseded in part, 2026-09-18:** the *sensor source* in Phase 4 below — the
+> accelerometer read directly into roll/pitch — was replaced by the gyro/accelerometer
+> fusion in [`motion_gyro_fusion_plan.md`](motion_gyro_fusion_plan.md). Everything else
+> here (the positional axis contract, `ML_AXIS_IDLE`, the six games, the wire, the travel
+> and dead-zone constants) still stands and is still what the code does.
+
 Audience: the agent implementing this. Read the whole document before editing.
 It records what already exists (do not rebuild it), the contracts to add, the
 exact files and call sites, and how to verify — on the host and on the device.

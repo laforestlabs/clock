@@ -1198,16 +1198,23 @@ void main() {
     // mirror-only, so a preview round could not be steered by the phone at all
     // and the probe's readouts sat pinned at zero.
     const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
+    const gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
     const sensorMethods = MethodChannel('dev.fluttercommunity.plus/sensors/method');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
     messenger.setMockMethodCallHandler(
         const MethodChannel(sensorChannel), (_) async => null);
+    // Present but silent: this round has no gyroscope samples, so it runs the
+    // accelerometer-only path. Without the mock the subscription itself throws
+    // MissingPluginException, which is not what a phone without a sensor does.
+    messenger.setMockMethodCallHandler(
+        const MethodChannel(gyroChannel), (_) async => null);
     addTearDown(() {
       messenger.setMockMethodCallHandler(sensorMethods, null);
       messenger.setMockMethodCallHandler(
           const MethodChannel(sensorChannel), null);
+      messenger.setMockMethodCallHandler(const MethodChannel(gyroChannel), null);
     });
 
     Future<void> sample(WidgetTester t, double x, double y, double z) async {
@@ -1239,16 +1246,19 @@ void main() {
       expect(centre.dy, closeTo(15, 2), reason: 'neutral centres the dot');
 
       // Rolled right: the dot goes right, and holding that angle holds it
-      // there rather than driving it into the edge.
-      for (var i = 0; i < 12; i++) {
-        await sample(tester, 0, 5, 9.8);
+      // there rather than driving it into the edge. The sample is a tilt — a
+      // 30 degree roll with gravity at its usual magnitude — because a sample
+      // that also increases the magnitude is a hand movement, which the
+      // accelerometer-only path is meant to refuse.
+      for (var i = 0; i < 24; i++) {
+        await sample(tester, 0, 4.905, 8.494);
       }
       await scene.advance(2);
       final Offset right = _redDotCentre(scene.pixels());
       expect(right.dx, greaterThan(centre.dx + 10),
           reason: 'a roll moves the dot the way the phone went');
-      for (var i = 0; i < 12; i++) {
-        await sample(tester, 0, 5, 9.8);
+      for (var i = 0; i < 24; i++) {
+        await sample(tester, 0, 4.905, 8.494);
       }
       await scene.advance(2);
       expect(_redDotCentre(scene.pixels()).dx, closeTo(right.dx, 1),
@@ -1256,8 +1266,8 @@ void main() {
 
       // Tipped up: the vertical axis is a position too. The canvas axis runs
       // downwards, so up is a smaller y.
-      for (var i = 0; i < 12; i++) {
-        await sample(tester, 5, 0, 9.8);
+      for (var i = 0; i < 24; i++) {
+        await sample(tester, 4.905, 0, 8.494);
       }
       await scene.advance(2);
       expect(_redDotCentre(scene.pixels()).dy, lessThan(right.dy - 4),

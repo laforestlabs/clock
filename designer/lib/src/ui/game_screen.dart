@@ -538,6 +538,30 @@ class _GameScreenState extends State<GameScreen>
   /// stale sample or timer cannot touch a newer calibration.
   int _motionGeneration = 0;
 
+  /// The gyroscope subscription feeding [_motion]. Its life is the
+  /// accelerometer's, but its failure is not: a device without a gyroscope
+  /// still steers, on the accelerometer alone.
+  StreamSubscription<GyroscopeEvent>? _gyroSub;
+
+  /// Whether the gyroscope has reported that this device has none. The mapper
+  /// falls back to the accelerometer and the surface says which estimator is
+  /// running, so a degraded round never looks like a healthy one.
+  bool _gyroUnavailable = false;
+
+  /// Whether the player has been told about the missing gyroscope, so it is
+  /// said once and not on every round.
+  bool _gyroWarned = false;
+
+  /// Fires when a calibration hold has not become still enough in time. The
+  /// accelerometer watchdog cannot see this: samples are arriving, they are
+  /// all being refused as "not at rest", and the hold would never complete.
+  Timer? _calibrationStillTimer;
+
+  /// How long a hold may take before that is reported as a failure rather than
+  /// left running. Twenty still samples take 0.4 s at 50 Hz, so this is the
+  /// time a player gets to stop moving, not the time the measurement needs.
+  static const Duration _calibrationStill = Duration(seconds: 5);
+
   /// The last time an axis value was sent to the mirror. Analog tilt is
   /// throttled to one send per 20 ms; the heartbeat carries the newest value
   /// in between.
@@ -2268,6 +2292,7 @@ class _GameScreenState extends State<GameScreen>
     setState(() => _motionPhase = _MotionPhase.calibrating);
     _attachMotion();
     _restartCalibrationWatchdog(_motionGeneration);
+    _restartStillTimer();
     final session = _connection.session;
     final generation = _opGeneration;
     final motionGeneration = _motionGeneration;
@@ -2299,6 +2324,15 @@ class _GameScreenState extends State<GameScreen>
       (event) => _onMotionSample(generation, motion, event),
       onError: (Object _) => _onMotionFailure(generation),
     );
+    // The gyroscope is what lets the mapper tell a translation from a tilt: the
+    // accelerometer alone reads the hand's acceleration as gravity. A device
+    // without one is handled, not refused — see _onGyroFailure.
+    _gyroSub = gyroscopeEventStream(
+      samplingPeriod: SensorInterval.gameInterval,
+    ).listen(
+      (event) => _onGyroSample(generation, motion, event),
+      onError: (Object _) => _onGyroFailure(generation),
+    );
   }
 
   /// Stop reading tilt but keep the mapper: a pause detaches the sensor and
@@ -2306,6 +2340,8 @@ class _GameScreenState extends State<GameScreen>
   void _detachMotion() {
     _motionSub?.cancel();
     _motionSub = null;
+    _gyroSub?.cancel();
+    _gyroSub = null;
     // Anything already queued belongs to the subscription just dropped.
     _motionGeneration++;
   }
@@ -2318,6 +2354,12 @@ class _GameScreenState extends State<GameScreen>
     _motion = null;
     _calibrationTimer?.cancel();
     _calibrationTimer = null;
+    _calibrationStillTimer?.cancel();
+    _calibrationStillTimer = null;
+    // Re-detected from the next round's own subscription: the message
+    // (_gyroWarned) is said once, but whether this round has a gyroscope is a
+    // question each round asks its own stream.
+    _gyroUnavailable = false;
     _motionPhase = _MotionPhase.off;
     _finishCalibration(false);
   }
@@ -2340,6 +2382,26 @@ class _GameScreenState extends State<GameScreen>
         Timer(const Duration(seconds: 2), () => _onMotionFailure(generation));
   }
 
+  /// Start the "this hold is not becoming still" budget. Unlike the watchdog,
+  /// this one is not restarted by samples: it is the time the player gets to
+  /// stop moving, and samples arriving is exactly what it is watching.
+  void _restartStillTimer() {
+    _calibrationStillTimer?.cancel();
+    _calibrationStillTimer = Timer(_calibrationStill, _onCalibrationStalled);
+  }
+
+  /// The hold never became still enough for neutral to be established. Nothing
+  /// is wrong with the sensors — the phone was moving throughout — so the
+  /// round is left on motion mode for another attempt rather than pushed to
+  /// manual controls.
+  void _onCalibrationStalled() {
+    if (!mounted || _motionPhase != _MotionPhase.calibrating) return;
+    // _discardMotion only mutates: without a rebuild the calibration view would
+    // stay on screen with nothing left driving it.
+    setState(_discardMotion);
+    _showMessage('Could not calibrate: hold the phone still');
+  }
+
   /// One accelerometer sample. While neutral is still pending the sample only
   /// feeds the mapper (and the "hold still" progress); once the round is live
   /// the same values drive it through the ordinary source path.
@@ -2349,21 +2411,30 @@ class _GameScreenState extends State<GameScreen>
     AccelerometerEvent event,
   ) {
     if (!mounted || generation != _motionGeneration) return;
-    motion.addSample(event.x, event.y, event.z);
+    motion.addAccelSample(event.x, event.y, event.z, stamp: event.timestamp);
     if (_motionPhase == _MotionPhase.calibrating) {
       if (!motion.calibrated) {
         // A sample also proves the sensor is reporting: the watchdog restarts.
+        // The progress counts only the samples the mapper accepted, so a phone
+        // moving through the hold reads as the hold it is: a player who moves
+        // cannot be shown 20/20 and then steered from a wrong middle.
         _restartCalibrationWatchdog(generation);
-        if (_calibrationSamples < _calibrationTarget) {
-          setState(() => _calibrationSamples++);
+        final int accepted = motion.calibrationProgress;
+        if (accepted != _calibrationSamples) {
+          setState(() => _calibrationSamples = accepted);
         }
         return;
       }
       _calibrationTimer?.cancel();
       _calibrationTimer = null;
+      _calibrationStillTimer?.cancel();
+      _calibrationStillTimer = null;
       _calibrationSamples = _calibrationTarget;
       setState(() => _motionPhase = _MotionPhase.off);
       _finishCalibration(true);
+      // A missing gyroscope is said now rather than during the hold, where it
+      // would be read over a count the player is trying to finish.
+      _warnNoGyroscope();
       return;
     }
     // A paused, finished, or superseded round takes no input.
@@ -2375,6 +2446,49 @@ class _GameScreenState extends State<GameScreen>
     // (see _motionUnavailable).
     _setAxis('TiltX', motion.posX);
     _setAxis('TiltY', motion.posY);
+  }
+
+  /// One gyroscope sample. It goes to the same mapper, which uses it to carry
+  /// the estimate through a movement the accelerometer would read as a tilt;
+  /// it is never the reason a round cannot be steered.
+  void _onGyroSample(
+    int generation,
+    MotionControl motion,
+    GyroscopeEvent event,
+  ) {
+    if (!mounted || generation != _motionGeneration) return;
+    motion.addGyroSample(event.x, event.y, event.z, stamp: event.timestamp);
+    if (_motionPhase == _MotionPhase.calibrating) return;
+    if (_phase != _PlayPhase.playing) return;
+    // A gyro sample can move the position on its own — that is the point of
+    // fusing it — so it drives the axes exactly as an accelerometer sample
+    // does. The 20 ms send throttle collapses the two streams into one write.
+    _setAxis('TiltX', motion.posX);
+    _setAxis('TiltY', motion.posY);
+  }
+
+  /// The gyroscope reported that this device has none. That is a degradation,
+  /// not a failure: the mapper falls back to the accelerometer alone, the
+  /// round runs, and the player is told.
+  void _onGyroFailure(int generation) {
+    if (!mounted || generation != _motionGeneration) return;
+    _motion?.gyroscopeUnavailable();
+    if (_gyroUnavailable) return;
+    // The caption reads this, so it is a rebuild and not just a flag.
+    setState(() => _gyroUnavailable = true);
+    if (_motionPhase == _MotionPhase.calibrating) return;
+    _warnNoGyroscope();
+  }
+
+  /// Say once that tilt is running on the accelerometer alone. Without a gyro
+  /// the mapper cannot tell a brisk hand movement from a tilt, and pretending
+  /// otherwise would be the silent degradation the motion contract exists to
+  /// avoid.
+  void _warnNoGyroscope() {
+    if (!_gyroUnavailable || _gyroWarned) return;
+    _gyroWarned = true;
+    _showMessage(
+        'No gyroscope on this device: moving the phone will still read as tilt');
   }
 
   /// The accelerometer failed, or stopped reporting while neutral was still
@@ -3824,6 +3938,16 @@ class _GameScreenState extends State<GameScreen>
         if (!spec.isDirection) spec,
     ];
     final axes = _axisSpecs();
+    // Which estimator is running is worth a word: without a gyroscope a brisk
+    // hand movement still reads as tilt, and a round that cannot do better
+    // should not look like one that can. Before a round has a mapper there is
+    // nothing to claim either way, so it claims nothing.
+    final MotionControl? motion = _motion;
+    final String steerCaption = motion == null
+        ? 'Tilt the phone to steer'
+        : motion.gyroscopeAssisted
+            ? 'Tilt the phone to steer — gyro-assisted'
+            : 'Tilt the phone to steer — accelerometer only';
     return SafeArea(
       minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: LayoutBuilder(
@@ -3850,9 +3974,10 @@ class _GameScreenState extends State<GameScreen>
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Tilt the phone to steer',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  Text(
+                    steerCaption,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
                   ),
                   if (preview != null) ...<Widget>[
                     const SizedBox(height: 16),
