@@ -166,11 +166,11 @@ static void snake_head(ml_game_session *s, int *out_x, int *out_y)
 }
 
 /* Leftmost and rightmost x of the falling tetris piece: the lit cells inside
- * the field rect (origin 16, 32 wide on a 64-wide panel), above the stack. The
- * field frame is dim grey and sits at x=15 and x=48; the score text and the
- * next-piece preview are outside the rect. */
-#define TETRIS_FIELD_X 16
-#define TETRIS_FIELD_W 32
+ * the field rect (origin 22, 20 wide on a 64-wide panel, two pixels a cell),
+ * above the stack. The field frame is dim grey and sits at x=21 and x=42; the
+ * score text and the next-piece preview are outside the rect. */
+#define TETRIS_FIELD_X 22
+#define TETRIS_FIELD_W 20
 
 static void piece_span(ml_game_session *s, int *min_x, int *max_x)
 {
@@ -357,9 +357,9 @@ static void test_invaders(void)
 static void test_tetris(void)
 {
     printf("tetris: the piece walks toward the phone's column\n");
-    /* On a 64x32 panel the field is 32 rows tall and gravity is one row per 20
-     * ticks, so nothing locks inside this script and the piece keeps the
-     * column history the assertions read. */
+    /* On a 64x32 panel the field is 16 logical rows tall - 32 pixel rows - and
+     * gravity is one row per 20 ticks, so nothing locks inside this script and
+     * the piece keeps the column history the assertions read. */
     ml_game_session *s = open_game("tetris", 1);
     if (!s) return;
 
@@ -374,10 +374,11 @@ static void test_tetris(void)
     piece_span(s, &a, &b);
     check(a == spawn_a && b == spawn_b, "a held angle does not drift");
 
-    /* Tilt right: the piece walks right, one field column per tick. */
-    hold(s, TETRIS_TILT_X, 32767, 6);
+    /* Tilt right: one field column a tick, two ticks a 50ms frame, so a single
+     * frame already walks the piece two columns - four pixels - to the right. */
+    hold(s, TETRIS_TILT_X, 32767, 1);
     piece_span(s, &a, &b);
-    check(a == spawn_a + 12, "the piece walks one column per tick");
+    check(a == spawn_a + 4, "the piece walks one column per tick");
 
     /* Far enough and it is against the wall, and stays there. */
     hold(s, TETRIS_TILT_X, 32767, 8);

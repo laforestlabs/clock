@@ -9,12 +9,15 @@
  * meaning, which is exactly the contract's point: the controls are declared
  * by the game, and the controller client renders them as labels.
  *
- * The field is capped at 32 wide by 64 tall, so a row is exactly one uint32
- * and the whole board is 256 bytes of state, well under the 1024-byte
- * snapshot cap. On panels larger than the field, the board sits centred with
- * a dim frame around it; on a 64x32 the field is the whole panel. Piece
- * order comes from the session PRNG in reset and on lock, never from a wall
- * clock, so a recorded input stream replays the exact same stack.
+ * The field is a fixed 10 cells wide by 16 tall, drawn at TETRIS_CELL = 2
+ * physical pixels per cell, so the playfield is always 20x32 pixels whatever
+ * the panel; on a larger panel it sits centred with a dim frame just outside
+ * it. Sixteen rows is deliberately four short of classic Tetris: at two-pixel
+ * blocks a 20-row field could not fit the 32-pixel Mini panel. Each row's
+ * bitmask uses its low ten bits, so the whole board is 64 bytes of state, well
+ * under the 1024-byte snapshot cap. Piece order comes from the session PRNG in
+ * reset and on lock, never from a wall clock, so a recorded input stream
+ * replays the exact same stack.
  */
 #include <stdio.h>
 #include <string.h>
@@ -23,15 +26,16 @@
 #include "mirror/game.h"
 #include "mirror/gamerun.h"
 
-#define TETRIS_BW 32
-#define TETRIS_BH 64
+#define TETRIS_BW 10
+#define TETRIS_BH 16
+#define TETRIS_CELL 2
 
 enum { TETRIS_PLAYING = 0, TETRIS_OVER = 1 };
 
 typedef struct {
     int16_t  panel_w, panel_h;
-    uint8_t  bw, bh;           /* actual field dims, <= the caps */
-    uint8_t  ox, oy;           /* field origin on the panel */
+    uint8_t  bw, bh;           /* logical field dims, always TETRIS_BW x TETRIS_BH */
+    int16_t  ox, oy;           /* field origin in pixels, may be negative */
     uint8_t  piece;            /* 0..6 */
     uint16_t mask;             /* current piece as a 4x4 bitmask, rotated */
     int16_t  px, py;           /* piece top-left in field coords */
@@ -102,8 +106,9 @@ static void tetris_lock(tetris_state *s, ml_game_ctx *ctx)
         }
     }
 
-    /* compact the stack past cleared rows */
-    uint32_t full = (s->bw == 32) ? 0xFFFFFFFFu : ((1u << s->bw) - 1u);
+    /* compact the stack past cleared rows; the field is ten cells wide, so a
+     * full row is a plain shift with no 32-bit-wide special case */
+    uint32_t full = (1u << s->bw) - 1u;
     int dst = s->bh - 1;
     int cleared = 0;
     for (int r = s->bh - 1; r >= 0; r--) {
@@ -155,10 +160,13 @@ static void tetris_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
     memset(s, 0, sizeof(*s));
     s->panel_w = (int16_t)cfg->panel_w;
     s->panel_h = (int16_t)cfg->panel_h;
-    s->bw = (uint8_t)(cfg->panel_w < TETRIS_BW ? cfg->panel_w : TETRIS_BW);
-    s->bh = (uint8_t)(cfg->panel_h < TETRIS_BH ? cfg->panel_h : TETRIS_BH);
-    s->ox = (uint8_t)((cfg->panel_w - s->bw) / 2);
-    s->oy = (uint8_t)((cfg->panel_h - s->bh) / 2);
+    s->bw = TETRIS_BW;
+    s->bh = TETRIS_BH;
+    /* the field is fixed and centred: a panel smaller than it clips rather
+     * than rescaling, and the subtraction is done in int so a tiny canvas
+     * cannot wrap the origin around */
+    s->ox = (int16_t)(((int)cfg->panel_w - s->bw * TETRIS_CELL) / 2);
+    s->oy = (int16_t)(((int)cfg->panel_h - s->bh * TETRIS_CELL) / 2);
 }
 
 static void tetris_reset(void *state, ml_game_ctx *ctx)
@@ -272,6 +280,18 @@ static ml_rgb tetris_piece_color(int piece)
     }
 }
 
+/* Paint one logical field cell as a TETRIS_CELL square, or nothing when the
+ * cell is outside the field: every board layer shares this one pixel grid, and
+ * a piece cell above the field (or past a wall) never lands in the HUD. */
+static void tetris_draw_cell(const tetris_state *s, ml_canvas *c,
+                             int col, int row, ml_rgb color)
+{
+    if (col < 0 || col >= s->bw || row < 0 || row >= s->bh) return;
+    ml_canvas_fill_rect(c, ML_RECT(s->ox + col * TETRIS_CELL,
+                                   s->oy + row * TETRIS_CELL,
+                                   TETRIS_CELL, TETRIS_CELL), color);
+}
+
 static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
                         const ml_game_ctx *ctx)
 {
@@ -279,21 +299,14 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
     const tetris_state *s = state;
     ml_canvas_clear(c, ml_black);
     int W = c->w, H = c->h;
+    const int fw = s->bw * TETRIS_CELL;   /* field size in pixels */
+    const int fh = s->bh * TETRIS_CELL;
 
-    /* dim frame when the field is smaller than the panel */
-    if (s->ox > 1 || s->oy > 1) {
-        ml_rgb frame = ML_RGB(40, 40, 40);
-        int x0 = s->ox - 1, y0 = s->oy - 1;
-        int x1 = s->ox + s->bw, y1 = s->oy + s->bh;
-        for (int x = x0; x <= x1 && x < W; x++) {
-            ml_canvas_set(c, x, y0, frame);
-            ml_canvas_set(c, x, y1 < H ? y1 : H - 1, frame);
-        }
-        for (int y = y0; y <= y1 && y < H; y++) {
-            ml_canvas_set(c, x0, y, frame);
-            if (x1 < W) ml_canvas_set(c, x1, y, frame);
-        }
-    }
+    /* Dim frame just outside the field. The canvas clips it, so a panel no
+     * taller than the field loses only the border, never a playable row. */
+    if (s->ox > 1 || s->oy > 1)
+        ml_canvas_draw_rect(c, ML_RECT(s->ox - 1, s->oy - 1, fw + 2, fh + 2),
+                            ML_RGB(40, 40, 40));
 
     /* locked stack: one settled colour, so the falling piece pops */
     ml_rgb settled = ML_RGB(90, 100, 120);
@@ -302,7 +315,7 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
         if (!row) continue;
         for (int bc = 0; bc < s->bw; bc++)
             if (row & (1u << bc))
-                ml_canvas_set(c, s->ox + bc, s->oy + r, settled);
+                tetris_draw_cell(s, c, bc, r, settled);
     }
 
     /* falling piece in its own colour */
@@ -318,9 +331,7 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
         for (int row = 0; row < 4; row++) {
             for (int col = 0; col < 4; col++) {
                 if (!(s->mask & (1u << (row * 4 + col)))) continue;
-                int bx = s->ox + s->px + col, by = s->oy + gy + row;
-                if (bx < 0 || bx >= W || by < 0 || by >= H) continue;
-                ml_canvas_set(c, bx, by, dim);
+                tetris_draw_cell(s, c, s->px + col, gy + row, dim);
             }
         }
     }
@@ -328,35 +339,38 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
     for (int row = 0; row < 4; row++) {
         for (int col = 0; col < 4; col++) {
             if (!(s->mask & (1u << (row * 4 + col)))) continue;
-            int bx = s->ox + s->px + col;
-            int by = s->oy + s->py + row;
-            if (by < 0 || by >= H || bx < 0 || bx >= W) continue;
-            ml_canvas_set(c, bx, by, pc);
+            tetris_draw_cell(s, c, s->px + col, s->py + row, pc);
         }
     }
 
-    /* next piece preview in the right margin, when the panel has room */
-    if (s->ox + s->bw + 6 <= W) {
+    /* next piece preview in the right margin, on the same cell grid: the whole
+     * 4x4 box, and only when it fits the panel without touching the field */
+    const int pvx = s->ox + fw + 2;
+    const int pvy = s->oy + (fh - 4 * TETRIS_CELL) / 2;
+    if (pvx >= 0 && pvy >= 0 &&
+        pvx + 4 * TETRIS_CELL <= W && pvy + 4 * TETRIS_CELL <= H) {
         ml_rgb npc = tetris_piece_color(s->next_piece);
         uint16_t nm = SHAPES[s->next_piece];
-        int py0 = s->oy + ((s->bh >= 4) ? (s->bh - 4) / 2 : 0);
         for (int row = 0; row < 4; row++) {
             for (int col = 0; col < 4; col++) {
                 if (!(nm & (1u << (row * 4 + col)))) continue;
-                int bx = s->ox + s->bw + 2 + col;
-                int by = py0 + row;
-                if (by >= 0 && by < H && bx >= 0 && bx < W)
-                    ml_canvas_set(c, bx, by, npc);
+                ml_canvas_fill_rect(c, ML_RECT(pvx + col * TETRIS_CELL,
+                                               pvy + row * TETRIS_CELL,
+                                               TETRIS_CELL, TETRIS_CELL), npc);
             }
         }
     }
 
-    /* score, in the current piece's colour so a new piece resets it */
+    /* score, in the current piece's colour so a new piece resets it. Clipped to
+     * the margin left of the field, so a long score cannot paint over the board
+     * or its frame. */
     char buf[8];
     const ml_font *f = ml_font_find("digits10");
     if (!f) f = ml_font_default();
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
-    ml_text_draw(c, f, 1, 1, buf, pc, ML_SCALE_1X);
+    const int score_w = s->ox - 2;
+    if (score_w > 0)
+        ml_text_draw_clipped(c, f, 1, 1, score_w, buf, pc, ML_SCALE_1X);
 
     if (s->status == TETRIS_OVER) {
         const ml_font *of = ml_font_find("sans10");

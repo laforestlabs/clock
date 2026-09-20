@@ -18,20 +18,22 @@
  *     keyboard repeats the key), and each one used to spin the piece again.
  *     Only the 0->1 edge rotates; a release re-arms the next press.
  *
- * Observable: on a 64x32 panel the field is the 32-wide center (origin x=16,
- * frame at columns 15 and 48, row 31). Every piece is 4 lit cells; a locked
- * piece adds 4 settled cells. The score text sits at (1,1), outside the
- * field, so counting lit cells inside the field isolates the pieces. The field
- * also holds the falling piece's landing preview, which is a third of the
- * piece's colour and so is excluded by brightness - a channel past 30 in the
- * gamma-corrected frame - rather than by colour, the way the grey frame is.
+ * Observable: the field is a fixed 10x16 logical board drawn at 2 pixels a
+ * cell, so on a 64x32 panel it is 20 pixels wide (origin x=22) and the full
+ * panel height, with the frame at columns 21 and 42. Every piece is 4 lit
+ * cells; a locked piece adds 4 settled cells. The score text sits in the left
+ * margin, outside the field, so counting lit cells inside the field isolates
+ * the pieces. The field also holds the falling piece's landing preview, which
+ * is a third of the piece's colour and so is excluded by brightness - a
+ * channel past 30 in the gamma-corrected frame - rather than by colour, the
+ * way the grey frame is.
  *
  * Script: no input for 100 ticks (piece falls 5 rows by gravity), Down held
- * for 10 ticks (soft drop, 10 rows, no lock), released for 10 ticks, then
- * Down held for 60 ticks (piece reaches the floor and locks; the next piece
- * must NOT accelerate while Down stays held), then release once and hold
- * again (the soft drop must re-engage and lock the second piece). Expected
- * cell counts: 4, 4, 4, 8, 12.
+ * for 5 ticks (soft drop, 5 rows to logical y=10, no lock on the 16-row
+ * field), released for 10 ticks, then Down held for 60 ticks (piece reaches
+ * the floor and locks; the next piece must NOT accelerate while Down stays
+ * held), then release once and hold again (the soft drop must re-engage and
+ * lock the second piece). Expected cell counts: 4, 4, 4, 8, 12.
  *
  * The rotation cases run on their own sessions, opened with seed 2, which
  * deals the T piece: all four of its rotations are distinct, so a rotation
@@ -48,28 +50,30 @@
 
 #define PANEL_W 64
 #define PANEL_H 32
-#define FIELD_X 16   /* (panel_w - field_w) / 2, field_w = min(32, panel_w) */
-#define FIELD_Y 0
-#define FIELD_W 32
-#define FIELD_H 32
+#define CELL_PX 2    /* one board cell is 2x2 physical pixels */
+#define FIELD_X 22   /* (panel_w - 10*CELL_PX) / 2 */
+#define FIELD_Y 0    /* (panel_h - 16*CELL_PX) / 2 */
+#define FIELD_W 20   /* TETRIS_BW * CELL_PX */
+#define FIELD_H 32   /* TETRIS_BH * CELL_PX */
 
-/* Count lit cells inside the field rect, excluding the dim frame: the frame
- * is the only gray on the panel (every piece colour and the settled stack
- * have unequal channels), and the black background is zero. The score text
- * sits at (1,1), outside the field, and the next-piece preview in the right
- * margin is beyond x=48. A cell is the piece (or the settled stack) when a
- * channel is past 30 in the rendered, gamma-corrected frame: the landing
- * preview is a third of the piece's colour, so it tops out at 20, while the
- * dimmest thing the counts must include, the settled stack, is 41. The grey
- * frame is excluded by its equal channels. */
+/* Count lit logical cells inside the field rect, one sample per cell at its
+ * top-left pixel, excluding the dim frame: the frame is the only gray on the
+ * panel (every piece colour and the settled stack have unequal channels), and
+ * the black background is zero. The score text sits in the left margin,
+ * outside the field, and the next-piece preview in the right one is past
+ * x=42. A cell is the piece (or the settled stack) when a channel is past 30
+ * in the rendered, gamma-corrected frame: the landing preview is a third of
+ * the piece's colour, so it tops out at 20, while the dimmest thing the counts
+ * must include, the settled stack, is 41. The grey frame is excluded by its
+ * equal channels. */
 static int lit_cells(ml_game_session *s)
 {
     const uint8_t *rgba = ml_game_render_rgba(s);
     if (!rgba) return -1;
 
     int count = 0;
-    for (int y = FIELD_Y; y < FIELD_Y + FIELD_H; y++) {
-        for (int x = FIELD_X; x < FIELD_X + FIELD_W; x++) {
+    for (int y = FIELD_Y; y < FIELD_Y + FIELD_H; y += CELL_PX) {
+        for (int x = FIELD_X; x < FIELD_X + FIELD_W; x += CELL_PX) {
             const uint8_t *p = rgba + ((size_t)y * PANEL_W + x) * 4;
             if ((p[0] > 30 || p[1] > 30 || p[2] > 30) &&
                 !(p[0] == p[1] && p[1] == p[2])) count++;
@@ -126,11 +130,12 @@ int main(void)
     printf("idle x100:        cells=%d (expect 4)\n", idle);
     if (idle != 4) fail = 1;
 
-    /* 2. Down held for 10 ticks: soft drop 10 rows, still no lock. The
-     * hard-drop bug locks here and the count explodes. */
-    hold_down(s, 10);
+    /* 2. Down held for 5 ticks: soft drop 5 rows to logical y=10, still no
+     * lock on the 16-row field. The hard-drop bug locks here and the count
+     * explodes. */
+    hold_down(s, 5);
     int soft = lit_cells(s);
-    printf("soft drop x10:    cells=%d (expect 4, bug: many)\n", soft);
+    printf("soft drop x5:     cells=%d (expect 4, bug: many)\n", soft);
     if (soft != 4) fail = 1;
 
     /* 3. Released for 10 ticks: gravity barely moves, still 4 cells. */
