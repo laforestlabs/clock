@@ -4,12 +4,16 @@
 // with tabs on a phone. The preview is always visible in both, because the
 // point of the app is watching the panel change as you edit.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../controller.dart';
 import '../engine/engine.dart';
 import '../model/layout.dart';
+import '../services/bundled_firmware.dart';
+import '../services/firmware_update.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
 import '../services/panel_orientation.dart';
@@ -17,6 +21,7 @@ import '../services/user_view.dart';
 import 'ble_prompt.dart';
 import 'datetime_field.dart';
 import 'color_field.dart';
+import 'firmware_prompt.dart';
 import 'inspector.dart';
 import 'mirror_screen.dart';
 import 'panel_view.dart';
@@ -43,9 +48,14 @@ bool hasTextEditingFocus() {
 }
 
 class WorkspaceScreen extends StatefulWidget {
-  const WorkspaceScreen({super.key, required this.engine});
+  const WorkspaceScreen({super.key, required this.engine, this.connection});
 
   final MirrorEngine engine;
+
+  /// The BLE link to drive. The app leaves this null and the workspace owns
+  /// and closes its own; a test injects one to drive the connection states
+  /// without a radio.
+  final MirrorConnection? connection;
 
   @override
   State<WorkspaceScreen> createState() => _WorkspaceScreenState();
@@ -57,8 +67,24 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final FocusNode _keyboardFocus = FocusNode();
 
   // Owned here, not by the Mirror screen, so the BLE link survives page
-  // navigation: pushing and popping the Mirror screen never touches it.
-  final MirrorConnection _connection = MirrorConnection();
+  // navigation: pushing and popping the Mirror screen never touches it. An
+  // injected link belongs to the caller and is never closed here.
+  late final MirrorConnection _connection =
+      widget.connection ?? MirrorConnection();
+  late final bool _ownsConnection = widget.connection == null;
+
+  /// The firmware this app ships, loaded the first time a mirror connects: a
+  /// run that never connects never reads the 1.3MB image.
+  BundledFirmware? _bundled;
+
+  /// Device versions this run has already offered an update for, so a link
+  /// that drops and comes back does not ask about the same one twice.
+  final Set<String> _offeredFirmware = <String>{};
+
+  /// Whether the offer is in flight, from the version check to the end of the
+  /// update: the listeners fire on every state change and only one prompt may
+  /// be open at a time.
+  bool _offeringFirmware = false;
 
   List<StockLayout> _stock = const <StockLayout>[];
   UserView _view = UserView.defaultView;
@@ -67,9 +93,84 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   @override
   void initState() {
     super.initState();
+    _connection.addListener(_onConnectionChanged);
     _bootstrap();
     // Dialogs (the Bluetooth-on prompt) need the first frame to exist.
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoConnect());
+  }
+
+  /// Offer the app's own firmware to a mirror that just connected running
+  /// something older. Nothing happens for a mirror on the same version, on a
+  /// newer one, or on a build whose version this app cannot read.
+  void _onConnectionChanged() {
+    if (_connection.status != MirrorConnectionStatus.connected) return;
+    unawaited(_offerFirmwareUpdate());
+  }
+
+  Future<void> _offerFirmwareUpdate() async {
+    if (_offeringFirmware || !mounted) return;
+    final version = _connection.pong?.version ?? '';
+    if (version.isEmpty || _offeredFirmware.contains(version)) return;
+
+    _offeringFirmware = true;
+    try {
+      final bundled = _bundled ?? await loadBundledFirmware();
+      if (!mounted || bundled == null) return;
+      _bundled = bundled;
+      if (!firmwareUpdateAvailable(
+          deviceVersion: version, bundledVersion: bundled.version)) {
+        return;
+      }
+      // Recorded before the ask: an answer of "not now" is an answer, and the
+      // next reconnect should not raise it again.
+      _offeredFirmware.add(version);
+
+      final accepted = await confirmFirmwareUpdate(
+        context,
+        deviceVersion: version,
+        bundledVersion: bundled.version,
+      );
+      if (!accepted || !mounted) return;
+      await _installBundledFirmware(bundled);
+    } finally {
+      _offeringFirmware = false;
+    }
+  }
+
+  /// Push the image this app ships to the connected mirror and report what
+  /// happened. The address is the one the pong reported: the upload is
+  /// megabytes over WiFi, and Bluetooth only carries the command.
+  Future<void> _installBundledFirmware(BundledFirmware bundled) async {
+    final ip = _connection.pong?.ip ?? '';
+    if (ip.isEmpty || ip == '0.0.0.0') {
+      _toast('The mirror has no WiFi IP; the phone and mirror must be on the '
+          'same network');
+      return;
+    }
+    if (!await ensureMirrorReachable(context, ip)) return;
+    if (!mounted) return;
+
+    try {
+      final status = await pushFirmwareWithProgress(
+        context,
+        ip: ip,
+        bytes: bundled.bytes,
+        label: 'bundled v${bundled.version}',
+      );
+      if (!mounted) return;
+      if (status != null) {
+        // The mirror rebooted, so the BLE link died with it. Reconnect now
+        // that the device is advertising the new image.
+        unawaited(_connection.connectLast());
+      }
+      _toast(status == null
+          ? 'Update uploaded; the mirror is rebooting'
+          : 'Updated to ${status.version}');
+    } catch (e) {
+      if (mounted) {
+        _toast('Update: ${e.toString().replaceFirst('Exception: ', '')}');
+      }
+    }
   }
 
   /// Reconnect to the last mirror on launch. Best-effort: a mirror that is
@@ -137,7 +238,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   void dispose() {
     _keyboardFocus.dispose();
     _c.dispose();
-    _connection.dispose();
+    _connection.removeListener(_onConnectionChanged);
+    if (_ownsConnection) _connection.dispose();
     super.dispose();
   }
 

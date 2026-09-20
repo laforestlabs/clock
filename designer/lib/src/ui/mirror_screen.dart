@@ -20,7 +20,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:latlong2/latlong.dart';
@@ -39,6 +38,7 @@ import '../services/mirror_location.dart';
 import '../services/mirror_wifi.dart';
 import '../services/mirror_wifi_status.dart';
 import 'ble_prompt.dart';
+import 'firmware_prompt.dart';
 import 'location_picker.dart';
 import 'onboarding_screen.dart';
 import 'place_pin_page.dart';
@@ -568,49 +568,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
-  /// Whether this phone can reach [ip] over the LAN, explaining the two
-  /// reasons it usually cannot when it cannot. Both are invisible from the app
-  /// otherwise: the mirror is connected over Bluetooth either way, and the
-  /// failure only shows up as a socket timeout after the work has started.
-  /// Returns true when the caller should go ahead.
-  Future<bool> _reachableOverLan(String ip) async {
-    final lan = MirrorLan(ip);
-    while (mounted) {
-      if (await lan.reachable()) return true;
-      if (!mounted) return false;
-      final retry = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text("Can't reach the mirror over WiFi"),
-          content: Text(
-            'This phone could not open a connection to $ip.\n\n'
-            'Bluetooth and WiFi are separate paths, so a mirror that looks '
-            'connected can still be unreachable at its WiFi address. The two '
-            'usual causes:\n\n'
-            '• A VPN on this phone is routing local traffic into its tunnel. '
-            'Turn it off, or allow local-network traffic (Proton VPN: Allow '
-            'LAN connections).\n'
-            '• This phone is not on the same WiFi network as the mirror.\n\n'
-            'The data itself travels over WiFi — Bluetooth only carries the '
-            'command — so this has to work before anything is sent.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-      if (retry != true) return false;
-    }
-    return false;
-  }
-
   Future<void> _pushLayoutLan(int index) async {
     final device = _lanDevices[index];
     final status = _lanStatuses[index];
@@ -619,7 +576,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toastSizeMismatch(status.width, status.height);
       return;
     }
-    if (!await _reachableOverLan(device.ip)) return;
+    if (!await ensureMirrorReachable(context, device.ip)) return;
     setState(() => _lanBusy[index] = true);
     try {
       final result = await MirrorLan(device.ip).putLayout(_c.exportJson());
@@ -677,7 +634,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toast('The mirror has no WiFi IP; the phone and mirror must be on the same network');
       return;
     }
-    if (!await _reachableOverLan(ip)) return;
+    if (!await ensureMirrorReachable(context, ip)) return;
     await _uploadAndWait(ip, bundled.bytes, 'bundled v${bundled.version}');
   }
 
@@ -687,7 +644,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// LAN first: everything that follows sends megabytes over WiFi, and there
   /// is no point picking a source for an address this phone cannot reach.
   Future<void> _updateFirmware(String ip, {String deviceVersion = ''}) async {
-    if (!await _reachableOverLan(ip)) return;
+    if (!await ensureMirrorReachable(context, ip)) return;
     final bundled = await loadBundledFirmware();
     if (!mounted) return;
 
@@ -734,27 +691,15 @@ class _MirrorScreenState extends State<MirrorScreen> {
     await _uploadAndWait(ip, bytes, fileName);
   }
 
-  /// Stream [bytes] to the mirror's OTA endpoint, poll until it answers after
-  /// the reboot, then toast the result.
+  /// Stream [bytes] to the mirror's OTA endpoint, wait until it answers after
+  /// the reboot, then toast the result. The transport is shared with the
+  /// workspace's update prompt (ui/firmware_prompt.dart).
   Future<void> _uploadAndWait(
       String ip, Uint8List bytes, String fileName) async {
-    final progress = ValueNotifier<double>(0);
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _UploadDialog(progress: progress, fileName: fileName),
-    ));
-
     try {
-      await MirrorLan(ip).uploadFirmwareBytes(
-        bytes,
-        onProgress: (sent, total) =>
-            progress.value = total > 0 ? sent / total : 0,
-      );
-      // The mirror reboots into the new image; poll until it answers again.
-      final newStatus = await _waitForReboot(ip);
+      final newStatus = await pushFirmwareWithProgress(context,
+          ip: ip, bytes: bytes, label: fileName);
       if (!mounted) return;
-      Navigator.of(context).pop(); // close the upload dialog
       if (newStatus != null) {
         // The mirror rebooted, so the BLE link died. Reconnect it now that
         // the device is advertising again (no-op when nothing is remembered
@@ -765,10 +710,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
           ? 'Update uploaded; the mirror is rebooting'
           : 'Updated to ${newStatus.version}');
     } catch (e) {
-      if (mounted) {
-        Navigator.of(context).pop();
-        _handleError(e, 'update');
-      }
+      if (mounted) _handleError(e, 'update');
     }
   }
 
@@ -939,22 +881,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
       builder: (_) => _FactoryResetAckDialog(deviceName: deviceName),
     );
     return acknowledged == true;
-  }
-
-  /// Poll status until the mirror answers again (it restarts during OTA),
-  /// or give up after 60 seconds.
-  Future<MirrorStatus?> _waitForReboot(String ip) async {
-    final lan = MirrorLan(ip);
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
-    while (DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      try {
-        return await lan.status();
-      } catch (_) {
-        // Still down; keep polling.
-      }
-    }
-    return null;
   }
 
   // ------------------------------------------------------------ view
@@ -1661,39 +1587,6 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
           child: const Text('Save'),
         ),
       ],
-    );
-  }
-}
-
-/// Upload progress dialog; dismissed by the caller when the upload finishes.
-class _UploadDialog extends StatelessWidget {
-  const _UploadDialog({required this.progress, required this.fileName});
-
-  final ValueListenable<double> progress;
-  final String fileName;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Updating firmware'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Text(fileName, style: const TextStyle(fontSize: 13)),
-          const SizedBox(height: 12),
-          ValueListenableBuilder<double>(
-            valueListenable: progress,
-            builder: (context, value, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                LinearProgressIndicator(value: value),
-                const SizedBox(height: 8),
-                Text('${(value * 100).toStringAsFixed(0)}%'),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

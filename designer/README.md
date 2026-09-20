@@ -56,6 +56,13 @@ version bump (`tools/firmware_version.py`; see `firmware/README.md`,
 Versioning). One version describes one image, so the version the mirror reports
 after an OTA is evidence about exactly one build.
 
+The app reads that version against the one the mirror reports in its pong
+whenever a link comes up, and offers the update itself when the mirror is
+behind (`src/ui/firmware_prompt.dart`). The offer is once per device version
+per run: declining it is an answer, and the next launch asks again. A mirror on
+the bundled version, on a newer one, or on a version the app cannot read is
+left alone.
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To

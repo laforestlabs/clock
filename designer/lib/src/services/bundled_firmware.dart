@@ -55,17 +55,28 @@ class BundledFirmware {
   final Uint8List bytes;
 }
 
+/// The bundled image, loaded once per run: it is a megabyte and a half and
+/// every caller wants the same bytes - the workspace's update prompt, the
+/// Mirror screen's own update button, and the upload itself.
+BundledFirmware? _loaded;
+
 /// Loads the bundled firmware, or returns null when this build has none (a
 /// developer checkout whose assets/firmware was never populated), in which
 /// case the UI falls back to the file/URL sources.
+///
+/// The result is cached, not the future: a shared future would be awaited by
+/// whichever caller asked first, and a test that preloads the asset outside
+/// its own async zone would leave every later caller waiting on it.
 Future<BundledFirmware?> loadBundledFirmware() async {
+  final cached = _loaded;
+  if (cached != null) return cached;
   try {
     final data = await rootBundle.load('assets/firmware/smart_mirror.bin');
     final bytes =
         data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
     final version = firmwareVersionFromImage(bytes);
     if (version == null) return null;
-    return BundledFirmware(version: version, bytes: bytes);
+    return _loaded = BundledFirmware(version: version, bytes: bytes);
   } catch (_) {
     return null;
   }
