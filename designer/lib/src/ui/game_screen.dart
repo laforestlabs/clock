@@ -74,6 +74,7 @@ import '../services/mirror_ble_game.dart';
 import '../services/mirror_ble_status.dart';
 import '../services/mirror_connection.dart';
 import '../services/motion_control.dart';
+import '../services/tilt_sensor.dart';
 
 /// How the mirror game is controlled: the on-screen gamepad or phone tilt.
 enum _InputMode { manual, motion }
@@ -230,6 +231,7 @@ class GameScreen extends StatefulWidget {
     required this.controller,
     required this.connection,
     this.decodeFrame,
+    this.simplified = false,
   });
 
   /// Shares veneer and LED settings with the layout designer.
@@ -248,6 +250,13 @@ class GameScreen extends StatefulWidget {
   /// replaced: the bytes handed here are the ones the native game rendered.
   final Future<ui.Image?> Function(GameEngine engine, Uint8List bytes)?
       decodeFrame;
+
+  /// Trimmed surface, for the app's default view: tilt is how a round is
+  /// steered and the pads are what a device without a working accelerometer
+  /// falls back to, so there is no mode to choose, and the panel size, the
+  /// display settings and the round's diagnostics stay in the developer
+  /// workspace.
+  final bool simplified;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -504,6 +513,11 @@ class _GameScreenState extends State<GameScreen>
   int _roundTripMs = 0;
   _InputMode _inputMode = _InputMode.manual;
 
+  /// Whether this device's accelerometer reports. Asked once for this screen,
+  /// before any calibration: the answer decides whether tilt is offered at all,
+  /// and a device that has none is never asked to hold still.
+  final TiltSensor _tilt = TiltSensor();
+
   /// The local simulation ticks (and mirror heartbeat ticks) of the round on
   /// screen. A diagnostic readout, reset with every round.
   int _ticks = 0;
@@ -640,6 +654,54 @@ class _GameScreenState extends State<GameScreen>
     // up when the screen opens, and a listener that setStates during build
     // would assert.
     WidgetsBinding.instance.addPostFrameCallback((_) => _onConnectionChanged());
+    // Ask about the accelerometer now rather than when a round is about to
+    // start: the answer is what decides whether tilt is on offer, and asking it
+    // while the player is still choosing a game costs nobody anything. On a
+    // device that has no sensor the fallback is settled before Start is
+    // reached, so no round pays for the discovery.
+    _startInputMode();
+  }
+
+  /// The mode a fresh screen starts in, and the sensor question behind it.
+  ///
+  /// The developer workspace starts on the pads, because the player there
+  /// picks the mode and the screen must not choose for them. The default view
+  /// has no mode to pick, so it starts on tilt and drops to the pads the
+  /// moment the accelerometer says it does not report.
+  void _startInputMode() {
+    _inputMode =
+        widget.simplified ? _InputMode.motion : _InputMode.manual;
+    if (widget.simplified) {
+      // The panel an offline preview round runs on is the mirror's, when the
+      // mirror has said what it is: the size picker that would otherwise offer
+      // this lives in the developer workspace.
+      _sizeIndex = _presetFor(_connection.panelWidth, _connection.panelHeight);
+    }
+    unawaited(_tilt.present().then((present) {
+      if (!mounted) return;
+      // A device that does report needs nothing said about it. One that does
+      // not has the default view moved off tilt here, so a round started later
+      // never waits on a calibration that cannot finish. The workspace keeps
+      // the player's own choice and explains in place of the picker why it
+      // cannot work; its start refuses rather than running unsteerable.
+      if (present || !widget.simplified) {
+        setState(() {});
+        return;
+      }
+      setState(() {
+        if (_phase == _PlayPhase.idle || _phase == _PlayPhase.paused) {
+          _inputMode = _InputMode.manual;
+        }
+      });
+      _showMessage('No tilt sensor on this device: the pads steer the game');
+    }));
+  }
+
+  /// The panel preset matching a geometry, or the 64x32 reference build when
+  /// the size is unknown or is not one of the presets.
+  int _presetFor(int w, int h) {
+    final index = _panelSizes.indexWhere((p) => p.w == w && p.h == h);
+    return index < 0 ? 0 : index;
   }
 
   @override
@@ -658,6 +720,9 @@ class _GameScreenState extends State<GameScreen>
     _opGeneration++;
     _gameOverSub?.cancel();
     _gameOverSub = null;
+    // Nothing may be left awaiting the sensor: the probe ends as "no sensor"
+    // with the screen that asked about it.
+    _tilt.dispose();
     final session = _connection.session;
     if (_mirrorGameId != null && session != null) {
       // Leaving the screen stops the mirror's game. The device may already be
@@ -735,9 +800,23 @@ class _GameScreenState extends State<GameScreen>
     final games = _playableGames;
     if (games.isEmpty || _gameIndex >= games.length) return;
     final game = games[_gameIndex];
-    if (_inputMode == _InputMode.motion && !await _ensureMotionReady()) return;
+    if (!await _motionAllowsPlay()) return;
     if (!mounted) return;
     _startLocalGame(game);
+  }
+
+  /// Whether play may go ahead with the mode the screen is in.
+  ///
+  /// A motion round establishes neutral first, and a calibration that failed
+  /// or was cancelled declines the action. The default view is the exception:
+  /// the player there never chose tilt, so a device that cannot calibrate
+  /// falls back to the pads instead of being unable to play at all. A
+  /// deliberate cancel is still a cancel in either view - the mode is still
+  /// motion, so nothing happens until the player asks again.
+  Future<bool> _motionAllowsPlay() async {
+    if (_inputMode != _InputMode.motion) return true;
+    if (await _ensureMotionReady()) return true;
+    return widget.simplified && _inputMode != _InputMode.motion;
   }
 
   /// Start (or restart) one local game. A library failure leaves the setup
@@ -1959,7 +2038,7 @@ class _GameScreenState extends State<GameScreen>
     final preparingGeneration = _opGeneration;
     await _closeDiagnostics();
     if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
-    if (!await _ensureMotionReady()) return;
+    if (!await _motionAllowsPlay()) return;
     if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
     final generation = ++_opGeneration;
     _releaseMirrorInput();
@@ -2222,7 +2301,7 @@ class _GameScreenState extends State<GameScreen>
         _phase != _PlayPhase.paused) {
       return;
     }
-    if (!await _ensureMotionReady()) return;
+    if (!await _motionAllowsPlay()) return;
     if (!_opStillValid(session, preparingGeneration) ||
         _phase != _PlayPhase.paused) {
       return;
@@ -2316,6 +2395,15 @@ class _GameScreenState extends State<GameScreen>
   /// instead of starting a round nothing can steer.
   Future<bool> _ensureMotionReady() async {
     if (_inputMode != _InputMode.motion) return true;
+    // A local round's controls are known from the catalogue before it starts,
+    // so a game that declares no accelerometer axis is caught here rather than
+    // started unsteerable. A mirror only reports its controls with the start
+    // acknowledgment, which is why that path keeps its own check after the
+    // reply.
+    if (!_isControllerMode && !_tiltDrivesAxes) {
+      _failMotion('This game does not take tilt; use the on-screen pads');
+      return false;
+    }
     if (_motion?.calibrated ?? false) return true;
     return _calibrateMotion();
   }
@@ -2324,8 +2412,22 @@ class _GameScreenState extends State<GameScreen>
   /// the accelerometer, and wait for the player to hold the phone still long
   /// enough for its samples to define "level". Returns false when the player
   /// cancelled or the sensor never reported.
+  ///
+  /// The sensor is proven to report before any of that. A device without a
+  /// working accelerometer cannot establish neutral, and asking its owner to
+  /// hold still to discover that is time spent on nothing; the probe is shared
+  /// by the screen, so the question is asked once for all of them.
   Future<bool> _calibrateMotion() async {
     if (_motionPhase == _MotionPhase.calibrating) return false;
+    if (!await _tilt.present()) {
+      if (!mounted) return false;
+      _failMotion();
+      return false;
+    }
+    if (!mounted) return false;
+    // The await above is the one place another action can land first: a mode
+    // change, or a round that went away while the sensor was being asked.
+    if (_inputMode != _InputMode.motion) return false;
     _detachMotion();
     _calibrationSamples = 0;
     _motion = MotionControl();
@@ -2534,16 +2636,24 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// The accelerometer failed, or stopped reporting while neutral was still
-  /// pending. Nothing steers a motion round from here: the round stays (or
-  /// goes) on manual controls, a held tilt direction is released, and a round
-  /// that never calibrated never starts.
+  /// pending. Guarded by the subscription generation: an error from a
+  /// subscription already dropped belongs to the round that was replaced.
   void _onMotionFailure(int generation) {
     if (!mounted || generation != _motionGeneration) return;
+    _failMotion();
+  }
+
+  /// Give up on tilt for the round on screen: the mapper and its sensor go,
+  /// every held control is released, the round is put on the pads, and the
+  /// player is told why. [message] names a reason the screen knows better than
+  /// "motion is unavailable".
+  void _failMotion(
+      [String message = 'Motion unavailable; use manual controls']) {
     _discardMotion();
     _releaseAllInput();
     _sendReleasePacket();
     setState(() => _inputMode = _InputMode.manual);
-    _showMessage('Motion unavailable; use manual controls');
+    _showMessage(message);
   }
 
   /// The player declined to hold the phone still, or reached for the pad
@@ -2560,23 +2670,34 @@ class _GameScreenState extends State<GameScreen>
   String? get _runningGameId =>
       _isControllerMode ? _mirrorGame?.id : _localGame?.id;
 
-  /// The tilt axes the round on screen declares, by wire label. A round takes
-  /// tilt when it declares one of the phone's accelerometer axes; a round that
-  /// declares none (any firmware from before positional motion) cannot be
-  /// steered positionally, and [_motionUnavailable] keeps motion mode off it.
+  /// The controls of the local round on screen, or of the game the picker has
+  /// selected while nothing is running: the catalogue states a game's controls
+  /// before its session exists, so motion can be refused for a game that
+  /// declares no accelerometer axis without opening one.
+  Iterable<GameControl> get _localCatalogueControls {
+    final round = _localGame;
+    if (round != null) return round.controls;
+    final playable = _playableGames;
+    if (playable.isEmpty || _gameIndex >= playable.length) {
+      return const <GameControl>[];
+    }
+    return playable[_gameIndex].controls;
+  }
+
+  /// The tilt axes of the round on screen, by wire label. The mirror's
+  /// controls and the local catalogue's are separate types - one comes off the
+  /// wire, the other off the FFI - so each is walked as itself.
   Set<String> get _tiltAxes {
     final out = <String>{};
     if (_isControllerMode) {
-      final game = _mirrorGame;
-      if (game == null) return out;
-      for (final control in game.controls) {
+      for (final control in _mirrorGame?.controls ?? const <MirrorControl>[]) {
         if (control.isAxis && _tiltLabels.contains(control.label)) {
           out.add(control.label);
         }
       }
       return out;
     }
-    for (final control in _localControls) {
+    for (final control in _localCatalogueControls) {
       if (control.isAxis && _tiltLabels.contains(control.label)) {
         out.add(control.label);
       }
@@ -2588,17 +2709,23 @@ class _GameScreenState extends State<GameScreen>
   bool get _tiltDrivesAxes => _tiltAxes.isNotEmpty;
 
   /// Why motion mode cannot be used for the round on screen, or null when it
-  /// can. A mirror running firmware that predates positional tilt declares no
-  /// accelerometer axis, and is told so rather than left silently unsteerable.
+  /// can. The device comes first, because a phone whose accelerometer does not
+  /// report cannot steer anything, whatever the round declares and whatever the
+  /// firmware supports. After that: a mirror running firmware that predates
+  /// positional tilt declares no accelerometer axis, and is told so rather than
+  /// left silently unsteerable.
   String? get _motionUnavailable {
+    if (_tilt.status == false) {
+      return 'No tilt sensor on this device: the on-screen pads steer the game.';
+    }
     if (_isControllerMode) {
       final game = _mirrorGame;
-      if (game == null) return null; // no round yet: setup offers manual only
+      if (game == null) return null; // no round yet: setup offers both modes
       if (_tiltDrivesAxes) return null;
       return 'This mirror\'s firmware does not support tilt control. '
           'Update the firmware to play with motion.';
     }
-    if (_localGame == null) return null;
+    if (_localCatalogueControls.isEmpty) return null;
     if (_tiltDrivesAxes) return null;
     return 'This game does not take tilt.';
   }
@@ -3148,7 +3275,7 @@ class _GameScreenState extends State<GameScreen>
   Future<void> _replayOrStartLocal() async {
     // A round replayed after the app was suspended has no neutral left: the
     // suspension discarded it, so a motion replay asks for it again first.
-    if (_inputMode == _InputMode.motion && !await _ensureMotionReady()) return;
+    if (!await _motionAllowsPlay()) return;
     if (!mounted) return;
     final current = _localGame;
     if (current != null) {
@@ -3216,11 +3343,15 @@ class _GameScreenState extends State<GameScreen>
                 }
               },
               itemBuilder: (context) => <PopupMenuEntry<_MenuAction>>[
-                const PopupMenuItem<_MenuAction>(
-                  key: ValueKey<String>('menu-diagnostics'),
-                  value: _MenuAction.diagnostics,
-                  child: Text('Display & diagnostics'),
-                ),
+                // The panel size, the display settings and the round's
+                // diagnostics are design-time knobs: the default view plays,
+                // it does not tune.
+                if (!widget.simplified)
+                  const PopupMenuItem<_MenuAction>(
+                    key: ValueKey<String>('menu-diagnostics'),
+                    value: _MenuAction.diagnostics,
+                    child: Text('Display & diagnostics'),
+                  ),
                 PopupMenuItem<_MenuAction>(
                   key: const ValueKey<String>('menu-restart'),
                   value: _MenuAction.restart,
@@ -3781,7 +3912,12 @@ class _GameScreenState extends State<GameScreen>
   /// phone's tilt. Shared by the mirror path and the local preview, so the
   /// choice means the same thing on both and a round that cannot be steered by
   /// tilt says so instead of offering a mode that would do nothing.
+  ///
+  /// The default view has no choice to make - it steers by tilt and falls back
+  /// to the pads by itself - so it draws nothing here, and the reason a round
+  /// cannot take tilt is said where the game is chosen.
   Widget _buildInputModePicker({required bool verbose}) {
+    if (widget.simplified) return const SizedBox.shrink();
     final problem = _motionUnavailable;
     if (problem != null) {
       return Text(
@@ -3820,7 +3956,12 @@ class _GameScreenState extends State<GameScreen>
   /// The way it is steered is part of the same decision: switching to motion
   /// re-establishes neutral before the resume it leads to.
   Widget _buildMirrorPaused(MirrorGame game) {
-    final canRecalibrate = _inputMode == _InputMode.motion;
+    // How the round is steered is a decision the default view does not offer:
+    // it is on tilt, and the pads are the fallback when the device cannot
+    // report. Recalibrate stays either way - a fresh neutral is part of
+    // playing, not a mode.
+    final canRecalibrate =
+        widget.simplified || _inputMode == _InputMode.motion;
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -3837,29 +3978,31 @@ class _GameScreenState extends State<GameScreen>
             const SizedBox(height: 20),
             _buildRoundActions(terminal: false),
             const SizedBox(height: 20),
-            const Divider(),
-            RadioGroup<_InputMode>(
-              groupValue: _inputMode,
-              onChanged: (v) =>
-                  unawaited(_setInputMode(v ?? _InputMode.manual)),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  RadioListTile<_InputMode>(
-                    value: _InputMode.manual,
-                    key: ValueKey<String>('mode-manual'),
-                    title: Text('Manual'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                  RadioListTile<_InputMode>(
-                    value: _InputMode.motion,
-                    key: ValueKey<String>('mode-motion'),
-                    title: Text('Motion'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ],
+            if (!widget.simplified) ...<Widget>[
+              const Divider(),
+              RadioGroup<_InputMode>(
+                groupValue: _inputMode,
+                onChanged: (v) =>
+                    unawaited(_setInputMode(v ?? _InputMode.manual)),
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    RadioListTile<_InputMode>(
+                      value: _InputMode.manual,
+                      key: ValueKey<String>('mode-manual'),
+                      title: Text('Manual'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    RadioListTile<_InputMode>(
+                      value: _InputMode.motion,
+                      key: ValueKey<String>('mode-motion'),
+                      title: Text('Motion'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
             if (canRecalibrate) ...<Widget>[
               const SizedBox(height: 8),
               // A fresh neutral for this round: the pause is kept, and the

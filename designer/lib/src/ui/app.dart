@@ -266,7 +266,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   void _openGames() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => GameScreen(controller: _c, connection: _connection),
+        builder: (_) => GameScreen(
+          controller: _c,
+          connection: _connection,
+          // The default view plays: tilt is the controller and the pads are
+          // the fallback, with no mode, panel size or diagnostics to choose.
+          simplified: _view == UserView.defaultView,
+        ),
       ),
     );
   }
@@ -473,6 +479,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           appBar: AppBar(
             title: const Text('My Mirror'),
             actions: <Widget>[
+              IconButton(
+                tooltip: 'Games',
+                icon: const Icon(Icons.sports_esports),
+                onPressed: _openGames,
+              ),
               IconButton(
                 tooltip: connected ? 'Mirror connected' : 'Connect to mirror',
                 icon: Icon(

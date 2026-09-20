@@ -124,7 +124,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SwitchListTile(
                 title: const Text('Developer mode'),
                 subtitle: const Text(
-                    'Full workspace: widget editing, games, and firmware tools'),
+                    'Full workspace: widget editing and firmware tools'),
                 value: _view == UserView.developer,
                 onChanged: (v) {
                   final view =

@@ -12,6 +12,7 @@ import 'package:mirror_designer/src/services/mirror_ble.dart';
 import 'package:mirror_designer/src/services/mirror_ble_game.dart';
 import 'package:mirror_designer/src/services/mirror_ble_status.dart';
 import 'package:mirror_designer/src/services/mirror_connection.dart';
+import 'package:mirror_designer/src/services/tilt_sensor.dart';
 import 'package:mirror_designer/src/ui/game_screen.dart';
 
 class _Characteristic extends Fake implements BluetoothCharacteristic {}
@@ -143,6 +144,9 @@ void main() {
   const sensorMethods =
       MethodChannel('dev.fluttercommunity.plus/sensors/method');
   setUp(() {
+    // These tests stand in for a phone: the probe asks the platform whether
+    // the plugin can exist before it subscribes, and the host is not one.
+    TiltSensor.debugPlatformSupported = true;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
@@ -152,6 +156,7 @@ void main() {
         const MethodChannel(gyroChannel), (_) async => null);
   });
   tearDown(() {
+    TiltSensor.debugPlatformSupported = null;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(sensorMethods, null);
@@ -191,13 +196,23 @@ void main() {
     await tester.pump();
   }
 
+  /// Put the screen into motion mode and get it holding for neutral.
+  ///
+  /// The sensor is asked first, so one sample is what brings the hold-still
+  /// view up: nothing is asked of a device that has not reported. That sample
+  /// belongs to the probe's own subscription and does not count toward the
+  /// twenty that define neutral.
   Future<void> beginCalibration(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
-    if (find.text('Hold the phone still').evaluate().isEmpty) {
+    if (find.text('Start Game').evaluate().isNotEmpty) {
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'a sensor that has not reported is not asked to hold still');
+    await sample(tester, 0, 0, 9.8);
+    await tester.pump();
     expect(find.text('Hold the phone still'), findsOneWidget);
   }
 
@@ -206,6 +221,7 @@ void main() {
     void Function(_Session)? configure,
     Future<ui.Image?> Function(GameEngine, Uint8List)? decodeFrame,
     Size surface = const Size(1000, 600),
+    bool simplified = false,
   }) async {
     tester.view.physicalSize = surface;
     tester.view.devicePixelRatio = 1;
@@ -219,7 +235,10 @@ void main() {
     final connection = _Connection(session);
     await tester.pumpWidget(MaterialApp(
         home: GameScreen(
-            controller: c, connection: connection, decodeFrame: decodeFrame)));
+            controller: c,
+            connection: connection,
+            decodeFrame: decodeFrame,
+            simplified: simplified)));
     await tester.pump();
     await tester.pump();
     addTearDown(() async {
@@ -285,15 +304,43 @@ void main() {
     expect(find.byTooltip('Pause'), findsOneWidget);
   });
 
-  testWidgets('missing motion samples fail without starting a remote game',
+  testWidgets('a sensor that never reports is written off before the hold',
       (tester) async {
     final (session, connection) = await boot(tester);
-    await beginCalibration(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+    await tester.pump();
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    // The probe is asked, and answers nothing: the player is never asked to
+    // hold the phone still for a sensor that is not there.
+    expect(find.text('Hold the phone still'), findsNothing);
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'a device with no sensor is never asked to hold still');
     expect(session.started, isEmpty);
     expect(connection.session, isNotNull);
     expect(find.text('Motion unavailable; use manual controls'), findsWidgets);
+  });
+
+  testWidgets('a sensor error before neutral is never asked to hold still',
+      (tester) async {
+    final (session, _) = await boot(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+    await tester.pump();
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        sensorChannel,
+        const StandardMethodCodec().encodeErrorEnvelope(
+            code: 'unavailable', message: 'No accelerometer'),
+        (_) {});
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing);
+    expect(session.started, isEmpty);
+    expect(find.text('Motion unavailable; use manual controls'), findsWidgets);
+    expect(find.text('Start Game'), findsOneWidget);
   });
 
   testWidgets('cancelled calibration cannot start from late sensor samples',
@@ -905,6 +952,10 @@ void main() {
     await tester.ensureVisible(motion);
     await tester.tap(motion);
     await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'the sensor is proven before the hold is asked for');
+    await sample(tester, 0, 0, 9.8);
+    await tester.pump();
     expect(find.text('Hold the phone still'), findsOneWidget);
     for (var i = 0; i < 20; i++) {
       await sample(tester, 0, 0, 9.8);
@@ -1041,6 +1092,68 @@ void main() {
         reason: 'the firmware sees two bullets climbing, as local play does');
 
     expect(tester.takeException(), isNull);
+  });
+
+  // ------------------------------------------------- the app's default view
+
+  testWidgets('the default view has no mode to pick and starts on tilt',
+      (tester) async {
+    final (session, _) = await boot(tester, simplified: true);
+    expect(find.byKey(const ValueKey<String>('mode-motion')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('mode-manual')), findsNothing);
+
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'the sensor is proven before the hold is asked for');
+    await sample(tester, 0, 0, 9.8);
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsOneWidget);
+    for (var i = 0; i < 20; i++) {
+      await sample(tester, 0, 0, 9.8);
+    }
+    expect(session.started, ['snake'],
+        reason: 'Start goes through tilt neutral and starts the round itself');
+    session.acknowledge(controls: _withTilt);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing);
+    expect(find.byTooltip('Pause'), findsOneWidget);
+    // Tilt steers, so there is no movement pad to press, and the state the
+    // round starts from is neutral: nothing held, and the axes idle rather
+    // than centred on the phone.
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsNothing);
+    expect(session.inputs.last, <int>[0, 0, 0, 0, -32768, -32768]);
+  });
+
+  testWidgets('the default view plays on the pads when nothing reports',
+      (tester) async {
+    final (session, _) = await boot(tester, simplified: true);
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    // Nothing ever reports: the round is not asked to hold still, and the
+    // start falls back to the pads instead of being refused.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text('Hold the phone still'), findsNothing);
+    expect(session.started, ['snake']);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Motion unavailable; use manual controls'), findsWidgets);
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsOneWidget);
+  });
+
+  testWidgets('the default view has no display or diagnostics sheet',
+      (tester) async {
+    await boot(tester, simplified: true);
+    await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey<String>('menu-diagnostics')), findsNothing,
+        reason: 'panel size and display settings are design-time knobs');
+    expect(find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('menu-choose')), findsOneWidget);
   });
 }
 

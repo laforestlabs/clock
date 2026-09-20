@@ -52,6 +52,7 @@ import 'package:mirror_designer/src/controller.dart';
 import 'package:mirror_designer/src/engine/engine.dart';
 import 'package:mirror_designer/src/engine/game_engine.dart';
 import 'package:mirror_designer/src/services/mirror_connection.dart';
+import 'package:mirror_designer/src/services/tilt_sensor.dart';
 import 'package:mirror_designer/src/ui/game_screen.dart';
 
 /// A blank 64x32 layout. The Games screen only borrows the veneer and LED
@@ -298,6 +299,7 @@ class _Scene {
     double textScale = 1,
     double inset = 0,
     _Decodes? decodes,
+    bool simplified = false,
   }) async {
     tester.view.physicalSize = surface;
     tester.view.devicePixelRatio = 1;
@@ -323,6 +325,7 @@ class _Scene {
           controller: controller,
           connection: connection,
           decodeFrame: seam.call,
+          simplified: simplified,
         ),
       ),
     );
@@ -543,6 +546,7 @@ Future<void> _scene(
   double textScale = 1,
   double inset = 0,
   _Decodes? decodes,
+  bool simplified = false,
 }) async {
   final scene = await _Scene.open(
     tester,
@@ -550,6 +554,7 @@ Future<void> _scene(
     textScale: textScale,
     inset: inset,
     decodes: decodes,
+    simplified: simplified,
   );
   try {
     await script(scene);
@@ -621,38 +626,48 @@ Future<Uint8List> _tetris(
   return panel;
 }
 
-/// One accelerometer reading, as the sensors plugin delivers it.
+/// One accelerometer reading, as the sensors plugin delivers it: the [x], [y]
+/// and [z] the phone reads, and a pump so the app can act on it.
 typedef _Sampler = Future<void> Function(double x, double y, double z);
 
-/// Mock the channels a motion round subscribes to and return a sampler that
-/// feeds one accelerometer reading at a time. The gyroscope is present and
-/// silent, which is the accelerometer-only path a device without one delivers.
-Future<_Sampler> _mockSensors(WidgetTester tester) async {
-  const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
-  const gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
-  const sensorMethods =
-      MethodChannel('dev.fluttercommunity.plus/sensors/method');
+const String _sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
+const String _gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
+const MethodChannel _sensorMethods =
+    MethodChannel('dev.fluttercommunity.plus/sensors/method');
+
+/// Register the sensors the plugin would on a phone: present and silent, which
+/// is the accelerometer-only path a device without a gyroscope delivers. A
+/// test feeds one through [_mockSensors]; every test in this file starts from
+/// here, because the app asks the accelerometer what it can do as soon as the
+/// games screen opens.
+void mockSensorChannels() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-  messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
+  messenger.setMockMethodCallHandler(_sensorMethods, (_) async => null);
   messenger.setMockMethodCallHandler(
-      const MethodChannel(sensorChannel), (_) async => null);
+      const MethodChannel(_sensorChannel), (_) async => null);
   messenger.setMockMethodCallHandler(
-      const MethodChannel(gyroChannel), (_) async => null);
-  addTearDown(() {
-    messenger.setMockMethodCallHandler(sensorMethods, null);
-    messenger.setMockMethodCallHandler(
-        const MethodChannel(sensorChannel), null);
-    messenger.setMockMethodCallHandler(const MethodChannel(gyroChannel), null);
-  });
-  return (double x, double y, double z) async {
-    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-        sensorChannel,
-        const StandardMethodCodec().encodeSuccessEnvelope(<double>[x, y, z, 0]),
-        (_) {});
-    await tester.pump(const Duration(milliseconds: 20));
-  };
+      const MethodChannel(_gyroChannel), (_) async => null);
 }
+
+void clearSensorChannels() {
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(_sensorMethods, null);
+  messenger.setMockMethodCallHandler(const MethodChannel(_sensorChannel), null);
+  messenger.setMockMethodCallHandler(const MethodChannel(_gyroChannel), null);
+}
+
+/// A sampler over the channels [mockSensorChannels] registered.
+_Sampler _mockSensors(WidgetTester tester) =>
+    (double x, double y, double z) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          _sensorChannel,
+          const StandardMethodCodec()
+              .encodeSuccessEnvelope(<double>[x, y, z, 0]),
+          (_) {});
+      await tester.pump(const Duration(milliseconds: 20));
+    };
 
 /// Every pure white pixel of a panel frame, as (x, y). On Invaders that is the
 /// cannon's own bullets: the cannon is cyan, the wall is green and red, and the
@@ -687,12 +702,18 @@ Future<void> _motionRound(
   String id,
   Future<void> Function(_Scene scene, _Sampler sample) script,
 ) async {
-  final sample = await _mockSensors(tester);
+  final sample = _mockSensors(tester);
   await _scene(tester, (scene) async {
     await scene.pick(id);
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
     await scene.start();
+    // The sensor is proven before the hold is asked for. That sample belongs
+    // to the probe rather than to the round, so the twenty below still define
+    // neutral on the round's own subscription.
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'nothing is asked of a sensor that has not reported');
+    await sample(0, 0, 9.8);
     expect(find.text('Hold the phone still'), findsOneWidget);
     for (var i = 0; i < 20; i++) {
       await sample(0, 0, 9.8);
@@ -715,6 +736,20 @@ Offset _blankSpot(WidgetTester tester) =>
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // A registered but silent accelerometer and gyroscope: what every test here
+  // starts from, and what these tests mean by "the phone holds still". A
+  // platform with no sensor plugin at all is not this file's subject - the
+  // default view's tests are - and the probe would answer "absent" for the
+  // host rather than for the device under test.
+  setUp(() {
+    TiltSensor.debugPlatformSupported = true;
+    mockSensorChannels();
+  });
+  tearDown(() {
+    TiltSensor.debugPlatformSupported = null;
+    clearSensorChannels();
+  });
 
   testWidgets('a held Space does not restart a live Snake round',
       (tester) async {
@@ -1324,8 +1359,13 @@ void main() {
       await tester.pump();
       await scene.start();
 
-      // Neutral first: hold the phone still and the round starts from it.
+      // The sensor reports first: one sample proves it, which is what brings
+      // the hold-still view up at all.
+      expect(find.text('Hold the phone still'), findsNothing);
+      await sample(tester, 0, 0, 9.8);
       expect(find.text('Hold the phone still'), findsOneWidget);
+
+      // Neutral first: hold the phone still and the round starts from it.
       for (var i = 0; i < 20; i++) {
         await sample(tester, 0, 0, 9.8);
       }
@@ -1996,7 +2036,7 @@ void main() {
 
   testWidgets('the setup hint says how the selected game is steered',
       (tester) async {
-    await _mockSensors(tester);
+    _mockSensors(tester);
     await _scene(tester, (scene) async {
       await scene.pick('invaders');
       await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
@@ -2068,12 +2108,14 @@ void main() {
 
   testWidgets('motion Invaders on the calibration view takes no shot',
       (tester) async {
-    final sample = await _mockSensors(tester);
+    final sample = _mockSensors(tester);
     await _scene(tester, (scene) async {
       await scene.pick('invaders');
       await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
       await tester.pump();
       await scene.start();
+      expect(find.text('Hold the phone still'), findsNothing);
+      await sample(0, 0, 9.8);
       expect(find.text('Hold the phone still'), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('motion-shoot-surface')),
           findsNothing,
@@ -2118,5 +2160,77 @@ void main() {
           reason: 'a finished round takes no input');
       expect(tester.takeException(), isNull);
     });
+  });
+
+  // ---------------------------------------------- the app's default view
+
+  testWidgets('the default view steers a local round by tilt without a mode',
+      (tester) async {
+    final sample = _mockSensors(tester);
+    await _scene(tester, (scene) async {
+      await scene.pick('snake');
+      // No mode to choose, and no mode chosen: the screen is already on tilt.
+      expect(find.byKey(const ValueKey<String>('mode-motion')), findsNothing);
+      expect(find.byKey(const ValueKey<String>('mode-manual')), findsNothing);
+      expect(find.text('Tilt steers; actions stay on the right.'),
+          findsOneWidget);
+
+      await scene.start();
+      expect(find.text('Hold the phone still'), findsNothing,
+          reason: 'the sensor is proven before the hold is asked for');
+      await sample(0, 0, 9.8);
+      expect(find.text('Hold the phone still'), findsOneWidget);
+      for (var i = 0; i < 20; i++) {
+        await sample(0, 0, 9.8);
+      }
+      await scene.advance(2);
+
+      // The round is live and steered by the phone: tilt steers, so there is
+      // no movement pad under the thumb.
+      expect(find.text('Hold the phone still'), findsNothing);
+      expect(find.byKey(const ValueKey<String>('control-Left')), findsNothing,
+          reason: 'a movement pad would fight the tilt');
+      // The phone is held level, so nothing moves the snake.
+      await scene.advance(30);
+      final Uint8List level = Uint8List.fromList(scene.pixels());
+      for (var i = 0; i < 24; i++) {
+        await sample(0, 4.905, 8.494);
+      }
+      await scene.advance(30);
+      expect(scene.pixels(), isNot(orderedEquals(level)),
+          reason: 'tilting the phone steers the round');
+    }, surface: const Size(1000, 900), simplified: true);
+  });
+
+  testWidgets('the default view plays on the pads when nothing reports',
+      (tester) async {
+    _mockSensors(tester);
+    await _scene(tester, (scene) async {
+      await scene.pick('snake');
+      await scene.start();
+      // The sensor never answers: the round is not asked to hold still, and it
+      // starts on the pads rather than being refused.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(find.text('Hold the phone still'), findsNothing);
+      expect(find.text('Motion unavailable; use manual controls'), findsWidgets);
+      expect(scene.pad('Left'), findsOneWidget);
+      expect(scene.pad('Right'), findsOneWidget);
+      await scene.advance(2);
+      expect(find.byKey(const ValueKey<String>('start-game')), findsNothing,
+          reason: 'the round started instead of waiting on a sensor');
+    }, simplified: true);
+  });
+
+  testWidgets('the default view shows no display or diagnostics sheet',
+      (tester) async {
+    await _scene(tester, (scene) async {
+      await scene.pick('snake');
+      await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
+      await _pumpFor(tester);
+      expect(find.byKey(const ValueKey<String>('menu-diagnostics')),
+          findsNothing);
+      expect(find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
+    }, simplified: true);
   });
 }

@@ -297,6 +297,14 @@ disagreement that lasts and that no acceleration explains is taken as the gyro's
 fault instead, and recovered from slowly, so a gyroscope reporting nonsense
 cannot leave the player stuck at the wrong position.
 
+Neutral is only asked for once the sensor is known to report. The app probes the
+accelerometer as the games screen opens — one sample is the proof, and on a
+platform the plugin does not run on the answer is known without a subscription —
+so a device without one goes to the on-screen pads instead of being asked to
+hold still for a sensor that is not there. That answer is a fact about the
+device: it is asked once per screen, not once per round, and the deadline behind
+it is the fallback for a sensor that subscribes and then says nothing.
+
 Neutral comes only from samples taken while the phone is at rest. Twenty of
 them: each is refused while the phone is rotating, while the magnitude says it is
 being accelerated along gravity, or while its direction disagrees with the

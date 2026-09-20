@@ -183,10 +183,20 @@ smoothing turns a 5x7 glyph into grey mush.
 
 ## Games
 
-Enable **Developer mode** in Settings, then open the game-controller icon in the
-workspace. With no mirror connected, **Preview** runs the native simulation
-locally. With a mirror connected, **Playing on …** identifies the physical display;
-the phone is its controller. Connecting a mirror discards any local preview.
+Open the game-controller icon in **My Mirror**. With no mirror connected,
+**Preview** runs the native simulation locally. With a mirror connected,
+**Playing on …** identifies the physical display; the phone is its controller.
+Connecting a mirror discards any local preview.
+
+Tilt is the controller. A round establishes neutral first, by having the phone
+held still, and the angle it is then held at *is* the player's position, so a
+held angle holds the player where they are. The app finds out whether the
+device's accelerometer reports before it asks for any of that: a device without
+one (a desktop, or a phone with no working sensor) goes to the on-screen pads
+instead, says so once, and never spends a round waiting for a sensor that is not
+there. Developer mode in Settings adds the choice between tilt and the pads, and
+the panel size, display settings, tick count and latency that the default view
+leaves out.
 
 Choose Rally, Snake, Tetris, Breakout, Invaders, or **Probe**, read its goal
 and controls, then press **Start Game**. This screen has one player; Rally is
