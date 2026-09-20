@@ -1047,11 +1047,26 @@ class _GameScreenState extends State<GameScreen>
   /// Hold control [index] for [source] and dispatch the state that results.
   /// A source that already holds the control is not a new press, and a round
   /// that is not live takes no input at all.
+  ///
+  /// A *second* source landing on Invaders' Shoot while another still holds it
+  /// is a press of its own, and the wire only carries held state: sending the
+  /// level again would look like more of the same hold. So that one case sends
+  /// an explicit Shoot-low frame and then the held state that follows it,
+  /// which is what the firmware reads as a press. Nothing about the sources,
+  /// the axes or the held state is changed to do it.
   void _pressControl(int index, _InputSource source) {
     if (_phase != _PlayPhase.playing) return;
     if (index < 0 || index >= _held.length) return;
     final owners = _sources.putIfAbsent(index, () => <Object>{});
+    final wasHeld = owners.isNotEmpty;
     if (!owners.add(source)) return;
+    if (wasHeld &&
+        _runningGameId == 'invaders' &&
+        index == _controlIndexForLabel('Shoot')) {
+      _dispatchInput(releasedControl: index);
+      _dispatchInput();
+      return;
+    }
     _applyInput();
   }
 
@@ -1128,12 +1143,15 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// Hand the current held state to whichever round is on screen, now.
-  void _dispatchInput() {
+  /// [releasedControl] sends one control as up for this single frame while
+  /// everything else keeps its held value: the press edge a second finger on
+  /// Invaders' Shoot needs (see [_pressControl]).
+  void _dispatchInput({int? releasedControl}) {
     if (_phase != _PlayPhase.playing) return;
     if (_isControllerMode) {
-      _sendMirrorInput();
+      _sendMirrorInput(releasedControl: releasedControl);
     } else {
-      _sendLocalInput();
+      _sendLocalInput(releasedControl: releasedControl);
     }
   }
 
@@ -1143,11 +1161,15 @@ class _GameScreenState extends State<GameScreen>
   /// direction moving. The values go through as they are: the native side
   /// resolves each control's declared type, so a button arrives as a level and
   /// an axis keeps its whole range (see GameEngine.input).
-  void _sendLocalInput() {
+  void _sendLocalInput({int? releasedControl}) {
     final engine = _engine;
     if (engine == null || _phase != _PlayPhase.playing) return;
     for (var i = 0; i < _held.length; i++) {
-      engine.input(playerId: 1, code: i, value: _held[i]);
+      engine.input(
+        playerId: 1,
+        code: i,
+        value: i == releasedControl ? 0 : _held[i],
+      );
     }
   }
 
@@ -1214,12 +1236,32 @@ class _GameScreenState extends State<GameScreen>
 
   /// An action button's pointer moved. Leaving the rectangle releases the
   /// button and kills the pointer's press: the button is not re-armed by
-  /// sliding back into it.
+  /// sliding back into it. Invaders in motion mode is the exception - its
+  /// Shoot target is the whole play area, so there is no rectangle to leave.
   void _moveAction(int pointer, int index, bool inside) {
     if (_deadPointers.contains(pointer)) return;
     if (inside) return;
+    if (_runningGameId == 'invaders' &&
+        _inputMode == _InputMode.motion &&
+        index == _controlIndexForLabel('Shoot')) {
+      return;
+    }
     _deadPointers.add(pointer);
     _releaseControl(index, _PointerSource(pointer));
+  }
+
+  /// A press anywhere on the motion play area. Invaders in motion mode takes
+  /// its Shoot from the whole board, so a thumb that has to find one small
+  /// button does not have to: the surface is the control. The pointer is the
+  /// same source the Shoot pad would use, so a press that lands on both is one
+  /// press and not two.
+  void _pressMotionSurface(PointerDownEvent event) {
+    if (_phase != _PlayPhase.playing) return;
+    if (_inputMode != _InputMode.motion) return;
+    if (_runningGameId != 'invaders') return;
+    final shoot = _controlIndexForLabel('Shoot');
+    if (shoot == null) return;
+    _pressControl(shoot, _PointerSource(event.pointer));
   }
 
   /// Activate a pad the way an accessibility action does: one discrete press
@@ -2611,13 +2653,20 @@ class _GameScreenState extends State<GameScreen>
 
   /// Send the current full input state to the mirror immediately. Edges call
   /// this on every press/release so a quick tap is never sampled away.
-  void _sendMirrorInput() {
+  ///
+  /// [releasedControl] sends that one control as up for this single write while
+  /// every other control keeps its held value; the held state itself is
+  /// untouched, so the next frame carries it again.
+  void _sendMirrorInput({int? releasedControl}) {
     final session = _connection.session;
     if (session == null || _mirrorGame == null) return;
     // Only a live round takes input: a paused, finished, or transitioning
     // session must never be moved by a stray held pad.
     if (_phase != _PlayPhase.playing) return;
-    unawaited(session.sendGameInput(_held));
+    final values = releasedControl == null
+        ? _held
+        : (List<int>.of(_held)..[releasedControl] = 0);
+    unawaited(session.sendGameInput(values));
   }
 
   // ------------------------------------------------- display & diagnostics
@@ -2854,7 +2903,7 @@ class _GameScreenState extends State<GameScreen>
           _buildControlSummary(id),
           const SizedBox(height: 12),
           const Text(
-            'Space starts or replays a round. In games with Shoot, hold Space '
+            'Space starts or replays a round. In games with Shoot, press Space '
             'to fire. P or Escape pauses and resumes. Restart or Choose game '
             'asks before discarding an unfinished round.',
             style: TextStyle(fontSize: 13, color: Colors.grey),
@@ -3336,7 +3385,9 @@ class _GameScreenState extends State<GameScreen>
           const SizedBox(height: 4),
           Text(
             _inputMode == _InputMode.motion
-                ? 'Tilt steers; actions stay on the right.'
+                ? (selected?.id == 'invaders'
+                    ? 'Tilt steers; tap the play area to shoot.'
+                    : 'Tilt steers; actions stay on the right.')
                 : 'Movement on the left, actions on the right.',
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
@@ -3948,7 +3999,7 @@ class _GameScreenState extends State<GameScreen>
         : motion.gyroscopeAssisted
             ? 'Tilt the phone to steer — gyro-assisted'
             : 'Tilt the phone to steer — accelerometer only';
-    return SafeArea(
+    final Widget body = SafeArea(
       minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -3979,6 +4030,18 @@ class _GameScreenState extends State<GameScreen>
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 14, color: Colors.grey),
                   ),
+                  // Invaders fires from the whole board in motion mode, so the
+                  // caption has to say so: the Shoot pad is a shortcut, not
+                  // the only way.
+                  if (_runningGameId == 'invaders') ...<Widget>[
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tap anywhere in the play area to shoot.',
+                      key: ValueKey<String>('motion-shoot-hint'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                  ],
                   if (preview != null) ...<Widget>[
                     const SizedBox(height: 16),
                     ConstrainedBox(
@@ -4020,6 +4083,22 @@ class _GameScreenState extends State<GameScreen>
           );
         },
       ),
+    );
+
+    // Invaders in motion mode: the play area itself is the Shoot control, so
+    // the preview, the empty space around it, the captions and the readouts
+    // all fire. The listener's box is this body only - the app bar, the
+    // paused actions and the pickers sit outside it - and it is opaque so a
+    // press on bare background still reaches it.
+    if (_runningGameId != 'invaders') return body;
+    return Listener(
+      key: const ValueKey<String>('motion-shoot-surface'),
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _pressMotionSurface,
+      onPointerUp: (PointerUpEvent event) => _releasePointer(event.pointer),
+      onPointerCancel: (PointerCancelEvent event) =>
+          _releasePointer(event.pointer),
+      child: body,
     );
   }
 

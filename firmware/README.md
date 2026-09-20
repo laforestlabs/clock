@@ -17,6 +17,35 @@ under `firmware/` gets a new version. Never reuse a version for a different
 build, and never flash or ship two builds under one version: a reused version
 makes it impossible to tell what is actually running on the board or over OTA.
 
+That is enforced, not merely stated. `tools/firmware_version.py` records the
+sources the image is compiled from - `firmware/`, `core/`, `gamekit/`, `fonts/`
+and `layouts/`, since the games and the render core are built into the image
+rather than linked from somewhere else - in `firmware/version.lock`, against
+the version they were stamped for:
+
+```sh
+tools/firmware_version.py check            # the tree against the record
+tools/firmware_version.py check --staged   # ...and the image the app bundles
+tools/firmware_version.py stamp            # record the sources as this version
+```
+
+Three places run `check`, so a change that forgot the bump cannot reach a
+board: the firmware's own configure step (no `idf.py build` starts on a stale
+stamp), `tools/bundle_firmware.sh` (every Android build and
+`tools/build_ota.sh` stage through it, and it checks the staged image is the
+version the tree declares), and `designer/test/bundled_firmware_test.dart` for
+the copy the app ships.
+
+So any change the image is built from is three steps:
+
+1. Bump `project(smart_mirror VERSION ...)` in `firmware/CMakeLists.txt`.
+2. `tools/firmware_version.py stamp`.
+3. Build. The app's firmware bundle and the OTA image restage themselves.
+
+The record is one hash of the sources, so it also answers what a version *was*:
+given an image's version, `git log firmware/version.lock` says which sources
+were stamped for it.
+
 ## ESP-IDF version
 
 **ESP-IDF 5.4 or newer is required.** Not a preference: `esp-hub75` will not

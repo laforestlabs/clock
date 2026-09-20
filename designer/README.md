@@ -50,6 +50,12 @@ step remains to forget; a machine without ESP-IDF fails the build with an
 explanation (opt out for one deliberate build with
 `flutter build apk -PskipFirmwareBundle`).
 
+That script also refuses to stage an image whose version the firmware tree does
+not declare, and refuses to build at all when the sources changed without a
+version bump (`tools/firmware_version.py`; see `firmware/README.md`,
+Versioning). One version describes one image, so the version the mirror reports
+after an OTA is evidence about exactly one build.
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To
@@ -195,7 +201,8 @@ on it. It is never picked for you: Start uses a game played for score.
 | Tilt (motion mode) | Position within the round's travel; a held angle holds the player |
 | Tetris Rotate / Up / W | One rotation per press, not per repeated held packet |
 | Tetris Soft drop / Down / S | Hold to fall faster |
-| Invaders Shoot / Space | Fire while playing; movement and Shoot can be held together |
+| Invaders Shoot / Space | One shot per press; a bullet in the air never blocks the next |
+| Invaders in motion mode | Tap anywhere in the play area to shoot; the Shoot pad works too |
 | Space at setup or after a round | Start / Play again; holding Space never restarts |
 | P / Escape | Pause or Resume |
 
@@ -229,8 +236,10 @@ follows the phone from there; Breakout's and Invaders' paddles follow the
 horizontal tilt; Tetris's piece walks toward the column the phone points at and
 stops at a wall or the stack (Rotate and Soft drop stay buttons); Snake, which is
 a grid game with a heading rather than a coordinate, turns only on a deliberate
-tilt. The pads and keys are unchanged when Manual is selected, and switching
-modes mid-round continues from wherever the player is.
+tilt. Invaders in motion mode takes its Shoot from the whole play area: a tap on
+the board is a shot, and the Shoot pad is one of the places to find it. The pads
+and keys are unchanged when Manual is selected, and switching modes mid-round
+continues from wherever the player is.
 
 The angle is fused from the accelerometer **and the gyroscope**, so moving the
 phone without tilting it no longer steers: the accelerometer alone reads the

@@ -14,14 +14,21 @@
  * A kind sets the sprite, the colour, what a kill is worth and what its bullet
  * does (a grunt's drops slowly, a zipper's twice as fast, a sniper aims at the
  * cannon, an anvil takes two hits). Past the sixth plan the last one repeats,
- * a tick faster and a shot heavier each round. The march also speeds up as the
- * wall thins, so the last few aliens stay dangerous.
+ * a tick faster and a shot heavier each round. A formation marches at the pace
+ * its round set from its first alien to its last: the speed comes from the
+ * round and never from how much of the wall is left, so thinning out is not
+ * what turns the pressure up.
  *
  * The aliens that fire and the column each fires down are deterministic from
  * the session PRNG, as is the fire cadence. The cannon has three lives; losing
  * all of them, or letting the wall march down to the cannon row, ends the
  * game. Clearing a round refills the wall with the next round's enemies and
  * pays a bonus that grows with the round.
+ *
+ * Shoot fires one bullet per press and never waits for the last one to land:
+ * a bullet in the air does not hold the next press back, so the cannon keeps
+ * as many of its own bullets climbing as the player presses for. Each bullet
+ * stops at its first hit, and a press never overwrites one already flying.
  */
 #include <stdio.h>
 #include <string.h>
@@ -37,8 +44,8 @@
 #define INV_GAP_X 5              /* px between sprite origins */
 #define INV_GAP_Y 4
 #define INV_GRID_W (INV_SPRITE_W + (INV_COLS - 1) * INV_GAP_X)   /* 38 */
-#define INV_GRID_H (INV_SPRITE_H + (INV_ROWS - 1) * INV_GAP_Y)   /* 15 */
 #define INV_ASHOTS_MAX 12       /* the array bound; each round's plan caps the air */
+#define INV_PSHOTS_MAX 128      /* the array bound on the cannon's own bullets */
 #define INV_ROUNDS 6            /* plans in the table; past it the last repeats harder */
 
 /* The four things an alien can be. A team's kind sets its sprite and colour, what
@@ -50,7 +57,7 @@ enum { INV_PLAYING = 0, INV_OVER = 1 };
 
 typedef struct {
     uint8_t kind[INV_ROWS];   /* row 0 is the top row of the wall */
-    uint8_t step_interval;    /* ticks per formation step at full strength */
+    uint8_t step_interval;    /* ticks per formation step, the whole round */
     uint8_t shot_min, shot_span;  /* fire cadence: shot_min + rng % shot_span */
     uint8_t fire_count;       /* aliens that fire on one fire tick */
     uint8_t max_shots;        /* alien bullets allowed in the air at once */
@@ -105,18 +112,21 @@ typedef struct {
     uint8_t n_alive;
     uint8_t lives;
     uint8_t status;
-    uint8_t held_l, held_r;
+    uint8_t held_l, held_r, held_s;
     int16_t steer_x;             /* tilt axis, ML_AXIS_IDLE when unused */
     uint16_t score;
     uint8_t round;               /* 1-based: which plan is in play */
     uint8_t intro;               /* ticks left of the new-round blink */
     uint32_t aliens;             /* bit r*8+c = alive */
     uint32_t armor;              /* bit set: this alien still wears armour */
-    struct { int16_t x, y; uint8_t on; } pshot;          /* cannon bullet */
+    struct { int16_t x, y; uint8_t on; } pshots[INV_PSHOTS_MAX];  /* cannon bullets */
     struct { int16_t x, y; uint8_t on; uint8_t step; } ashots[INV_ASHOTS_MAX];
 } invaders_state;
 
-typedef char invaders_state_fits[(sizeof(invaders_state) <= ML_SNAPSHOT_MAX) ? 1 : -1];
+/* The runtime prefixes every serialized snapshot with the host tick, so the
+ * state has to fit inside what is left of the payload. */
+typedef char invaders_state_fits
+    [(sizeof(invaders_state) <= ML_SNAPSHOT_MAX - sizeof(uint32_t)) ? 1 : -1];
 
 static const ml_control_def invaders_controls[] = {
     { .label = "Left",  .code = 0, .caps = ML_CAP_BUTTON, .type = ML_INPUT_BUTTON },
@@ -205,16 +215,52 @@ static void refill_wave(invaders_state *s, uint8_t round)
     s->step_ctr = 0;
 }
 
-/* The formation's pace: the round's interval at full strength, faster as the wall
- * thins — the classic pressure, and how the last few aliens stay dangerous. Eight
- * alive on the round-1 plan march four times as often as thirty-two. */
+/* Every cannon bullet is spent at once: the wall is cleared, the round is
+ * refilled, or the cannon was hit. */
+static void inv_clear_pshots(invaders_state *s)
+{
+    for (int i = 0; i < INV_PSHOTS_MAX; i++) s->pshots[i].on = 0;
+}
+
+/* The live formation's edges: the leftmost live sprite's left column, the
+ * rightmost live sprite's right column, and the lowest live sprite's bottom
+ * row. False when nothing is alive, which means there is no formation left to
+ * bound. Only the aliens still on the wall are measured - the grid's own empty
+ * cells are not part of it - so the wall neither turns a step early because of
+ * a column it has cleared, nor invades from a row that holds nothing. */
+static bool inv_live_bounds(const invaders_state *s, int *left, int *right,
+                            int *bottom)
+{
+    int l = 0, r = 0, b = 0;
+    bool any = false;
+    for (int row = 0; row < INV_ROWS; row++) {
+        for (int col = 0; col < INV_COLS; col++) {
+            if (!alien_alive(s, row, col)) continue;
+            const int x0 = s->ax + col * INV_GAP_X;
+            const int y1 = s->ay + row * INV_GAP_Y + INV_SPRITE_H - 1;
+            if (!any) { l = x0; r = x0 + INV_SPRITE_W - 1; b = y1; any = true; }
+            else {
+                if (x0 < l) l = x0;
+                if (x0 + INV_SPRITE_W - 1 > r) r = x0 + INV_SPRITE_W - 1;
+                if (y1 > b) b = y1;
+            }
+        }
+    }
+    *left = l;
+    *right = r;
+    *bottom = b;
+    return any;
+}
+
+/* The formation's pace: the round's interval, the same on the first alien as
+ * on the last one. Rounds get faster and a thinning wall does not, so the
+ * pressure is the round's own and never an accident of how much of the wall
+ * the player has cleared. */
 static uint8_t march_interval(const invaders_state *s)
 {
     inv_round_plan plan;
     inv_plan_for(s->round, &plan);
-    int iv = (int)plan.step_interval * (int)s->n_alive / (INV_COLS * INV_ROWS);
-    if (iv < 2) iv = 2;
-    return (uint8_t)iv;
+    return plan.step_interval;
 }
 
 static void invaders_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
@@ -244,8 +290,9 @@ static void invaders_reset(void *state, ml_game_ctx *ctx)
     s->score = 0;
     s->held_l = 0;
     s->held_r = 0;
+    s->held_s = 0;
     s->steer_x = ML_AXIS_IDLE;
-    s->pshot.on = 0;
+    inv_clear_pshots(s);
     for (int i = 0; i < INV_ASHOTS_MAX; i++) s->ashots[i].on = 0;
 }
 
@@ -257,12 +304,23 @@ static void invaders_input(void *state, const ml_input_event *e, ml_game_ctx *ct
     switch (e->code) {
     case 0: s->held_l = e->value ? 1 : 0; break;
     case 1: s->held_r = e->value ? 1 : 0; break;
-    case 2:  /* Shoot: press only, one bullet in flight at a time */
-        if (e->value && !s->pshot.on) {
-            s->pshot.x = (int16_t)(s->px + 1);
-            s->pshot.y = (int16_t)(s->panel_h - 4);
-            s->pshot.on = 1;
+    case 2:  /* Shoot: one bullet per press, however many are already flying */
+        if (e->value) {
+            /* The phone streams the whole held state every frame and the
+             * keyboard repeats a held key, so a held Shoot arrives as a run of
+             * value=1 events: fire once per press, not once per packet. A
+             * release re-arms the next press. */
+            if (!s->held_s) {
+                for (int i = 0; i < INV_PSHOTS_MAX; i++) {
+                    if (s->pshots[i].on) continue;
+                    s->pshots[i].x = (int16_t)(s->px + 1);
+                    s->pshots[i].y = (int16_t)(s->panel_h - 4);
+                    s->pshots[i].on = 1;
+                    break;
+                }
+            }
         }
+        s->held_s = e->value ? 1 : 0;
         break;
     case 3:  /* Tilt: the phone's angle, as a position */
         s->steer_x = e->value;
@@ -316,13 +374,15 @@ static void invaders_update(void *state, ml_game_ctx *ctx)
 
     /* The wall is cleared: the next round refills it with the enemies that round
      * carries, pays a bonus that grows with the round, and blinks the new number.
-     * One tick passes before the new wall runs, so the last kill is visible. */
+     * The tick that killed the last alien returned below without marching or
+     * firing, so the clear frame is what the player sees and a hostile bullet
+     * already in the air cannot turn the kill into a loss. */
     if (s->n_alive == 0) {
         s->round++;
         s->score += (uint16_t)(25 * s->round);
         refill_wave(s, s->round);
         s->intro = 40;
-        s->pshot.on = 0;
+        inv_clear_pshots(s);
         for (int i = 0; i < INV_ASHOTS_MAX; i++) s->ashots[i].on = 0;
         return;
     }
@@ -336,39 +396,61 @@ static void invaders_update(void *state, ml_game_ctx *ctx)
         if (s->held_r && s->px < s->panel_w - INV_SPRITE_W) s->px++;
     }
 
-    /* cannon bullet */
-    if (s->pshot.on) {
-        s->pshot.y -= 2;
-        if (s->pshot.y < 0) s->pshot.on = 0;
+    /* cannon bullets: every one of them climbs two pixels, and the ones that
+     * leave the panel are spent */
+    for (int i = 0; i < INV_PSHOTS_MAX; i++) {
+        if (!s->pshots[i].on) continue;
+        s->pshots[i].y -= 2;
+        if (s->pshots[i].y < 0) s->pshots[i].on = 0;
     }
 
-    /* cannon bullet vs aliens: armour cracks first, a bare alien dies */
-    if (s->pshot.on) {
-        for (int row = 0; row < INV_ROWS && s->pshot.on; row++) {
-            for (int col = 0; col < INV_COLS && s->pshot.on; col++) {
+    /* cannon bullets vs aliens: armour cracks first, a bare alien dies. Each
+     * bullet stops at its first hit, so one bullet never kills two aliens
+     * however many are in the air. */
+    for (int i = 0; i < INV_PSHOTS_MAX; i++) {
+        if (!s->pshots[i].on) continue;
+        for (int row = 0; row < INV_ROWS; row++) {
+            for (int col = 0; col < INV_COLS; col++) {
                 if (!alien_alive(s, row, col)) continue;
                 int x0 = s->ax + col * INV_GAP_X;
                 int y0 = s->ay + row * INV_GAP_Y;
-                if (s->pshot.x >= x0 && s->pshot.x <= x0 + INV_SPRITE_W - 1 &&
-                    s->pshot.y >= y0 && s->pshot.y <= y0 + INV_SPRITE_H - 1) {
+                if (s->pshots[i].x >= x0 && s->pshots[i].x <= x0 + INV_SPRITE_W - 1 &&
+                    s->pshots[i].y >= y0 && s->pshots[i].y <= y0 + INV_SPRITE_H - 1) {
                     alien_hit(s, row, col);
-                    s->pshot.on = 0;
+                    s->pshots[i].on = 0;
+                    break;
                 }
             }
+            if (!s->pshots[i].on) break;
         }
     }
 
-    /* alien wall marches, faster as it thins out */
+    /* That was the last alien. The tick ends here rather than marching, firing
+     * and taking hostile fire off a wall the player has just finished: the next
+     * update brings the next round. */
+    if (s->n_alive == 0) return;
+
+    /* The wall marches: one pixel a step the way it is going, a row down when a
+     * live sprite reaches either edge, at the pace the round set. The edges are
+     * the live aliens' own, so a cleared column or row neither turns the wall
+     * early nor lets it march off the panel. */
     if (++s->step_ctr >= march_interval(s)) {
         s->step_ctr = 0;
-        int edge_r = s->ax + INV_GRID_W - 1;
-        if (s->dir == 1 && edge_r >= s->panel_w - 1) { s->dir = 0; s->ay += 3; }
-        else if (s->dir == 0 && s->ax <= 1)         { s->dir = 1; s->ay += 3; }
-        else if (s->dir == 1)                         s->ax++;
-        else                                          s->ax--;
-        if (s->ay + INV_GRID_H - 1 >= s->panel_h - 3) {
-            s->status = INV_OVER;
-            return;
+        int left, right, bottom;
+        if (inv_live_bounds(s, &left, &right, &bottom)) {
+            if (s->dir == 1 && right >= s->panel_w - 1) { s->dir = 0; s->ay += 3; }
+            else if (s->dir == 0 && left <= 1)          { s->dir = 1; s->ay += 3; }
+            else if (s->dir == 1)                         s->ax++;
+            else                                          s->ax--;
+
+            /* Invasion is the lowest surviving sprite reaching the cannon's own
+             * first drawn row, not the hollow grid box around it: a wall whose
+             * bottom rows are empty has not arrived. */
+            if (inv_live_bounds(s, &left, &right, &bottom) &&
+                bottom >= s->panel_h - 2) {
+                s->status = INV_OVER;
+                return;
+            }
         }
     }
 
@@ -387,21 +469,25 @@ static void invaders_update(void *state, ml_game_ctx *ctx)
         s->ashots[i].y = (int16_t)(s->ashots[i].y + s->ashots[i].step);
         if (s->ashots[i].y >= s->panel_h) { s->ashots[i].on = 0; continue; }
 
-        /* vs cannon */
+        /* vs cannon: the hit spends every bullet the cannon has in the air */
         if (s->ashots[i].x >= s->px && s->ashots[i].x <= s->px + INV_SPRITE_W - 1 &&
             s->ashots[i].y >= s->panel_h - 2) {
             s->ashots[i].on = 0;
-            s->pshot.on = 0;
+            inv_clear_pshots(s);
             s->lives--;
             if (s->lives == 0) { s->status = INV_OVER; return; }
             for (int j = 0; j < INV_ASHOTS_MAX; j++) s->ashots[j].on = 0;
             continue;
         }
 
-        /* vs cannon bullet: both die */
-        if (s->pshot.on && s->ashots[i].x == s->pshot.x && s->ashots[i].y == s->pshot.y) {
-            s->ashots[i].on = 0;
-            s->pshot.on = 0;
+        /* vs cannon bullets: both die, whichever bullets were in the way */
+        for (int j = 0; j < INV_PSHOTS_MAX; j++) {
+            if (!s->pshots[j].on) continue;
+            if (s->ashots[i].x == s->pshots[j].x && s->ashots[i].y == s->pshots[j].y) {
+                s->ashots[i].on = 0;
+                s->pshots[j].on = 0;
+                break;
+            }
         }
     }
 }
@@ -458,8 +544,9 @@ static void invaders_draw(const void *state, const ml_view *view, ml_canvas *c,
     }
 
     /* bullets: cannon white, aliens red */
-    if (s->pshot.on && s->pshot.y >= 0 && s->pshot.y < H)
-        ml_canvas_set(c, s->pshot.x, s->pshot.y, ML_RGB(255, 255, 255));
+    for (int i = 0; i < INV_PSHOTS_MAX; i++)
+        if (s->pshots[i].on && s->pshots[i].y >= 0 && s->pshots[i].y < H)
+            ml_canvas_set(c, s->pshots[i].x, s->pshots[i].y, ML_RGB(255, 255, 255));
     for (int i = 0; i < INV_ASHOTS_MAX; i++)
         if (s->ashots[i].on && s->ashots[i].y >= 0 && s->ashots[i].y < H)
             ml_canvas_set(c, s->ashots[i].x, s->ashots[i].y, ML_RGB(255, 60, 40));

@@ -36,6 +36,15 @@ const List<MirrorControl> _withTilt = <MirrorControl>[
   MirrorControl('TiltY', MirrorControlType.axis),
 ];
 
+/// The controls Invaders declares when the phone's tilt steers it: the cannon's
+/// two directions, Shoot, and the accelerometer axis the tilt drives.
+const List<MirrorControl> _invadersControls = <MirrorControl>[
+  MirrorControl('Left', MirrorControlType.button),
+  MirrorControl('Right', MirrorControlType.button),
+  MirrorControl('Shoot', MirrorControlType.button),
+  MirrorControl('TiltX', MirrorControlType.axis),
+];
+
 class _Session extends Fake implements BleSession {
   final statuses = StreamController<String>.broadcast(sync: true);
   final start = Completer<MirrorGame>();
@@ -916,17 +925,135 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Start timeout disconnects unknown remote session',
+  testWidgets(
+      'mirror Invaders: a second pointer on the surface reaches the firmware as a press',
       (tester) async {
-    final (session, connection) = await boot(tester);
-    await tester.tap(find.text('Start Game'));
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = ['invaders'],
+        surface: const Size(1000, 900));
+    await beginCalibration(tester);
+    for (var i = 0; i < 20; i++) {
+      await sample(tester, 0, 0, 9.8);
+    }
+    if (session.started.isEmpty) {
+      await tester.tap(find.text('Start Game'));
+      await tester.pump();
+    }
+    expect(session.started, ['invaders']);
+    session.acknowledge(controls: _invadersControls);
     await tester.pump();
-    session.start.completeError(TimeoutException('test transport timeout'));
     await tester.pump();
+
+    final surface = find.byKey(const ValueKey<String>('motion-shoot-surface'));
+    expect(surface, findsOneWidget);
+    final Rect body = tester.getRect(surface);
+    final Rect pad =
+        tester.getRect(find.byKey(const ValueKey<String>('control-Shoot')));
+    expect(body.contains(pad.center), isTrue,
+        reason: 'the Shoot pad is inside the surface the whole play area is');
+    final Offset blank = body.topLeft + const Offset(6, 6);
+    expect(body.contains(blank), isTrue);
+
+    // One press on the pad, then a second finger on the play area while the
+    // first still holds it. The wire carries held state only, so that second
+    // press has to arrive as a release followed by a press, or the firmware
+    // would read it as more of the same hold and fire nothing.
+    final int base = session.inputs.length;
+    int sent() => session.inputs.length - base;
+    final TestGesture padFinger = await tester.startGesture(pad.center);
     await tester.pump();
-    expect(connection.session, isNull);
-    expect(find.text('Game connection lost. Reconnect to play again.'),
-        findsOneWidget);
+    final int atPadDown = sent();
+    await tester.pump(const Duration(milliseconds: 25));
+    final int beforeSurface = sent();
+    final TestGesture surfaceFinger = await tester.startGesture(blank);
+    await tester.pump();
+    final int atSurfaceDown = sent();
+    await tester.pump(const Duration(milliseconds: 25));
+    await padFinger.up();
+    await tester.pump();
+    await surfaceFinger.up();
+    await tester.pump();
+    final List<List<int>> frames = session.inputs.sublist(base);
+
+    expect(frames.length, greaterThanOrEqualTo(4),
+        reason: 'the press, the transient pair and the releases were sent');
+
+    /// Rising edges of button [control] in [window]: a press, however many
+    /// packets carry the level.
+    int rises(List<List<int>> window, int control) {
+      var n = 0;
+      var was = 0;
+      for (final List<int> f in window) {
+        if (f[control] == 1 && was == 0) n++;
+        was = f[control];
+      }
+      return n;
+    }
+
+    expect(rises(frames.sublist(0, atPadDown), 2), 1,
+        reason: 'a single pad press is one Shoot edge, not two');
+    expect(rises(frames, 2), 2, reason: 'two presses are two edges');
+
+    final List<List<int>> secondPress =
+        frames.sublist(beforeSurface, atSurfaceDown);
+    expect(secondPress.map((List<int> f) => f[2]).toList(), <int>[0, 1],
+        reason: 'the second pointer arrives as a release and then a press');
+
+    // And it is only Shoot that moves: the tilt the phone is held at and the
+    // movement buttons are carried through untouched.
+    final List<int> before = frames[beforeSurface - 1];
+    for (final List<int> f in secondPress) {
+      expect(f[0], before[0], reason: 'a transient edge holds no direction');
+      expect(f[1], before[1]);
+      expect(f[3], before[3], reason: 'the tilt value is carried through');
+    }
+
+    // What the firmware's own engine makes of that sequence: the frames in
+    // arrival order, ticked at the gesture boundaries, must fire the same two
+    // bullets local play draws.
+    final GameEngine engine = GameEngine.open(
+      gameId: 'invaders',
+      panelWidth: 64,
+      panelHeight: 32,
+      seed: 1,
+      players: 1,
+    );
+    addTearDown(engine.dispose);
+    var cursor = 0;
+    void feed(int upTo) {
+      for (; cursor < upTo; cursor++) {
+        final List<int> f = frames[cursor];
+        for (var i = 0; i < f.length; i++) {
+          engine.input(playerId: 1, code: i, value: f[i]);
+        }
+      }
+    }
+
+    feed(atPadDown);
+    engine.step(25);
+    feed(atSurfaceDown);
+    engine.step(25);
+    final Uint8List rendered = engine.renderBytes()!;
+    expect(_whitePixels(rendered), unorderedEquals(<Offset>[
+      const Offset(31, 24),
+      const Offset(31, 26),
+    ]),
+        reason: 'the firmware sees two bullets climbing, as local play does');
+
     expect(tester.takeException(), isNull);
   });
+}
+
+/// One pure white pixel of a 64x32 panel frame: the cannon's own bullet.
+List<Offset> _whitePixels(Uint8List rgba) {
+  final out = <Offset>[];
+  for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 64; x++) {
+      final int i = (y * 64 + x) * 4;
+      if (rgba[i] == 255 && rgba[i + 1] == 255 && rgba[i + 2] == 255) {
+        out.add(Offset(x.toDouble(), y.toDouble()));
+      }
+    }
+  }
+  return out;
 }

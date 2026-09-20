@@ -1,0 +1,12 @@
+# Firmware version lock - written by tools/firmware_version.py stamp.
+#
+# The hash covers every source the image is compiled from: firmware/,
+# core/, gamekit/, fonts/ and layouts/, less documentation, which is
+# not built into it. A mismatch means those sources changed after this
+# version was stamped, so the version was not bumped for them - see
+# firmware/README.md, Versioning.
+#
+# Editing this file by hand does not change the firmware; it only
+# tells the check what the image is expected to be built from.
+version = 0.2.32
+inputs = 6526a30cb41593e1abf0f0fba42ce0468d759a3d2fda905c1379efe32e0e175f

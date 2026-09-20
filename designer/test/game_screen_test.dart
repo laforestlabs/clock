@@ -621,6 +621,98 @@ Future<Uint8List> _tetris(
   return panel;
 }
 
+/// One accelerometer reading, as the sensors plugin delivers it.
+typedef _Sampler = Future<void> Function(double x, double y, double z);
+
+/// Mock the channels a motion round subscribes to and return a sampler that
+/// feeds one accelerometer reading at a time. The gyroscope is present and
+/// silent, which is the accelerometer-only path a device without one delivers.
+Future<_Sampler> _mockSensors(WidgetTester tester) async {
+  const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
+  const gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
+  const sensorMethods =
+      MethodChannel('dev.fluttercommunity.plus/sensors/method');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
+  messenger.setMockMethodCallHandler(
+      const MethodChannel(sensorChannel), (_) async => null);
+  messenger.setMockMethodCallHandler(
+      const MethodChannel(gyroChannel), (_) async => null);
+  addTearDown(() {
+    messenger.setMockMethodCallHandler(sensorMethods, null);
+    messenger.setMockMethodCallHandler(
+        const MethodChannel(sensorChannel), null);
+    messenger.setMockMethodCallHandler(const MethodChannel(gyroChannel), null);
+  });
+  return (double x, double y, double z) async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        sensorChannel,
+        const StandardMethodCodec().encodeSuccessEnvelope(<double>[x, y, z, 0]),
+        (_) {});
+    await tester.pump(const Duration(milliseconds: 20));
+  };
+}
+
+/// Every pure white pixel of a panel frame, as (x, y). On Invaders that is the
+/// cannon's own bullets: the cannon is cyan, the wall is green and red, and the
+/// aliens' bullets are red.
+List<Offset> _whitePixels(Uint8List rgba) {
+  final out = <Offset>[];
+  for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 64; x++) {
+      final int i = (y * 64 + x) * 4;
+      if (rgba[i] == 255 && rgba[i + 1] == 255 && rgba[i + 2] == 255) {
+        out.add(Offset(x.toDouble(), y.toDouble()));
+      }
+    }
+  }
+  return out;
+}
+
+/// The rect of the panel the round renders into, wherever it sits on screen.
+Rect _panelRect(WidgetTester tester) => tester.getRect(find.byWidgetPredicate(
+    (Widget w) =>
+        w is CustomPaint && w.painter.runtimeType.toString() == '_GamePainter'));
+
+/// Open a game in motion mode on the real widget, calibrate it with a still
+/// phone, and hand the live round to [script] with the sampler that moves it.
+///
+/// The window is taller than the default: motion mode stacks the panel, the
+/// captions, the Shoot pad and the axis readout, and on a 600-pixel window the
+/// pad and the readout are scrolled out of the play area, where nothing can be
+/// pressed. The round's own frames do not depend on the window.
+Future<void> _motionRound(
+  WidgetTester tester,
+  String id,
+  Future<void> Function(_Scene scene, _Sampler sample) script,
+) async {
+  final sample = await _mockSensors(tester);
+  await _scene(tester, (scene) async {
+    await scene.pick(id);
+    await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+    await tester.pump();
+    await scene.start();
+    expect(find.text('Hold the phone still'), findsOneWidget);
+    for (var i = 0; i < 20; i++) {
+      await sample(0, 0, 9.8);
+    }
+    await scene.advance(2);
+    expect(find.text('Hold the phone still'), findsNothing,
+        reason: 'a still phone calibrates and the round goes live');
+    await script(scene, sample);
+  }, surface: const Size(1000, 900));
+}
+
+/// The whole motion play area of the round on screen, and a point near its top
+/// left: the margin above the caption, which is inside the surface and nowhere
+/// near the Shoot pad.
+Rect _surfaceRect(WidgetTester tester) => tester
+    .getRect(find.byKey(const ValueKey<String>('motion-shoot-surface')));
+
+Offset _blankSpot(WidgetTester tester) =>
+    _surfaceRect(tester).topLeft + const Offset(6, 6);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -1694,34 +1786,337 @@ void main() {
     expect(decodes.leaked, 0);
   });
 
-  testWidgets('a decode that throws is caught and offers the same way back',
+  testWidgets('motion Invaders fires from the whole play area, per press',
       (tester) async {
-    final decodes = _Decodes();
-    await _scene(
-      tester,
-      (scene) async {
-        await scene.pick('snake');
-        await scene.start();
-        await scene.advance(4);
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      final Rect body = _surfaceRect(tester);
+      final Rect panel = _panelRect(tester);
+      final Offset readout =
+          tester.getCenter(find.byKey(const ValueKey<String>('axis-TiltX')));
+      expect(body.contains(scene.padCenter('Shoot')), isTrue,
+          reason: 'the Shoot pad is part of the surface, not outside it');
+      expect(body.contains(panel.center), isTrue);
+      expect(body.contains(readout), isTrue);
+      expect(
+          body.top,
+          greaterThan(
+              tester.getRect(find.byTooltip('Pause')).bottom - 1e-6),
+          reason: 'the app bar is outside the play area');
 
-        decodes.throwNext(StateError('the decoder fell over'));
-        await scene.frame();
+      // Two taps a tick apart, on two different parts of the play area: an
+      // empty corner and the panel itself. The second must not wait for the
+      // first to leave the panel. The cannon starts centred at x=30, so both
+      // bullets are at x=31, four pixels apart after the tick between them.
+      expect(find.text('Tap anywhere in the play area to shoot.'),
+          findsOneWidget,
+          reason: 'the surface says what it does');
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      await tester.tapAt(panel.center);
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
+        const Offset(31, 24),
+        const Offset(31, 26),
+      ]));
 
-        expect(scene.failed, isTrue,
-            reason: 'a decoder that throws leaves the failure surface up');
-        expect(tester.takeException(), isNull,
-            reason: 'a failed decode does not escape the screen');
-        expect(scene.pad(_wires('snake').first), findsNothing);
+      // And the readout is a third part of the same surface: a tap there is a
+      // press too, so the three sit one tick apart.
+      await tester.tapAt(readout);
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
+        const Offset(31, 22),
+        const Offset(31, 24),
+        const Offset(31, 26),
+      ]));
+    });
+  });
 
-        await tester.tap(find.byKey(const ValueKey<String>('play-error-back')));
-        await _pumpFor(tester);
-        expect(
-            find.byKey(const ValueKey<String>('start-game')), findsOneWidget);
-        expect(scene.failed, isFalse);
-        expect(tester.takeException(), isNull);
-      },
-      decodes: decodes,
-    );
-    expect(decodes.leaked, 0);
+  testWidgets(
+      'motion Invaders: a second pointer on Shoot fires, in either order',
+      (tester) async {
+    // The surface holds Shoot down; the pad is pressed by a second finger a
+    // tick later. The wire only carries levels, so that second press has to
+    // arrive as an edge of its own or it would look like the same hold.
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      final TestGesture first = await tester.startGesture(_blankSpot(tester));
+      await scene.frame();
+      await tester.tap(scene.pad('Shoot'));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
+        const Offset(31, 24),
+        const Offset(31, 26),
+      ]));
+      await first.up();
+    });
+
+    // The same in the other order: the pad is held and the surface pressed.
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      final TestGesture first =
+          await tester.startGesture(scene.padCenter('Shoot'));
+      await scene.frame();
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
+        const Offset(31, 24),
+        const Offset(31, 26),
+      ]));
+      await first.up();
+    });
+  });
+
+  testWidgets(
+      'motion Invaders: a pad tap and a play-area tap are the same shot',
+      (tester) async {
+    // Two runs of the same round with the same timing, one fired from the
+    // Shoot pad and one from the background. They must agree frame for frame:
+    // a press that the surface and the pad both counted would draw as one
+    // pixel at first and only tell them apart once the bullet met the wall,
+    // so the runs are followed that far.
+    Future<List<Uint8List>> run(String how) async {
+      final frames = <Uint8List>[];
+      await _motionRound(tester, 'invaders', (scene, sample) async {
+        // Twelve ticks in, the wall has taken its first step, so its third
+        // column is over the centred cannon and the shot has something to hit.
+        await scene.advance(12);
+        if (how == 'pad') {
+          await tester.tap(scene.pad('Shoot'));
+        } else if (how == 'surface') {
+          await tester.tapAt(_blankSpot(tester));
+        }
+        for (var i = 0; i < 10; i++) {
+          await scene.frame();
+          frames.add(Uint8List.fromList(scene.pixels()));
+        }
+      });
+      return frames;
+    }
+
+    final none = await run('none');
+    final pad = await run('pad');
+    final surface = await run('surface');
+    for (var i = 0; i < pad.length; i++) {
+      expect(surface[i], orderedEquals(pad[i]),
+          reason: 'the two surfaces diverge ${i + 1} ticks after the tap');
+    }
+    // The comparison is only worth something if the shot really did meet the
+    // wall: with no tap at all the same ticks leave a different board.
+    expect(pad.last, isNot(orderedEquals(none.last)),
+        reason: 'the bullet never reached the wall');
+    expect(none.expand(_whitePixels), isEmpty,
+        reason: 'nothing fired in the run that pressed nothing');
+  });
+
+  testWidgets(
+      'motion Invaders: a release or a cancel is not a press, and the next finger fires',
+      (tester) async {
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      final TestGesture first = await tester.startGesture(_blankSpot(tester));
+      await scene.frame();
+      final TestGesture second = await tester.startGesture(
+          _surfaceRect(tester).topLeft + const Offset(6, 40));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2,
+          reason: 'two fingers, two presses');
+
+      // One finger gone with the other still down: the level does not change,
+      // so nothing new fires.
+      await first.up();
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2);
+
+      // A cancelled finger is gone the same way.
+      await second.cancel();
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2);
+
+      // And a fresh finger is a fresh press.
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 3);
+    });
+  });
+
+  testWidgets(
+      'motion Invaders: a held key and the held-state stream add no bullets',
+      (tester) async {
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      // The round is fed its whole held state every tick and the keyboard
+      // repeats a held key: a held Space is one press, not one per packet.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      for (var i = 0; i < 4; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.space);
+      }
+      await scene.frame();
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1,
+          reason: 'a held key is one shot, however many packets arrive');
+
+      // The release re-arms the next press.
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    });
+  });
+
+  testWidgets(
+      'manual Invaders keeps its pad and its key, and the board is inert',
+      (tester) async {
+    await _scene(tester, (scene) async {
+      await scene.pick('invaders');
+      await scene.start();
+      await scene.advance(2);
+      expect(find.byKey(const ValueKey<String>('motion-shoot-surface')),
+          findsNothing,
+          reason: 'there is no play-area surface outside motion mode');
+
+      // A tap on the board is a tap on the display, which takes no input.
+      await tester.tapAt(_panelRect(tester).center);
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()), isEmpty,
+          reason: 'the manual board is display-only');
+
+      // The pad still fires, and so does Space.
+      await tester.tap(scene.pad('Shoot'));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+
+      // ...and so does a second tap on the pad, which the old one-shot rule
+      // would have refused while the first bullet was still in the air.
+      await tester.tap(scene.pad('Shoot'));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 3);
+    });
+  });
+
+  testWidgets('the setup hint says how the selected game is steered',
+      (tester) async {
+    await _mockSensors(tester);
+    await _scene(tester, (scene) async {
+      await scene.pick('invaders');
+      await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+      await tester.pump();
+      expect(find.text('Tilt steers; tap the play area to shoot.'),
+          findsOneWidget,
+          reason: 'Invaders does not confine its actions to one corner');
+
+      // Every other game keeps the old sentence: its actions really are the
+      // pads on the right.
+      await scene.pick('tetris');
+      expect(find.text('Tilt steers; actions stay on the right.'),
+          findsOneWidget);
+      expect(find.text('Tilt steers; tap the play area to shoot.'),
+          findsNothing);
+    });
+  });
+
+  testWidgets('motion rounds without a Shoot control get no firing surface',
+      (tester) async {
+    for (final id in const <String>['probe', 'tetris']) {
+      await _motionRound(tester, id, (scene, sample) async {
+        expect(find.byKey(const ValueKey<String>('motion-shoot-surface')),
+            findsNothing,
+            reason: '$id declares no Shoot, so the whole body is not a control');
+        expect(find.byKey(const ValueKey<String>('motion-shoot-hint')),
+            findsNothing);
+      });
+    }
+  });
+
+  testWidgets(
+      'motion Invaders fires nothing while paused, and only a fresh press after',
+      (tester) async {
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      final TestGesture thumb =
+          await tester.startGesture(_blankSpot(tester));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1,
+          reason: 'the press fired');
+
+      // The app bar is outside the surface, and Help is outside the round
+      // until it comes back.
+      await tester.tap(find.byTooltip('Pause'));
+      await tester.pump();
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1,
+          reason: 'a paused round takes no input');
+
+      // Resume with the thumb still down: it fired for the press that was
+      // released by the pause, so it must not fire again on the way back.
+      await tester.tap(find.byKey(const ValueKey<String>('round-resume')));
+      await tester.pump();
+      await tester.pump();
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1,
+          reason: 'a finger held across a pause does not fire again');
+      await thumb.up();
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 1);
+
+      // A fresh press does.
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      expect(_whitePixels(scene.pixels()).length, 2);
+    });
+  });
+
+  testWidgets('motion Invaders on the calibration view takes no shot',
+      (tester) async {
+    final sample = await _mockSensors(tester);
+    await _scene(tester, (scene) async {
+      await scene.pick('invaders');
+      await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
+      await tester.pump();
+      await scene.start();
+      expect(find.text('Hold the phone still'), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('motion-shoot-surface')),
+          findsNothing,
+          reason: 'the calibration view is not the play area');
+
+      // Tapping the calibration view starts nothing and fires nothing.
+      await tester.tapAt(tester.getCenter(find.text('Hold the phone still')));
+      await tester.pump();
+      expect(sample, isNotNull);
+      expect(find.text('Hold the phone still'), findsOneWidget);
+      for (var i = 0; i < 20; i++) {
+        await sample(0, 0, 9.8);
+      }
+      await scene.advance(2);
+      expect(find.text('Hold the phone still'), findsNothing);
+      expect(_whitePixels(scene.pixels()), isEmpty,
+          reason: 'nothing fired while the round was not live');
+    });
+  });
+
+  testWidgets('motion Invaders fires nothing once the round is over',
+      (tester) async {
+    await _motionRound(tester, 'invaders', (scene, sample) async {
+      // Play it out: the wall's fire ends it, and the terminal phase keeps the
+      // same surface on screen with its controls shut. The arcade pumps alone,
+      // which is the round's own 25 ms cadence without waiting on a decode per
+      // tick; the two settled frames afterwards are what the panel shows.
+      var frames = 0;
+      while (!scene.terminal && frames < 2000) {
+        await tester.pump(const Duration(milliseconds: 25));
+        frames++;
+      }
+      expect(scene.terminal, isTrue,
+          reason: 'the round ended within $frames ticks');
+      await scene.frame();
+      await scene.frame();
+      final Uint8List last = Uint8List.fromList(scene.pixels());
+      await tester.tapAt(_blankSpot(tester));
+      await scene.frame();
+      await scene.frame();
+      expect(scene.pixels(), orderedEquals(last),
+          reason: 'a finished round takes no input');
+      expect(tester.takeException(), isNull);
+    });
   });
 }

@@ -21,6 +21,13 @@ ESP_IDF="${ESP_IDF:-$HOME/esp/esp-idf-v5.5}"
 IMAGE="$ROOT/firmware/build/smart_mirror.bin"
 STAGED="$ROOT/designer/assets/firmware/smart_mirror.bin"
 
+# One version per image, before anything is built: the version is what the
+# board reports and what an OTA is named for, so an image built from these
+# sources under a version another image already claimed cannot be told apart
+# from it. This is the Android build's and the OTA build's own gate; the
+# firmware's CMakeLists has the same one.
+python3 "$ROOT/tools/firmware_version.py" check
+
 # The generated font tables in core/src/fonts are compiled into the image, so
 # a fonts/*.font edit must be regenerated before the build sees it.
 if ! python3 "$ROOT/tools/fontgen.py" --check >/dev/null 2>&1; then
@@ -51,3 +58,8 @@ else
     cp "$IMAGE" "$STAGED"
     echo "bundle_firmware: staged $(basename "$IMAGE") -> ${STAGED#"$ROOT"/}"
 fi
+
+# What the app will ship is the version the tree declares - the other half of
+# the guarantee this script exists for, and the half a stale or wrongly named
+# staged copy would break without anything else noticing.
+python3 "$ROOT/tools/firmware_version.py" check --staged

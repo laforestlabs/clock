@@ -19,4 +19,21 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # the app image descriptor and is what /api/status, the BLE pong and the OTA
 # filename report. Never reuse a version for a different build: two builds
 # that share a version are indistinguishable on the board and over OTA.
-project(smart_mirror VERSION 0.2.31)
+#
+# Enforced rather than merely stated: this configure step, every app build that
+# stages the image (tools/bundle_firmware.sh) and the OTA build all run
+# tools/firmware_version.py, which fails when the sources the image is built
+# from have changed since this version was stamped. See firmware/README.md,
+# Versioning, for the two commands that clear it.
+execute_process(
+    COMMAND python3 "${CMAKE_CURRENT_LIST_DIR}/../tools/firmware_version.py" check
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    RESULT_VARIABLE _firmware_version_check
+    OUTPUT_VARIABLE _firmware_version_out
+    ERROR_VARIABLE _firmware_version_err)
+if(NOT _firmware_version_check EQUAL 0)
+    message(FATAL_ERROR
+        "firmware version check:\n${_firmware_version_err}${_firmware_version_out}")
+endif()
+
+project(smart_mirror VERSION 0.2.32)

@@ -303,11 +303,6 @@ static void rally_draw(const void *state, const ml_view *view, ml_canvas *c,
     ml_rgb cyan = ML_RGB(0, 229, 255);
     ml_rgb mag  = ML_RGB(255, 0, 128);
     ml_rgb white = ML_RGB(220, 220, 220);
-    ml_rgb net = ML_RGB(40, 40, 40);
-
-    /* dashed centre net */
-    for (int y = 1; y < H - 1; y += 2)
-        ml_canvas_set(c, W / 2, y, net);
 
     /* paddles */
     for (int x = 0; x < s->paddle_w; x++) {

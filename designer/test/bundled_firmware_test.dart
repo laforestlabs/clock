@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -37,6 +38,26 @@ void main() {
       // The reported version must reparse from the bytes it was loaded with,
       // proving the bundle cannot drift.
       expect(firmwareVersionFromImage(bundled.bytes), bundled.version);
+    });
+
+    test('bundles the firmware the tree declares', () async {
+      final bundled = await loadBundledFirmware();
+      expect(bundled, isNotNull);
+
+      // One version per image: an APK that bundles a firmware other than the
+      // one firmware/CMakeLists.txt names is shipping an image nobody can
+      // identify. tools/firmware_version.py enforces the same thing from the
+      // build side; this is the half the app itself can check.
+      final cmake = File('../firmware/CMakeLists.txt').readAsStringSync();
+      final declared = RegExp(r'^project\(smart_mirror VERSION ([^)\s]+)\)',
+              multiLine: true)
+          .firstMatch(cmake)
+          ?.group(1);
+      expect(declared, isNotNull,
+          reason: 'firmware/CMakeLists.txt declares a version');
+      expect(bundled!.version, declared,
+          reason: 'the app bundles ${bundled.version} while the firmware tree '
+              'declares $declared: restage with tools/bundle_firmware.sh');
     });
   });
 }
