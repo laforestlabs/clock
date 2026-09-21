@@ -177,6 +177,7 @@ class _Renderer {
     required int width,
     required int height,
     required PictureFit fit,
+    Rect? crop,
   }) async {
     calls.add((width: width, height: height, fit: fit));
     final gate = hold;
@@ -568,6 +569,31 @@ void main() {
     // edges, where the encoder's medium-quality resampling blends neighbours.
     expect(pixel(20, 16), 0xFF0000, reason: 'the red half is on the left');
     expect(pixel(44, 16), 0x0000FF);
+
+    // Cropping remains local until Display, then the selected half is sent
+    // edge-to-edge rather than uploading the old letterboxed composition.
+    await _chooseForReal(tester, const ValueKey<String>('picture-crop'));
+    final slider = find.byType(Slider);
+    tester.widget<Slider>(slider).onChanged!(2);
+    await tester.pump();
+    await tester.drag(
+      find.byKey(const ValueKey<String>('picture-crop-viewport')),
+      const Offset(1000, 0),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Use crop'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 500)));
+    await tester.pumpAndSettle();
+    expect(lan.uploads, hasLength(1));
+    await _display(tester);
+    final cropped = lan.uploads.last;
+    const middle = (16 * 64 + 32) * 3;
+    expect(cropped.sublist(middle, middle + 3), <int>[255, 0, 0]);
+    const left = (16 * 64 + 4) * 3;
+    expect(cropped.sublist(left, left + 3), <int>[255, 0, 0],
+        reason: 'the chosen red region fills the panel without letterboxing');
   });
 
   testWidgets('an upload only reaches the record it was framed for',

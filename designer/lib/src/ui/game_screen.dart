@@ -3545,7 +3545,9 @@ class _GameScreenState extends State<GameScreen>
             _inputMode == _InputMode.motion
                 ? (selected?.id == 'invaders'
                     ? 'Tilt steers; tap the play area to shoot.'
-                    : 'Tilt steers; actions stay on the right.')
+                    : selected?.id == 'tetris'
+                        ? 'Tilt steers; Rotate on the left, Soft drop on the right.'
+                        : 'Tilt steers; actions stay on the right.')
                 : 'Movement on the left, actions on the right.',
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
@@ -4224,6 +4226,56 @@ class _GameScreenState extends State<GameScreen>
         : motion.gyroscopeAssisted
             ? 'Tilt the phone to steer — gyro-assisted'
             : 'Tilt the phone to steer — accelerometer only';
+    if (_runningGameId == 'tetris' && actions.length == 2) {
+      return SafeArea(
+        minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Column(
+          children: <Widget>[
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final previewWidth =
+                      preview == null ? 0.0 : constraints.maxWidth * .3;
+                  final width =
+                      (constraints.maxWidth - previewWidth - 2 * _padGap) / 2;
+                  final height = constraints.maxHeight;
+                  if (width < _minPadSide || height < _minPadSide) {
+                    _noteInsufficientSpace();
+                    return _insufficientSpaceView();
+                  }
+                  Widget button(_PadSpec spec) => _ActionButton(
+                        spec: spec,
+                        side: width,
+                        size: Size(width, height),
+                        pressed: _heldAt(spec.index),
+                        onPress: _pressAction,
+                        onMove: _moveAction,
+                        onRelease: _releasePointer,
+                        onActivate: _activatePad,
+                      );
+                  return Row(
+                    children: <Widget>[
+                      button(actions.first),
+                      const SizedBox(width: _padGap),
+                      if (preview != null)
+                        SizedBox(width: previewWidth, child: preview),
+                      const SizedBox(width: _padGap),
+                      button(actions.last),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              steerCaption,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
     final Widget body = SafeArea(
       minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: LayoutBuilder(
@@ -4592,12 +4644,14 @@ class _PadFace extends StatelessWidget {
     super.key,
     required this.spec,
     required this.side,
+    this.size,
     required this.pressed,
     required this.onActivate,
   });
 
   final _PadSpec spec;
   final double side;
+  final Size? size;
   final bool pressed;
 
   /// An accessibility or keyboard activation of this pad.
@@ -4647,7 +4701,7 @@ class _PadFace extends StatelessWidget {
                     spec.label,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 15,
+                      fontSize: size == null ? 15 : 24,
                       fontWeight: FontWeight.bold,
                       color: foreground,
                     ),
@@ -4675,13 +4729,15 @@ class _PadFace extends StatelessWidget {
         child: Focus(
           canRequestFocus: true,
           onKeyEvent: _onKey,
-          child: SizedBox.square(
-            dimension: side,
+          child: SizedBox(
+            width: size?.width ?? side,
+            height: size?.height ?? side,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 70),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
+                shape: size == null ? BoxShape.circle : BoxShape.rectangle,
+                borderRadius: size == null ? null : BorderRadius.circular(24),
                 color:
                     pressed ? scheme.primary : scheme.surfaceContainerHighest,
               ),
@@ -4795,6 +4851,7 @@ class _ActionButton extends StatelessWidget {
   const _ActionButton({
     required this.spec,
     required this.side,
+    this.size,
     required this.pressed,
     required this.onPress,
     required this.onMove,
@@ -4804,6 +4861,7 @@ class _ActionButton extends StatelessWidget {
 
   final _PadSpec spec;
   final double side;
+  final Size? size;
   final bool pressed;
 
   /// The pointer went down inside this button.
@@ -4819,7 +4877,7 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rect = Offset.zero & Size.square(side);
+    final rect = Offset.zero & (size ?? Size.square(side));
     return Listener(
       key: ValueKey<String>('control-${spec.wire}'),
       behavior: HitTestBehavior.opaque,
@@ -4834,6 +4892,7 @@ class _ActionButton extends StatelessWidget {
       child: _PadFace(
         spec: spec,
         side: side,
+        size: size,
         pressed: pressed,
         onActivate: onActivate,
       ),

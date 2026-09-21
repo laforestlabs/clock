@@ -14,8 +14,13 @@ stay bound to that device; equal names do not merge identities. Legacy firmware
 without a stable identity keeps separate LAN/Bluetooth records.
 
 **Picture display** accepts one static PNG or JPEG (20 MiB / 40 million source
-pixels maximum). **Fit** preserves the whole image with black bars; **Fill**
-center-crops without stretching. The framing preview is local and uncalibrated.
+pixels maximum). After choosing a photo, **Crop / zoom** opens a frame locked to
+the panel's aspect ratio. Pinch to zoom and drag to select the region; a zoom
+slider and **Reset** are also available. **Use crop** applies the selection to
+the pixel-exact framing preview; Back cancels without changing the picture.
+The original photo is retained for subsequent edits. **Fit** preserves the
+selected area with black bars; **Fill** covers the panel without stretching.
+The framing preview is local and uncalibrated.
 **Display on …** sends panel-sized RGB over Wi-Fi and waits for persistence.
 Saved pictures survive phone closure and mirror reboot. Selecting **Use smart
 clock** retains the picture; **Show saved picture** restores it. Games temporarily
@@ -264,6 +269,11 @@ on it. It is never picked for you: Start uses a game played for score.
 | Invaders in motion mode | Tap anywhere in the play area to shoot; the Shoot pad works too |
 | Space at setup or after a round | Start / Play again; holding Space never restarts |
 | P / Escape | Pause or Resume |
+
+In Tetris's motion mode, Rotate fills the left side and Soft drop fills the
+right side, with the local preview between them. Both touch areas extend almost
+the full height of the play area; when controlling the mirror, each fills nearly
+half the available width.
 
 Pause retains the round. Returning from app suspension does not resume it.
 Help and **Display & diagnostics** pause before opening and leave the round paused

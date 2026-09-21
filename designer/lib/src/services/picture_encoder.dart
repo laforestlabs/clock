@@ -13,8 +13,11 @@
 // fixed pixel grid, and a picture stretched to reach both edges would be wrong
 // on every panel whose aspect ratio differs from the file's. Fit keeps the
 // whole image and lets the panel's black background show as letterboxing; Fill
-// covers the panel and loses the overhanging edges. There is no crop editor and
-// no dithering or palette reduction: the panel takes 24-bit colour.
+// covers the panel and loses the overhanging edges. A crop may narrow the
+// source first: it is expressed in the decoded picture's own coordinates,
+// normalised to the unit square, and fit/fill then work on the crop's shape, so
+// what the editor framed is what the panel gets. There is no dithering or
+// palette reduction: the panel takes 24-bit colour.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -49,9 +52,9 @@ const int pictureMaxSourcePixels = 40000000;
 /// upload screen can show as-is.
 ///
 /// Every failure inside this file — an oversized file, a foreign format, an
-/// animated image, an impossible panel size and any error the codec raises —
-/// arrives as this one type, so the screen has a single failure vocabulary and
-/// can keep the user's prepared picture for another try.
+/// animated image, an impossible crop, an impossible panel size and any error
+/// the codec raises — arrives as this one type, so the screen has a single
+/// failure vocabulary and can keep the user's prepared picture for another try.
 class PictureEncodeException implements Exception {
   PictureEncodeException(this.message);
 
@@ -85,34 +88,34 @@ void validatePictureFileSize(int bytes) {
 bool pictureGeometrySupported(int width, int height) =>
     width > 0 && height > 0 && width * height * 3 <= mirrorFrameMaxPayloadBytes;
 
-/// Decodes [encoded] and frames it for a [width]×[height] panel.
+/// Decodes [encoded] into the image the crop editor shows and framing draws.
 ///
-/// Returns exactly `width * height * 3` pre-gamma RGB888 bytes, row-major from
-/// the top-left, ready for `POST /api/image`'s body.
+/// This is [encodePicture]'s decode half, kept separate because the editor
+/// needs the picture in hand — to show it, and to know what a normalized crop
+/// refers to — before there is a crop or a panel to frame it for. Every check
+/// that guards [encodePicture] guards this too:
 ///
 /// The source must really be a PNG or a JPEG: the signature is checked before
 /// the codec is asked to decode it, so a renamed file is refused with the
 /// format's name rather than the codec's. Dimensions come from Flutter's image
 /// descriptor, which reads the header only, so an image whose declared size is
 /// absurd (or zero, or past [pictureMaxSourcePixels]) is refused before any
-/// pixels are decoded.
-///
-/// Animation is refused twice over, because the codec's own support for it
-/// varies: a PNG whose chunk stream declares animation is caught before the
-/// codec runs, and anything the codec reports as having more than one frame is
-/// refused once it has been opened — the mirror shows one still picture.
+/// pixels are decoded. Animation is refused twice over, because the codec's own
+/// support for it varies: a PNG whose chunk stream declares animation is caught
+/// before the codec runs, and anything the codec reports as having more than one
+/// frame is refused once it has been opened — the mirror shows one still
+/// picture.
 ///
 /// Orientation is the codec's, including JPEG EXIF, so a photo taken sideways
-/// arrives at the panel the way the phone's gallery shows it; the descriptor's
-/// dimensions and the decoded image agree because both include that rotation.
-Future<Uint8List> encodePicture(
-  Uint8List encoded, {
-  required int width,
-  required int height,
-  required PictureFit fit,
-}) async {
+/// arrives the way the phone's gallery shows it; the descriptor's dimensions
+/// and the returned image agree because both include that rotation. That also
+/// fixes the frame a crop's normalized coordinates are measured in.
+///
+/// The returned image belongs to the caller, who must `dispose()` it. Every
+/// resource this reads on the way — the buffer, the descriptor and the codec —
+/// is released before it returns.
+Future<ui.Image> decodePicture(Uint8List encoded) async {
   validatePictureFileSize(encoded.length);
-  _validateTarget(width, height);
   if (encoded.isEmpty) {
     throw PictureEncodeException('The selected file is empty.');
   }
@@ -126,9 +129,6 @@ Future<Uint8List> encodePicture(
   ui.ImmutableBuffer? buffer;
   ui.ImageDescriptor? descriptor;
   ui.Codec? codec;
-  ui.Image? source;
-  ui.Picture? composed;
-  ui.Image? scaled;
   try {
     buffer = await ui.ImmutableBuffer.fromUint8List(encoded);
     descriptor = await ui.ImageDescriptor.encoded(buffer);
@@ -137,8 +137,55 @@ Future<Uint8List> encodePicture(
     if (codec.frameCount != 1) {
       throw PictureEncodeException(_animatedMessage);
     }
-    source = (await codec.getNextFrame()).image;
-    composed = _compose(source, width, height, fit);
+    return (await codec.getNextFrame()).image;
+  } on PictureEncodeException {
+    rethrow;
+  } catch (_) {
+    // A corrupt or unsupported file makes the codec throw a bare Exception
+    // ("Invalid image data") with no type of its own, and its text is not
+    // something to show a person; callers get a sentence instead.
+    throw PictureEncodeException('That picture could not be decoded.');
+  } finally {
+    codec?.dispose();
+    descriptor?.dispose();
+    buffer?.dispose();
+  }
+}
+
+/// Frames [encoded] for a [width]×[height] panel.
+///
+/// Returns exactly `width * height * 3` pre-gamma RGB888 bytes, row-major from
+/// the top-left, ready for `POST /api/image`'s body. The picture itself is
+/// decoded and validated by [decodePicture].
+///
+/// [crop] narrows the picture to the region to frame, in [decodePicture]'s
+/// coordinates normalised to the unit square — `Rect.fromLTWH(0, 0, 1, 1)` is
+/// the whole picture and so is omitting it. [fit] then works on the crop's own
+/// shape: a Fit of it letterboxes against the crop's aspect ratio and a Fill of
+/// it loses *its* overhanging edges. The crop goes straight to the canvas as the
+/// source rectangle, so the only resampling is the single scale into the frame —
+/// the selected region is never decoded, copied and scaled twice.
+///
+/// A crop that is not finite, has no area, or reaches outside the unit square
+/// is refused rather than clamped: a silently moved or shrunk crop would send
+/// the panel a different region than the one the editor showed the owner.
+Future<Uint8List> encodePicture(
+  Uint8List encoded, {
+  required int width,
+  required int height,
+  required PictureFit fit,
+  ui.Rect? crop,
+}) async {
+  _validateTarget(width, height);
+  if (crop != null) {
+    _validateCrop(crop);
+  }
+
+  final source = await decodePicture(encoded);
+  ui.Picture? composed;
+  ui.Image? scaled;
+  try {
+    composed = _compose(source, width, height, fit, crop);
     scaled = await composed.toImage(width, height);
     final rgba = await scaled.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (rgba == null) {
@@ -153,17 +200,11 @@ Future<Uint8List> encodePicture(
   } on PictureEncodeException {
     rethrow;
   } catch (_) {
-    // A corrupt or unsupported file makes the codec throw a bare Exception
-    // ("Invalid image data") with no type of its own, and its text is not
-    // something to show a person; callers get a sentence instead.
     throw PictureEncodeException('That picture could not be decoded.');
   } finally {
     scaled?.dispose();
     composed?.dispose();
-    source?.dispose();
-    codec?.dispose();
-    descriptor?.dispose();
-    buffer?.dispose();
+    source.dispose();
   }
 }
 
@@ -262,13 +303,47 @@ void _validateSource(int width, int height) {
   }
 }
 
-/// Draws [source] into a [width]×[height] frame under [fit].
+/// Refuses a crop that is not a region of the picture.
+///
+/// The crop is normalised to the decoded image, so all four edges have to be
+/// real numbers inside `0..1` and the rectangle has to have area. Finiteness is
+/// checked before the edges are: `NaN < 0` and `NaN > 1` are both false, so a
+/// NaN edge would slip through an edge comparison and reach the canvas, where
+/// the source rectangle would come out NaN. An inverted rectangle fails the
+/// same check from the other side — its width is negative, so it has no area —
+/// and a zero-area one is refused for the same reason: there is nothing to
+/// sample.
+void _validateCrop(ui.Rect crop) {
+  final finite = crop.left.isFinite &&
+      crop.top.isFinite &&
+      crop.width.isFinite &&
+      crop.height.isFinite;
+  if (!finite ||
+      crop.left < 0 ||
+      crop.top < 0 ||
+      crop.right > 1 ||
+      crop.bottom > 1) {
+    throw PictureEncodeException('That crop reaches outside the picture.');
+  }
+  if (crop.width <= 0 || crop.height <= 0) {
+    throw PictureEncodeException('That crop takes in no part of the picture.');
+  }
+}
+
+/// Draws the [crop] of [source] — the whole image when [crop] is null — into a
+/// [width]×[height] frame under [fit].
 ///
 /// Black is laid down first, for two reasons: the letterboxing [PictureFit.fit]
 /// leaves has to be black (the panel has no alpha channel to show through), and
 /// transparent pixels anywhere in the source composite onto the same black
 /// rather than onto whatever undefined colour an offscreen surface starts as.
-ui.Picture _compose(ui.Image source, int width, int height, PictureFit fit) {
+///
+/// The normalized crop is turned into the source rectangle the canvas samples
+/// from and that rectangle's size is what [fit] scales, so the crop is applied
+/// by the same draw call that rescales: there is no intermediate image and no
+/// second resampling.
+ui.Picture _compose(
+    ui.Image source, int width, int height, PictureFit fit, ui.Rect? crop) {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
   canvas.drawRect(
@@ -278,15 +353,29 @@ ui.Picture _compose(ui.Image source, int width, int height, PictureFit fit) {
 
   final sourceWidth = source.width.toDouble();
   final sourceHeight = source.height.toDouble();
+  // The rectangle the canvas samples from: the whole image, or the crop of it,
+  // with the normalized edges resolved against the decoded pixel dimensions.
+  final sourceRect = crop == null
+      ? ui.Rect.fromLTWH(0, 0, sourceWidth, sourceHeight)
+      : ui.Rect.fromLTWH(
+          crop.left * sourceWidth,
+          crop.top * sourceHeight,
+          crop.width * sourceWidth,
+          crop.height * sourceHeight,
+        );
+  // What [fit] scales is the sampled rectangle's size, so both framings measure
+  // the crop's shape rather than the picture's.
+  final sampledWidth = sourceRect.width;
+  final sampledHeight = sourceRect.height;
   final scale = switch (fit) {
-    PictureFit.fit => math.min(width / sourceWidth, height / sourceHeight),
-    PictureFit.fill => math.max(width / sourceWidth, height / sourceHeight),
+    PictureFit.fit => math.min(width / sampledWidth, height / sampledHeight),
+    PictureFit.fill => math.max(width / sampledWidth, height / sampledHeight),
   };
-  final drawnWidth = sourceWidth * scale;
-  final drawnHeight = sourceHeight * scale;
+  final drawnWidth = sampledWidth * scale;
+  final drawnHeight = sampledHeight * scale;
   canvas.drawImageRect(
     source,
-    ui.Rect.fromLTWH(0, 0, sourceWidth, sourceHeight),
+    sourceRect,
     ui.Rect.fromLTWH(
       (width - drawnWidth) / 2,
       (height - drawnHeight) / 2,

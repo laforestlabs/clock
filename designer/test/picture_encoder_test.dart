@@ -532,6 +532,186 @@ void main() {
       expect(largest.length, 256 * 256 * 3);
     });
   });
+
+  group('decode', () {
+    test('hands back the decoded picture with the limits still applied',
+        () async {
+      final source = await _png(8, 8, _quadrants);
+      final image = await decodePicture(source);
+
+      expect(image.width, 8);
+      expect(image.height, 8);
+      // The pixels are the source's own, in the orientation the frame draws
+      // from: red top-left, yellow bottom-right.
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final rgba =
+          data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      expect(rgba.sublist(0, 4), const <int>[255, 0, 0, 255]);
+      const last = (8 * 8 - 1) * 4;
+      expect(rgba.sublist(last, last + 4), const <int>[255, 255, 0, 255]);
+      image.dispose();
+
+      // The decode half still enforces what encodePicture enforces: a
+      // decompression bomb is refused on its header before the pixels exist,
+      // and an animation is refused rather than handing out its first frame.
+      await expectLater(
+        decodePicture(Uint8List.fromList(base64.decode(_bombB64))),
+        throwsA(isA<PictureEncodeException>().having(
+            (e) => e.message,
+            'message',
+            contains('${pictureMaxSourcePixels ~/ 1000000} '
+                'megapixels'))),
+      );
+      await expectLater(
+        decodePicture(Uint8List.fromList(base64.decode(_apngB64))),
+        throwsA(isA<PictureEncodeException>()
+            .having((e) => e.message, 'message', contains('animated'))),
+      );
+    });
+  });
+
+  group('crop', () {
+    test('an off-centre crop samples only the selected region', () async {
+      // The bottom-right quadrant of an 8×8 source is yellow; the other three
+      // quadrants are red, green and blue. Framed at the crop's own size, every
+      // panel pixel has to come from that quarter, so a crop that was ignored,
+      // or taken from the wrong corner, shows another colour here.
+      final source = await _png(8, 8, _quadrants);
+      final out = await encodePicture(source,
+          width: 4,
+          height: 4,
+          fit: PictureFit.fit,
+          crop: const ui.Rect.fromLTWH(0.5, 0.5, 0.5, 0.5));
+
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          _expectPixel(out, 4, x, y, _yellow);
+        }
+      }
+    });
+
+    test('the crop\'s own shape decides the letterboxing', () async {
+      // The top half of the square source is 2:1, so Fit into the square frame
+      // letterboxes it — framing the whole square source would have left no
+      // bars at all. The bottom half's blue and yellow must not survive.
+      final source = await _png(8, 8, _quadrants);
+      final out = await encodePicture(source,
+          width: 8,
+          height: 8,
+          fit: PictureFit.fit,
+          crop: const ui.Rect.fromLTWH(0, 0, 1, 0.5));
+
+      for (final y in <int>[0, 1, 6, 7]) {
+        for (var x = 0; x < 8; x++) {
+          _expectPixel(out, 8, x, y, const <int>[0, 0, 0]);
+        }
+      }
+      _expectPixel(out, 8, 3, 2, _red);
+      _expectPixel(out, 8, 4, 2, _green);
+      for (var y = 0; y < 8; y++) {
+        for (var x = 0; x < 8; x++) {
+          expect(_pixel(out, 8, x, y), isNot(_blue),
+              reason: 'the cropped-out blue quadrant reached ($x,$y)');
+          expect(_pixel(out, 8, x, y), isNot(_yellow),
+              reason: 'the cropped-out yellow quadrant reached ($x,$y)');
+        }
+      }
+    });
+
+    test('Fill covers the panel from the crop, not from the picture', () async {
+      // The right half of the source is green above yellow, and is 1:2 tall.
+      // Fill into the square frame uses that shape — scale 2, so the panel sees
+      // source rows 2..5 — and the red and blue halves never appear.
+      final source = await _png(8, 8, _quadrants);
+      final out = await encodePicture(source,
+          width: 8,
+          height: 8,
+          fit: PictureFit.fill,
+          crop: const ui.Rect.fromLTWH(0.5, 0, 0.5, 1));
+
+      _expectPixel(out, 8, 3, 0, _green);
+      _expectPixel(out, 8, 3, 7, _yellow);
+      for (var y = 0; y < 8; y++) {
+        for (var x = 0; x < 8; x++) {
+          expect(_pixel(out, 8, x, y), isNot(_red),
+              reason: 'the cropped-out red quadrant reached ($x,$y)');
+          expect(_pixel(out, 8, x, y), isNot(_blue),
+              reason: 'the cropped-out blue quadrant reached ($x,$y)');
+        }
+      }
+    });
+
+    test('a cropped transparent region still composites onto black', () async {
+      // The left half of the source is transparent red and the right half is
+      // opaque red. Cropping takes one half at a time; the transparent one has
+      // to arrive black, the opaque one red.
+      final source = await _png(4, 4, (rgba, width, height) {
+        for (var y = 0; y < height; y++) {
+          for (var x = 0; x < width; x++) {
+            _set(rgba, width, x, y, _red, x < 2 ? 0 : 255);
+          }
+        }
+      });
+      final left = await encodePicture(source,
+          width: 2,
+          height: 4,
+          fit: PictureFit.fit,
+          crop: const ui.Rect.fromLTWH(0, 0, 0.5, 1));
+      final right = await encodePicture(source,
+          width: 2,
+          height: 4,
+          fit: PictureFit.fit,
+          crop: const ui.Rect.fromLTWH(0.5, 0, 0.5, 1));
+
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 2; x++) {
+          _expectPixel(left, 2, x, y, const <int>[0, 0, 0]);
+          _expectPixel(right, 2, x, y, _red);
+        }
+      }
+    });
+
+    test('a crop that leaves the picture is refused', () async {
+      final source = await _png(8, 4, _quadrants);
+      Future<void> expectRefused(ui.Rect crop, String expected) => expectLater(
+            encodePicture(source,
+                width: 8, height: 4, fit: PictureFit.fit, crop: crop),
+            throwsA(isA<PictureEncodeException>()
+                .having((e) => e.message, 'message', contains(expected))),
+          );
+
+      // A region that reaches past an edge is not in the picture at all.
+      await expectRefused(const ui.Rect.fromLTWH(0.5, 0, 0.75, 1), 'outside');
+      await expectRefused(const ui.Rect.fromLTWH(-0.25, 0, 0.5, 1), 'outside');
+      await expectRefused(const ui.Rect.fromLTWH(0, -0.25, 1, 0.5), 'outside');
+      await expectRefused(const ui.Rect.fromLTWH(0, 0.75, 1, 0.5), 'outside');
+      // An inverted rectangle has a negative width, so it takes in no part of
+      // the picture whichever way it is reasoned about.
+      await expectRefused(const ui.Rect.fromLTRB(0.75, 0, 0.25, 1), 'no part');
+      // Not numbers at all: these would otherwise reach the canvas as a NaN
+      // source rectangle, and `NaN > 1` is false, so nothing else catches them.
+      await expectRefused(const ui.Rect.fromLTWH(double.nan, 0, 1, 1), 'outside');
+      await expectRefused(const ui.Rect.fromLTWH(0, double.nan, 1, 1), 'outside');
+      await expectRefused(
+          const ui.Rect.fromLTWH(0, 0, double.infinity, 1), 'outside');
+      await expectRefused(
+          const ui.Rect.fromLTWH(0, 0, double.negativeInfinity, 1), 'outside');
+      // No area: there is nothing to sample and nothing to scale.
+      await expectRefused(const ui.Rect.fromLTWH(0, 0, 0, 1), 'no part');
+      await expectRefused(const ui.Rect.fromLTWH(0.5, 0, 0.5, 0), 'no part');
+
+      // The bounds are the whole picture, so a crop that touches every edge is
+      // the same picture as no crop at all.
+      final whole = await encodePicture(source,
+          width: 8,
+          height: 4,
+          fit: PictureFit.fit,
+          crop: const ui.Rect.fromLTWH(0, 0, 1, 1));
+      final uncropped =
+          await encodePicture(source, width: 8, height: 4, fit: PictureFit.fit);
+      expect(whole, uncropped);
+    });
+  });
 }
 
 /// The colour [_markedRows] paints into row [y] of an 8-row source.

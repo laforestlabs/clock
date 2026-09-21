@@ -25,6 +25,7 @@ import '../services/mirror_lan.dart';
 import '../services/picture_encoder.dart';
 import 'device_preview.dart';
 import 'firmware_prompt.dart';
+import 'picture_crop_screen.dart';
 
 /// Picks one picture file, or null when the user cancelled.
 ///
@@ -38,6 +39,7 @@ typedef PictureRenderer = Future<Uint8List> Function(
   required int width,
   required int height,
   required PictureFit fit,
+  Rect? crop,
 });
 
 /// Asks whether this phone can open a connection to [endpoint], offering to
@@ -151,6 +153,8 @@ class _PictureScreenState extends State<PictureScreen> {
   String? _sourceName;
 
   PictureFit _fit = PictureFit.fit;
+  Rect? _crop;
+  bool _cropping = false;
 
   /// The composed RGB888 and the geometry it was composed for. Kept together
   /// so a send can prove the bytes match the panel they were framed for.
@@ -266,6 +270,7 @@ class _PictureScreenState extends State<PictureScreen> {
       name: _sourceName,
       width: width,
       height: height,
+      crop: _crop,
     );
   }
 
@@ -274,6 +279,7 @@ class _PictureScreenState extends State<PictureScreen> {
     String? name,
     required int width,
     required int height,
+    Rect? crop,
   }) async {
     final generation = ++_generation;
     setState(() {
@@ -288,6 +294,7 @@ class _PictureScreenState extends State<PictureScreen> {
         width: width,
         height: height,
         fit: _fit,
+        crop: crop,
       );
       if (!mounted || generation != _generation) return;
       if (rgb.length != expected) {
@@ -301,6 +308,7 @@ class _PictureScreenState extends State<PictureScreen> {
       setState(() {
         _source = source;
         if (name != null) _sourceName = name;
+        _crop = crop;
         _prepared = rgb;
         _preparedWidth = width;
         _preparedHeight = height;
@@ -328,6 +336,41 @@ class _PictureScreenState extends State<PictureScreen> {
     if (_fit == fit || _sending) return;
     setState(() => _fit = fit);
     if (_source != null) unawaited(_reframe());
+  }
+
+  Future<void> _editCrop() async {
+    final source = _source;
+    if (source == null || _sending || _preparing || _cropping) return;
+    setState(() => _cropping = true);
+    try {
+      final image = await decodePicture(source);
+      try {
+        if (!mounted) return;
+        final route = MaterialPageRoute<Rect>(
+          builder: (_) => PictureCropScreen(
+            image: image,
+            panelWidth: widget.device.width,
+            panelHeight: widget.device.height,
+            initialCrop: _crop,
+          ),
+        );
+        final crop = await Navigator.of(context).push<Rect>(route);
+        await route.completed;
+        if (!mounted || crop == null) return;
+        await _compose(
+          source,
+          width: widget.device.width,
+          height: widget.device.height,
+          crop: crop,
+        );
+      } finally {
+        image.dispose();
+      }
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = _composeError(e));
+    } finally {
+      if (mounted) setState(() => _cropping = false);
+    }
   }
 
   // -------------------------------------------------------------- sending
@@ -587,6 +630,7 @@ class _PictureScreenState extends State<PictureScreen> {
 
   Widget _chooserRow(BuildContext context, MirrorDevice device) {
     final enabled = !_sending &&
+        !_cropping &&
         device.supportsDisplay &&
         pictureGeometrySupported(device.width, device.height);
     return Row(
@@ -610,7 +654,7 @@ class _PictureScreenState extends State<PictureScreen> {
   }
 
   Widget _framingControls(BuildContext context) {
-    final enabled = !_sending && _source != null;
+    final enabled = !_sending && !_preparing && !_cropping && _source != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -631,10 +675,17 @@ class _PictureScreenState extends State<PictureScreen> {
           onSelectionChanged:
               enabled ? (selection) => _setFit(selection.first) : null,
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          key: const ValueKey<String>('picture-crop'),
+          onPressed: enabled ? _editCrop : null,
+          icon: const Icon(Icons.crop),
+          label: Text(_cropping ? 'Opening crop…' : 'Crop / zoom'),
+        ),
         const SizedBox(height: 4),
         Text(
-          'Fit keeps the whole picture with black bars; Fill covers the panel '
-          'and crops the edges.',
+          'Crop / zoom selects an area with the panel’s aspect ratio locked. '
+          'Fit keeps the selected area with black bars; Fill covers the panel.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
@@ -753,6 +804,7 @@ class _PictureScreenState extends State<PictureScreen> {
   bool _canSend(MirrorDevice device) =>
       _prepared != null &&
       !_preparing &&
+      !_cropping &&
       !_sending &&
       !device.uploading &&
       device.supportsDisplay &&

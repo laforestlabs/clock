@@ -386,7 +386,8 @@ flutter run -d linux
 
 The app opens on a remembered device dashboard with actual framebuffer previews,
 including timestamped images for offline mirrors. Select a device for its clock,
-BLE games, or persisted PNG/JPEG picture display with Fit/Fill framing. Actions
+BLE games, or persisted PNG/JPEG picture display with aspect-locked pinch/drag
+cropping and Fit/Fill framing. Actions
 remain bound to that device. The layout designer/simulator is a separate app-menu
 destination, using the same `core/` C renderer as the panel.
 

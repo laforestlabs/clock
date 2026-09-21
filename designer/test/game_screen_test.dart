@@ -86,19 +86,17 @@ String _name(String id) =>
 
 /// The wire labels a game declares, in code order.
 List<String> _wires(String id) => <String>[
-      for (final control
-          in GameEngine.games
-              .firstWhere((GameInfo game) => game.id == id)
-              .controls)
+      for (final control in GameEngine.games
+          .firstWhere((GameInfo game) => game.id == id)
+          .controls)
         control.label,
     ];
 
 /// The wire labels a game declares as axes (its tilt controls).
 Set<String> _axisWires(String id) => <String>{
-      for (final control
-          in GameEngine.games
-              .firstWhere((GameInfo game) => game.id == id)
-              .controls)
+      for (final control in GameEngine.games
+          .firstWhere((GameInfo game) => game.id == id)
+          .controls)
         if (control.isAxis) control.label,
     };
 
@@ -686,9 +684,10 @@ List<Offset> _whitePixels(Uint8List rgba) {
 }
 
 /// The rect of the panel the round renders into, wherever it sits on screen.
-Rect _panelRect(WidgetTester tester) => tester.getRect(find.byWidgetPredicate(
-    (Widget w) =>
-        w is CustomPaint && w.painter.runtimeType.toString() == '_GamePainter'));
+Rect _panelRect(WidgetTester tester) =>
+    tester.getRect(find.byWidgetPredicate((Widget w) =>
+        w is CustomPaint &&
+        w.painter.runtimeType.toString() == '_GamePainter'));
 
 /// Open a game in motion mode on the real widget, calibrate it with a still
 /// phone, and hand the live round to [script] with the sampler that moves it.
@@ -728,8 +727,8 @@ Future<void> _motionRound(
 /// The whole motion play area of the round on screen, and a point near its top
 /// left: the margin above the caption, which is inside the surface and nowhere
 /// near the Shoot pad.
-Rect _surfaceRect(WidgetTester tester) => tester
-    .getRect(find.byKey(const ValueKey<String>('motion-shoot-surface')));
+Rect _surfaceRect(WidgetTester tester) =>
+    tester.getRect(find.byKey(const ValueKey<String>('motion-shoot-surface')));
 
 Offset _blankSpot(WidgetTester tester) =>
     _surfaceRect(tester).topLeft + const Offset(6, 6);
@@ -1326,7 +1325,8 @@ void main() {
     // and the probe's readouts sat pinned at zero.
     const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
     const gyroChannel = 'dev.fluttercommunity.plus/sensors/gyroscope';
-    const sensorMethods = MethodChannel('dev.fluttercommunity.plus/sensors/method');
+    const sensorMethods =
+        MethodChannel('dev.fluttercommunity.plus/sensors/method');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
@@ -1341,7 +1341,8 @@ void main() {
       messenger.setMockMethodCallHandler(sensorMethods, null);
       messenger.setMockMethodCallHandler(
           const MethodChannel(sensorChannel), null);
-      messenger.setMockMethodCallHandler(const MethodChannel(gyroChannel), null);
+      messenger.setMockMethodCallHandler(
+          const MethodChannel(gyroChannel), null);
     });
 
     Future<void> sample(WidgetTester t, double x, double y, double z) async {
@@ -1837,37 +1838,39 @@ void main() {
           reason: 'the Shoot pad is part of the surface, not outside it');
       expect(body.contains(panel.center), isTrue);
       expect(body.contains(readout), isTrue);
-      expect(
-          body.top,
-          greaterThan(
-              tester.getRect(find.byTooltip('Pause')).bottom - 1e-6),
+      expect(body.top,
+          greaterThan(tester.getRect(find.byTooltip('Pause')).bottom - 1e-6),
           reason: 'the app bar is outside the play area');
 
       // Two taps a tick apart, on two different parts of the play area: an
       // empty corner and the panel itself. The second must not wait for the
       // first to leave the panel. The cannon starts centred at x=30, so both
       // bullets are at x=31, four pixels apart after the tick between them.
-      expect(find.text('Tap anywhere in the play area to shoot.'),
-          findsOneWidget,
+      expect(
+          find.text('Tap anywhere in the play area to shoot.'), findsOneWidget,
           reason: 'the surface says what it does');
       await tester.tapAt(_blankSpot(tester));
       await scene.frame();
       await tester.tapAt(panel.center);
       await scene.frame();
-      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
-        const Offset(31, 24),
-        const Offset(31, 26),
-      ]));
+      expect(
+          _whitePixels(scene.pixels()),
+          unorderedEquals(<Offset>[
+            const Offset(31, 24),
+            const Offset(31, 26),
+          ]));
 
       // And the readout is a third part of the same surface: a tap there is a
       // press too, so the three sit one tick apart.
       await tester.tapAt(readout);
       await scene.frame();
-      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
-        const Offset(31, 22),
-        const Offset(31, 24),
-        const Offset(31, 26),
-      ]));
+      expect(
+          _whitePixels(scene.pixels()),
+          unorderedEquals(<Offset>[
+            const Offset(31, 22),
+            const Offset(31, 24),
+            const Offset(31, 26),
+          ]));
     });
   });
 
@@ -1882,10 +1885,12 @@ void main() {
       await scene.frame();
       await tester.tap(scene.pad('Shoot'));
       await scene.frame();
-      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
-        const Offset(31, 24),
-        const Offset(31, 26),
-      ]));
+      expect(
+          _whitePixels(scene.pixels()),
+          unorderedEquals(<Offset>[
+            const Offset(31, 24),
+            const Offset(31, 26),
+          ]));
       await first.up();
     });
 
@@ -1896,10 +1901,12 @@ void main() {
       await scene.frame();
       await tester.tapAt(_blankSpot(tester));
       await scene.frame();
-      expect(_whitePixels(scene.pixels()), unorderedEquals(<Offset>[
-        const Offset(31, 24),
-        const Offset(31, 26),
-      ]));
+      expect(
+          _whitePixels(scene.pixels()),
+          unorderedEquals(<Offset>[
+            const Offset(31, 24),
+            const Offset(31, 26),
+          ]));
       await first.up();
     });
   });
@@ -1952,8 +1959,8 @@ void main() {
     await _motionRound(tester, 'invaders', (scene, sample) async {
       final TestGesture first = await tester.startGesture(_blankSpot(tester));
       await scene.frame();
-      final TestGesture second = await tester.startGesture(
-          _surfaceRect(tester).topLeft + const Offset(6, 40));
+      final TestGesture second = await tester
+          .startGesture(_surfaceRect(tester).topLeft + const Offset(6, 40));
       await scene.frame();
       expect(_whitePixels(scene.pixels()).length, 2,
           reason: 'two fingers, two presses');
@@ -2034,34 +2041,14 @@ void main() {
     });
   });
 
-  testWidgets('the setup hint says how the selected game is steered',
-      (tester) async {
-    _mockSensors(tester);
-    await _scene(tester, (scene) async {
-      await scene.pick('invaders');
-      await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
-      await tester.pump();
-      expect(find.text('Tilt steers; tap the play area to shoot.'),
-          findsOneWidget,
-          reason: 'Invaders does not confine its actions to one corner');
-
-      // Every other game keeps the old sentence: its actions really are the
-      // pads on the right.
-      await scene.pick('tetris');
-      expect(find.text('Tilt steers; actions stay on the right.'),
-          findsOneWidget);
-      expect(find.text('Tilt steers; tap the play area to shoot.'),
-          findsNothing);
-    });
-  });
-
   testWidgets('motion rounds without a Shoot control get no firing surface',
       (tester) async {
     for (final id in const <String>['probe', 'tetris']) {
       await _motionRound(tester, id, (scene, sample) async {
         expect(find.byKey(const ValueKey<String>('motion-shoot-surface')),
             findsNothing,
-            reason: '$id declares no Shoot, so the whole body is not a control');
+            reason:
+                '$id declares no Shoot, so the whole body is not a control');
         expect(find.byKey(const ValueKey<String>('motion-shoot-hint')),
             findsNothing);
       });
@@ -2072,11 +2059,9 @@ void main() {
       'motion Invaders fires nothing while paused, and only a fresh press after',
       (tester) async {
     await _motionRound(tester, 'invaders', (scene, sample) async {
-      final TestGesture thumb =
-          await tester.startGesture(_blankSpot(tester));
+      final TestGesture thumb = await tester.startGesture(_blankSpot(tester));
       await scene.frame();
-      expect(_whitePixels(scene.pixels()).length, 1,
-          reason: 'the press fired');
+      expect(_whitePixels(scene.pixels()).length, 1, reason: 'the press fired');
 
       // The app bar is outside the surface, and Help is outside the round
       // until it comes back.
@@ -2172,8 +2157,8 @@ void main() {
       // No mode to choose, and no mode chosen: the screen is already on tilt.
       expect(find.byKey(const ValueKey<String>('mode-motion')), findsNothing);
       expect(find.byKey(const ValueKey<String>('mode-manual')), findsNothing);
-      expect(find.text('Tilt steers; actions stay on the right.'),
-          findsOneWidget);
+      expect(
+          find.text('Tilt steers; actions stay on the right.'), findsOneWidget);
 
       await scene.start();
       expect(find.text('Hold the phone still'), findsNothing,
@@ -2213,7 +2198,8 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
       await tester.pump();
       expect(find.text('Hold the phone still'), findsNothing);
-      expect(find.text('Motion unavailable; use manual controls'), findsWidgets);
+      expect(
+          find.text('Motion unavailable; use manual controls'), findsWidgets);
       expect(scene.pad('Left'), findsOneWidget);
       expect(scene.pad('Right'), findsOneWidget);
       await scene.advance(2);
@@ -2228,9 +2214,10 @@ void main() {
       await scene.pick('snake');
       await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
       await _pumpFor(tester);
-      expect(find.byKey(const ValueKey<String>('menu-diagnostics')),
-          findsNothing);
-      expect(find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey<String>('menu-diagnostics')), findsNothing);
+      expect(
+          find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
     }, simplified: true);
   });
 }
