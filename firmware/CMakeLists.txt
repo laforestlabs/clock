@@ -36,4 +36,4 @@ if(NOT _firmware_version_check EQUAL 0)
         "firmware version check:\n${_firmware_version_err}${_firmware_version_out}")
 endif()
 
-project(smart_mirror VERSION 0.2.36)
+project(smart_mirror VERSION 0.2.37)

@@ -469,6 +469,9 @@ gamekit/
     invaders/     a cannon vs an alien wall that shoots back
 ```
 
+Breakout starts with a 9-pixel-wide paddle on the 64-pixel panel. Each cleared
+level narrows it by one pixel, down to a 3-pixel minimum.
+
 ### `game-cli`
 
 The harness mirrors `mirror-cli` deliberately, so the feedback loop is the one

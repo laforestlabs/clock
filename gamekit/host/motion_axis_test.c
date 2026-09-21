@@ -292,7 +292,7 @@ static void test_rally(void)
 static void test_breakout(void)
 {
     printf("breakout: the paddle's x is the phone's angle\n");
-    /* paddle_w = clamp(64/10, 3, 10) = 6, so the travel is 0..58. Each phase
+    /* The starting paddle is 9 px wide, so the travel is 0..55. Each phase
      * runs in a fresh session for a bounded number of frames: the ball is live
      * from the reset and three misses would end the round, and a finished
      * round stops reading input entirely. */
@@ -301,13 +301,13 @@ static void test_breakout(void)
 
     feed(s, BREAKOUT_TILT_X, 0, 50);
     const int centre = row_run_start(s, PANEL_H - 3, 3, 1, 1, 1);
-    check(centre == 29, "neutral centres the paddle");
+    check(centre == 27, "neutral centres the paddle");
 
     hold(s, BREAKOUT_TILT_X, 0, 8);
     check(row_run_start(s, PANEL_H - 3, 3, 1, 1, 1) == centre, "a held angle does not drift");
 
     feed(s, BREAKOUT_TILT_X, 32767, 50);
-    check(row_run_start(s, PANEL_H - 3, 3, 1, 1, 1) == 58, "+full is the right wall");
+    check(row_run_start(s, PANEL_H - 3, 3, 1, 1, 1) == 55, "+full is the right wall");
     feed(s, BREAKOUT_TILT_X, -32767, 50);
     check(row_run_start(s, PANEL_H - 3, 3, 1, 1, 1) == 0, "-full is the left wall");
 

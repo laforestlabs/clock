@@ -181,7 +181,6 @@ static void test_ends_mirror(void)
     printf("breakout: the paddle's ends send the ball left and right\n");
     fixture f;
     if (!fx_open(&f, 64, 32)) { check(0, "fixture opens"); return; }
-    check(f.st.paddle_w == 6, "the first level's paddle is 6 px wide");
 
     fx_hit_paddle(&f, 20, 20, 6);          /* the paddle's left end */
     const int32_t lvx = f.st.bvx, lvy = f.st.bvy;

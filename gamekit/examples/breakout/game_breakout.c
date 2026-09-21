@@ -154,7 +154,8 @@ static int clampi(int v, int lo, int hi)
  * three, so meeting the ball gets a little harder each time the wall comes back. */
 static int level_paddle_w(int panel_w, uint8_t level)
 {
-    return clampi(panel_w / 10 - (int)(level - 1), 3, 10);
+    const int starting_w = clampi(panel_w / 10, 3, 10) * 3 / 2;
+    return clampi(starting_w - (int)(level - 1), 3, 15);
 }
 
 /* Where on the paddle the ball landed, as one of the eight bounce directions.
