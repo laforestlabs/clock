@@ -3461,6 +3461,96 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  Widget _buildGameTiles(
+      List<String> ids, String? selected, ValueChanged<String> onSelected) {
+    final colors = Theme.of(context).colorScheme;
+    return LayoutBuilder(builder: (context, constraints) {
+      final columns = (constraints.maxWidth / 280).floor().clamp(1, 4);
+      final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+      return Wrap(
+        key: const ValueKey<String>('game-picker'),
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          for (final id in ids)
+            SizedBox(
+              width: width,
+              child: Semantics(
+                selected: id == selected,
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  clipBehavior: Clip.antiAlias,
+                  color: id == selected ? colors.primaryContainer : null,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: id == selected
+                          ? colors.primary
+                          : colors.outlineVariant,
+                      width: id == selected ? 2 : 1,
+                    ),
+                  ),
+                  child: InkWell(
+                    key: ValueKey<String>('game-tile-$id'),
+                    onTap: () => onSelected(id),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: 2,
+                          child: ColoredBox(
+                            color: Colors.black,
+                            child: _gameCopy.containsKey(id)
+                                ? Image.asset(
+                                    'assets/games/$id.png',
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.none,
+                                    semanticLabel:
+                                        '${_gameLabel(id)} screenshot',
+                                  )
+                                : const Center(
+                                    child: Text('Screenshot unavailable',
+                                        style:
+                                            TextStyle(color: Colors.white70)),
+                                  ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(_gameLabel(id),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                  ),
+                                  if (id == selected)
+                                    Icon(Icons.check_circle,
+                                        color: colors.primary, size: 20),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(_goalFor(id) ??
+                                  'A game provided by this mirror. '
+                                      'Select it to see its controls.'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
   /// The local setup view: pick a game and its panel, read what the game asks
   /// for and which controls do it, then start. Everything here scrolls on its
   /// own, so a small window never clips a control out of reach; the display
@@ -3490,34 +3580,20 @@ class _GameScreenState extends State<GameScreen>
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[
-              // The selected game. The key is the stable handle the widget
-              // tests drive the picker through.
-              DropdownButton<int>(
-                key: const ValueKey<String>('game-picker'),
-                value: _gameIndex < playable.length ? _gameIndex : 0,
-                items: <DropdownMenuItem<int>>[
-                  for (var i = 0; i < playable.length; i++)
-                    DropdownMenuItem<int>(
-                      value: i,
-                      child: Text(playable[i].name),
-                    ),
-                ],
-                onChanged: (v) {
-                  setState(() => _gameIndex = v ?? 0);
-                  _reclaimGameplayFocus();
-                },
-              ),
-              // This screen has one input route, so a two-player game is
-              // played against the runtime's AI.
-              if (selected != null && selected.maxPlayers > 1)
-                const Text('Solo vs computer'),
-            ],
+          _buildGameTiles(
+            [for (final game in playable) game.id],
+            selected?.id,
+            (id) {
+              setState(() =>
+                  _gameIndex = playable.indexWhere((game) => game.id == id));
+              _reclaimGameplayFocus();
+            },
           ),
+          if (selected != null && selected.maxPlayers > 1)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text('Solo vs computer'),
+            ),
           const SizedBox(height: 12),
           if (selected != null) ...<Widget>[
             Text(
@@ -3902,19 +3978,11 @@ class _GameScreenState extends State<GameScreen>
           if (playable.isEmpty)
             const Text('No games on this mirror')
           else
-            DropdownButton<String>(
-              key: const ValueKey<String>('game-picker'),
-              value: _mirrorPlayableSelection ??
-                  (playable.isEmpty ? null : playable.first),
-              items: <DropdownMenuItem<String>>[
-                for (final id in playable)
-                  DropdownMenuItem<String>(
-                    value: id,
-                    child: Text(_gameLabel(id)),
-                  ),
-              ],
-              onChanged: (v) {
-                setState(() => _mirrorSelected = v);
+            _buildGameTiles(
+              playable,
+              _mirrorPlayableSelection ?? playable.first,
+              (id) {
+                setState(() => _mirrorSelected = id);
                 _reclaimGameplayFocus();
               },
             ),

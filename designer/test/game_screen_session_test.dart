@@ -204,9 +204,12 @@ void main() {
   /// belongs to the probe's own subscription and does not count toward the
   /// twenty that define neutral.
   Future<void> beginCalibration(WidgetTester tester) async {
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
     if (find.text('Start Game').evaluate().isNotEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -297,6 +300,7 @@ void main() {
     expect(session.started, isEmpty);
     await sample(tester, 0, 0, 9.8);
     if (session.started.isEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -311,8 +315,11 @@ void main() {
   testWidgets('a sensor that never reports is written off before the hold',
       (tester) async {
     final (session, connection) = await boot(tester);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     // The probe is asked, and answers nothing: the player is never asked to
@@ -330,8 +337,11 @@ void main() {
   testWidgets('a sensor error before neutral is never asked to hold still',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
@@ -388,6 +398,7 @@ void main() {
       await sample(tester, 0, 0, 9.8);
     }
     if (session.started.isEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -433,6 +444,7 @@ void main() {
       await sample(tester, 0, 0, 9.8);
     }
     if (session.started.isEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -482,6 +494,7 @@ void main() {
       await sample(tester, 0, 0, 9.8);
     }
     if (session.started.isEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -556,6 +569,7 @@ void main() {
   testWidgets('terminal notification before Start acknowledgment survives',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.statuses.add('game over snake');
@@ -569,6 +583,7 @@ void main() {
   testWidgets('watchdog pause before Start acknowledgment survives',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.statuses.add('game paused');
@@ -581,6 +596,7 @@ void main() {
   testWidgets('unrelated game terminal event does not end active game',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.statuses.add('game over tetris');
@@ -595,6 +611,7 @@ void main() {
   testWidgets('a replaced session cannot finish an old pending Start',
       (tester) async {
     final (session, connection) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     final replacement = _Session()..catalogue = ['tetris'];
@@ -640,6 +657,8 @@ void main() {
     try {
       await connection.disconnect();
       await tester.pump();
+      await tester
+          .ensureVisible(find.byKey(const ValueKey<String>('start-game')));
       await tester.tap(find.byKey(const ValueKey<String>('start-game')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 25));
@@ -709,6 +728,7 @@ void main() {
 
   testWidgets('Help waits for the actual Pause acknowledgment', (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -737,6 +757,7 @@ void main() {
       s.pauseFailure =
           BlePushException('Update the mirror firmware to use Pause.');
     });
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -756,6 +777,7 @@ void main() {
   testWidgets('confirmed mirror Restart starts after the acknowledged Stop',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -779,6 +801,7 @@ void main() {
   testWidgets('diagnostics poll only while open with one request in flight',
       (tester) async {
     final (session, _) = await boot(tester);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -814,6 +837,7 @@ void main() {
     final (session, _) = await boot(tester);
     addTearDown(() => tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
@@ -832,6 +856,7 @@ void main() {
       s.pauseFailure =
           BlePushException('Update the mirror firmware to use Pause.');
     });
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -857,6 +882,7 @@ void main() {
     });
     addTearDown(() => tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -883,6 +909,7 @@ void main() {
     });
     addTearDown(() => tester.binding
         .handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -904,6 +931,7 @@ void main() {
     final (session, connection) = await boot(tester, configure: (s) {
       s.stopFailure = TimeoutException('Stop acknowledgment lost');
     });
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -994,6 +1022,7 @@ void main() {
       await sample(tester, 0, 0, 9.8);
     }
     if (session.started.isEmpty) {
+      await tester.ensureVisible(find.text('Start Game'));
       await tester.tap(find.text('Start Game'));
       await tester.pump();
     }
@@ -1111,6 +1140,7 @@ void main() {
     expect(find.byKey(const ValueKey<String>('mode-motion')), findsNothing);
     expect(find.byKey(const ValueKey<String>('mode-manual')), findsNothing);
 
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     expect(find.text('Hold the phone still'), findsNothing,
@@ -1138,6 +1168,7 @@ void main() {
   testWidgets('the default view plays on the pads when nothing reports',
       (tester) async {
     final (session, _) = await boot(tester, simplified: true);
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     // Nothing ever reports: the round is not asked to hold still, and the
@@ -1238,6 +1269,7 @@ void main() {
         return Future<ui.Image?>.value(null);
       },
     );
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();
@@ -1299,6 +1331,7 @@ void main() {
         return Future<ui.Image?>.value(null);
       },
     );
+    await tester.ensureVisible(find.text('Start Game'));
     await tester.tap(find.text('Start Game'));
     await tester.pump();
     session.acknowledge();

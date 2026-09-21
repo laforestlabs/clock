@@ -13,6 +13,12 @@ settings. Opening its page or clock editor changes nothing on the panel. Actions
 stay bound to that device; equal names do not merge identities. Legacy firmware
 without a stable identity keeps separate LAN/Bluetooth records.
 
+**Games** uses responsive tiles with native-rendered screenshots and a short
+description for each bundled game, in both the device gamepad and local
+simulator. Select a tile to review its controls, then choose **Start Game**.
+Screenshots are bundled for offline use; games from newer mirror firmware
+remain selectable even when this app has no screenshot or instructions for them.
+
 **Picture display** accepts one static PNG or JPEG (20 MiB / 40 million source
 pixels maximum). After choosing a photo, **Crop / zoom** opens a frame locked to
 the panel's aspect ratio. Pinch to zoom and drag to select the region; a zoom

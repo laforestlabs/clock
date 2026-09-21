@@ -80,10 +80,6 @@ Offset _redDotCentre(Uint8List rgba) {
   return Offset((minX + maxX) / 2, (minY + maxY) / 2);
 }
 
-/// Display name of a game in the shipped catalogue.
-String _name(String id) =>
-    GameEngine.games.firstWhere((GameInfo game) => game.id == id).name;
-
 /// The wire labels a game declares, in code order.
 List<String> _wires(String id) => <String>[
       for (final control in GameEngine.games
@@ -342,14 +338,11 @@ class _Scene {
 
   bool _closed = false;
 
-  /// The game picker: the dropdown, then the item. Only reachable while no
-  /// round is on screen, which is exactly when a round's game may change.
+  /// Select a tile while no round is on screen.
   Future<void> pick(String id) async {
-    final picker = find.byKey(const ValueKey<String>('game-picker'));
-    await tester.ensureVisible(picker);
-    await tester.tap(picker);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(_name(id)).last);
+    final tile = find.byKey(ValueKey<String>('game-tile-$id'));
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
     await tester.pumpAndSettle();
   }
 
@@ -704,6 +697,8 @@ Future<void> _motionRound(
   final sample = _mockSensors(tester);
   await _scene(tester, (scene) async {
     await scene.pick(id);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
     await tester.pump();
     await scene.start();
@@ -1356,6 +1351,8 @@ void main() {
 
     await _scene(tester, (scene) async {
       await scene.pick('probe');
+      await tester
+          .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
       await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
       await tester.pump();
       await scene.start();
@@ -2096,6 +2093,8 @@ void main() {
     final sample = _mockSensors(tester);
     await _scene(tester, (scene) async {
       await scene.pick('invaders');
+      await tester
+          .ensureVisible(find.byKey(const ValueKey<String>('mode-motion')));
       await tester.tap(find.byKey(const ValueKey<String>('mode-motion')));
       await tester.pump();
       await scene.start();
