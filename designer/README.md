@@ -12,12 +12,18 @@ Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions
 stay bound to that device; equal names do not merge identities. Legacy firmware
 without a stable identity keeps separate LAN/Bluetooth records.
+The device page keeps mode actions visible in compact cards; the info buttons
+expand explanations without hiding connection or capability warnings. Landscape
+and desktop windows place the preview beside its status and the modes in a row.
 
-**Games** uses responsive tiles with native-rendered screenshots and a short
-description for each bundled game, in both the device gamepad and local
-simulator. Select a tile to review its controls, then choose **Start Game**.
+**Games** uses compact thumbnail-and-title tiles in both the device gamepad and
+local simulator. Select a tile to see its description and controls once, beside
+the picker in landscape or below it on a phone. **Start Game** stays in a fixed
+footer, so extra games or larger text can scroll without hiding the action.
 Screenshots are bundled for offline use; games from newer mirror firmware
 remain selectable even when this app has no screenshot or instructions for them.
+During motion play, the local board fits the available height and action buttons
+and tilt readouts stay beside it rather than below a scrolling preview.
 
 **Picture display** accepts one static PNG or JPEG (20 MiB / 40 million source
 pixels maximum). After choosing a photo, **Crop / zoom** opens a frame locked to
@@ -26,8 +32,10 @@ slider and **Reset** are also available. **Use crop** applies the selection to
 the pixel-exact framing preview; Back cancels without changing the picture.
 The original photo is retained for subsequent edits. **Fit** preserves the
 selected area with black bars; **Fill** covers the panel without stretching.
-The framing preview is local and uncalibrated.
-**Display on …** sends panel-sized RGB over Wi-Fi and waits for persistence.
+The framing preview is local and uncalibrated; the info icon explains framing
+and color differences. Controls and previews use separate columns in landscape.
+**Display on …** stays below the scrolling workspace, sends panel-sized RGB over
+Wi-Fi and waits for persistence.
 Saved pictures survive phone closure and mirror reboot. Selecting **Use smart
 clock** retains the picture; **Show saved picture** restores it. Games temporarily
 override either base display and restore it on Stop or Bluetooth disconnect.
@@ -36,6 +44,10 @@ Uploads and fresh previews require the phone and mirror on the same local networ
 The app menu's **Layout designer / simulator** remains an explicitly local
 workspace. Its preview uses the same C renderer as the ESP32 through `dart:ffi`.
 Native-library failures affect that workspace, not home or picture upload.
+The default clock editor places customization beside the preview in landscape;
+on a phone the preview takes about a third of the available height, leaving
+more room for layout and color choices. Small windows and large text retain
+scrolling as a fallback rather than clipping controls.
 
 ## Setup
 

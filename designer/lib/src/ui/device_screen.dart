@@ -53,6 +53,19 @@ class _DeviceScreenState extends State<DeviceScreen>
   /// change or a game frame shows up while the owner is looking at it.
   static const Duration pollInterval = Duration(seconds: 2);
 
+  /// The width at which the page stops stacking and starts spending it: the
+  /// preview sits beside the status it belongs to, and the three display cards
+  /// share one row instead of adding three heights.
+  static const double wideBreakpoint = 600;
+
+  /// Nothing here is worth reading across a desk-wide window, so the page
+  /// keeps a content width and centres itself rather than stretching.
+  static const double contentWidth = 1040;
+
+  /// The preview box in the header: the panel keeps its shape and fits inside
+  /// one band of the page instead of dominating it.
+  static const double previewHeight = 96;
+
   Timer? _timer;
   bool _foreground = true;
   bool _onTop = true;
@@ -532,93 +545,152 @@ class _DeviceScreenState extends State<DeviceScreen>
   }
 
   Widget _body(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: contentWidth),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= wideBreakpoint;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: <Widget>[
+                _header(context, wide: wide),
+                const SizedBox(height: 12),
+                if (wide)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(child: _clockCard()),
+                      const SizedBox(width: 12),
+                      Expanded(child: _gamesCard()),
+                      const SizedBox(width: 12),
+                      Expanded(child: _pictureCard()),
+                    ],
+                  )
+                else ...<Widget>[
+                  _clockCard(),
+                  const SizedBox(height: 12),
+                  _gamesCard(),
+                  const SizedBox(height: 12),
+                  _pictureCard(),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _clockCard() => _SmartClockCard(
+        device: _device,
+        busy: _busy,
+        canMutate: _canMutate,
+        onUseClock: () => unawaited(_setMode(DisplayMode.clock)),
+        onEditClock: _openClockEditor,
+      );
+
+  Widget _gamesCard() => _GamesCard(
+        device: _device,
+        onOpen: () => unawaited(_openGames()),
+      );
+
+  Widget _pictureCard() => _PictureCard(
+        device: _device,
+        busy: _busy,
+        canUpload: _canUpload,
+        canMutate: _canMutate,
+        onChoose: () => unawaited(_openPicture()),
+        onShow: () => unawaited(_setMode(DisplayMode.picture)),
+      );
+
+  /// The preview and the state it is showing. A phone stacks them; a window
+  /// with room puts the status and its buttons beside the panel, so the width
+  /// is spent on content instead of on margins around a tall picture.
+  ///
+  /// Device settings is deliberately not repeated here: it is in the app bar,
+  /// where it does not cost the page a card.
+  Widget _header(BuildContext context, {required bool wide}) {
     final theme = Theme.of(context);
     final device = _device;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+    final preview = DevicePreview(
+      device: device,
+      height: previewHeight,
+      semanticLabel: '${device.name} display',
+    );
+    final detailAlign =
+        wide ? CrossAxisAlignment.start : CrossAxisAlignment.center;
+    final actionAlign = wide ? WrapAlignment.start : WrapAlignment.center;
+    final details = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: detailAlign,
       children: <Widget>[
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: DevicePreview(
-              device: device,
-              height: 160,
-              semanticLabel: '${device.name} display',
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
         Text(
           deviceStatusText(device),
-          textAlign: TextAlign.center,
+          textAlign: wide ? TextAlign.start : TextAlign.center,
           style: theme.textTheme.titleSmall,
         ),
         if (devicePreviewIsStale(device) && device.frameAt != null)
           Text(
             'Last seen ${relativeTime(device.frameAt!)}',
-            textAlign: TextAlign.center,
+            textAlign: wide ? TextAlign.start : TextAlign.center,
             style: theme.textTheme.bodySmall,
           ),
-        if (device.error != null) ...<Widget>[
-          const SizedBox(height: 8),
+        if (device.error != null)
           Text(
             device.error!,
-            textAlign: TextAlign.center,
+            textAlign: wide ? TextAlign.start : TextAlign.center,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.error),
           ),
-        ],
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Wrap(
-          alignment: WrapAlignment.center,
+          alignment: actionAlign,
           spacing: 8,
+          runSpacing: 8,
           children: <Widget>[
             OutlinedButton.icon(
               onPressed: () => unawaited(_reconnect()),
               icon: const Icon(Icons.refresh),
               label: const Text('Reconnect'),
             ),
+            // A tooltip rather than a second wide button: two labelled buttons
+            // of this length do not fit a phone, and the row they wrap into
+            // costs the page more height than the Bluetooth action is worth.
             if (device.bleId == null)
-              OutlinedButton.icon(
-                onPressed: () => unawaited(_pair()),
+              IconButton.outlined(
+                tooltip: 'Connect Bluetooth',
                 icon: const Icon(Icons.bluetooth_searching),
-                label: const Text('Connect Bluetooth'),
+                onPressed: () => unawaited(_pair()),
               ),
           ],
         ),
-        const SizedBox(height: 16),
-        _SmartClockCard(
-          device: device,
-          busy: _busy,
-          canMutate: _canMutate,
-          onUseClock: () => unawaited(_setMode(DisplayMode.clock)),
-          onEditClock: _openClockEditor,
-        ),
-        const SizedBox(height: 12),
-        _GamesCard(
-          device: device,
-          onOpen: () => unawaited(_openGames()),
-        ),
-        const SizedBox(height: 12),
-        _PictureCard(
-          device: device,
-          busy: _busy,
-          canUpload: _canUpload,
-          canMutate: _canMutate,
-          onChoose: () => unawaited(_openPicture()),
-          onShow: () => unawaited(_setMode(DisplayMode.picture)),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.tune),
-            title: const Text('Device settings'),
-            subtitle: const Text(
-                'Setup, brightness, Wi-Fi, name, orientation and firmware'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => unawaited(_openSettings()),
+      ],
+    );
+    if (!wide) {
+      return Column(
+        children: <Widget>[
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: preview,
+            ),
+          ),
+          const SizedBox(height: 12),
+          details,
+        ],
+      );
+    }
+    return Row(
+      children: <Widget>[
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: preview,
           ),
         ),
+        const SizedBox(width: 16),
+        Expanded(child: details),
       ],
     );
   }
@@ -786,8 +858,16 @@ String? _mutationHint(MirrorDevice device, bool canMutate) {
   return 'Offline. Reconnect to change the display.';
 }
 
-/// One of the three display cards.
-class _ModeCard extends StatelessWidget {
+/// One of the three display cards: what the card is, what state it is in, and
+/// the actions that change it.
+///
+/// The state and the actions are what the page exists for, so they are always
+/// on screen; the explanation is prose read once, so it opens from the info
+/// control and costs no height until asked for. Anything the owner has to know
+/// *before* tapping — an offline device, an unpaired one — stays visible
+/// rather than hidden: a disabled button with no reason is worse than a card
+/// with a line of text.
+class _ModeCard extends StatefulWidget {
   const _ModeCard({
     required this.icon,
     required this.title,
@@ -805,37 +885,70 @@ class _ModeCard extends StatelessWidget {
   final String? hint;
 
   @override
+  State<_ModeCard> createState() => _ModeCardState();
+}
+
+class _ModeCardState extends State<_ModeCard> {
+  bool _explained = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hint = widget.hint;
     return Card(
+      // The page already spaces its cards; a second margin inside each one
+      // would only add height to a column that has to fit a phone.
+      margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(12, 6, 6, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Row(
               children: <Widget>[
-                Icon(icon, size: 20),
-                const SizedBox(width: 12),
+                Icon(widget.icon, size: 18),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: Text(title, style: theme.textTheme.titleMedium),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(widget.title, style: theme.textTheme.titleSmall),
+                      Text(
+                        widget.state,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip:
+                      _explained ? 'Hide what this does' : 'What this does',
+                  icon: Icon(
+                    _explained ? Icons.expand_less : Icons.info_outline,
+                  ),
+                  onPressed: () => setState(() => _explained = !_explained),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Text(state, style: theme.textTheme.labelMedium),
-            const SizedBox(height: 8),
-            Text(explanation, style: theme.textTheme.bodySmall),
+            if (_explained) ...<Widget>[
+              const SizedBox(height: 4),
+              Text(widget.explanation, style: theme.textTheme.bodySmall),
+            ],
             if (hint != null) ...<Widget>[
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Text(
-                hint!,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                hint,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
-            const SizedBox(height: 12),
-            Wrap(spacing: 8, runSpacing: 8, children: actions),
+            const SizedBox(height: 6),
+            Wrap(spacing: 8, runSpacing: 8, children: widget.actions),
           ],
         ),
       ),

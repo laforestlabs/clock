@@ -260,8 +260,8 @@ Future<void> _open(
   _Renderer? renderer,
   PictureReachability? reachability,
 }) async {
-  // Tall enough that every control is on screen for a tap.
-  tester.view.physicalSize = const Size(800, 2400);
+  // Exercise the ordinary phone viewport, not an artificially tall page.
+  tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -329,6 +329,52 @@ void main() {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
     }
     _temps.clear();
+  });
+
+  testWidgets('picture tools and display stay reachable without page scrolling',
+      (tester) async {
+    final fixture = _Fixture();
+    final device = await fixture.addLan('127.0.0.1', withFrame: true);
+    final chooser = _Chooser()..willPick(pictureFile(7));
+    await _open(
+      tester,
+      fixture: fixture,
+      device: device,
+      chooser: chooser,
+      renderer: _Renderer(),
+    );
+    await _choose(tester);
+    for (final size in <Size>[
+      const Size(360, 640),
+      const Size(684, 384),
+      const Size(1280, 800),
+    ]) {
+      tester.view.physicalSize = size;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      for (final key in <String>[
+        'picture-choose',
+        'picture-crop',
+        'picture-display',
+      ]) {
+        expect(find.byKey(ValueKey<String>(key)).hitTestable(), findsOneWidget,
+            reason: '$key must be reachable at $size without scrolling');
+      }
+    }
+    tester.view.physicalSize = const Size(320, 568);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('picture-crop')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('picture-crop')).hitTestable(),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('picture-display')).hitTestable(),
+        findsOneWidget);
+    await _display(tester);
+    expect(fixture.lanAt('127.0.0.1:8080').uploadCalls, 1);
   });
 
   testWidgets('choosing composes locally and cancel writes nothing',

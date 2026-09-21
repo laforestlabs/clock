@@ -529,51 +529,123 @@ class _PictureScreenState extends State<PictureScreen> {
         appBar: AppBar(title: const Text('Picture display')),
         body: ListenableBuilder(
           listenable: device,
-          builder: (context, _) => ListView(
-            padding: const EdgeInsets.all(16),
-            children: <Widget>[
-              _header(context, device),
-              const SizedBox(height: 16),
-              _actualPreview(context, device),
-              const Divider(height: 32),
-              _chooserRow(context, device),
-              if (_source != null) ...<Widget>[
-                const SizedBox(height: 8),
-                Text(
-                  _sourceName ?? 'Selected picture',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              const SizedBox(height: 16),
-              _framingControls(context),
-              const SizedBox(height: 16),
-              _framingPreview(context),
-              const SizedBox(height: 8),
-              Text(
-                'Colors here are this app\'s composition, not a measurement: '
-                'the mirror\'s own preview above is the calibrated one.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 16),
-              _sendRow(context, device),
-              if (_notice != null) ...<Widget>[
-                const SizedBox(height: 12),
-                _Note(
-                  key: const ValueKey<String>('picture-notice'),
-                  icon: Icons.check_circle_outline,
-                  text: _notice!,
-                ),
-              ],
-              if (_error != null) ...<Widget>[
-                const SizedBox(height: 12),
-                _Note(
-                  key: const ValueKey<String>('picture-error'),
-                  icon: Icons.error_outline,
-                  text: _error!,
-                  isError: true,
-                ),
-              ],
-            ],
+          builder: (context, _) => SafeArea(
+            child: LayoutBuilder(builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 600;
+              final controls = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _chooserRow(context, device),
+                  if (_source != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        _sourceName ?? 'Selected picture',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  _framingControls(context),
+                ],
+              );
+              return Column(
+                children: <Widget>[
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1040),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              if (wide)
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: <Widget>[
+                                          _header(context, device),
+                                          const SizedBox(height: 12),
+                                          controls,
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 24),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: <Widget>[
+                                          _actualPreview(context, device),
+                                          const SizedBox(height: 12),
+                                          _framingPreview(context),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else ...<Widget>[
+                                Row(
+                                  children: <Widget>[
+                                    Expanded(child: _header(context, device)),
+                                    const SizedBox(width: 16),
+                                    SizedBox(
+                                      width: 128,
+                                      child: _actualPreview(context, device),
+                                    ),
+                                  ],
+                                ),
+                                const Divider(height: 24),
+                                controls,
+                                const SizedBox(height: 12),
+                                _framingPreview(context),
+                              ],
+                              if (_notice != null) ...<Widget>[
+                                const SizedBox(height: 12),
+                                _Note(
+                                  key: const ValueKey<String>('picture-notice'),
+                                  icon: Icons.check_circle_outline,
+                                  text: _notice!,
+                                ),
+                              ],
+                              if (_error != null) ...<Widget>[
+                                const SizedBox(height: 12),
+                                _Note(
+                                  key: const ValueKey<String>('picture-error'),
+                                  icon: Icons.error_outline,
+                                  text: _error!,
+                                  isError: true,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: constraints.maxHeight * .4,
+                      maxWidth: 1072,
+                    ),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: _sendRow(context, device),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }),
           ),
         ),
       ),
@@ -599,16 +671,21 @@ class _PictureScreenState extends State<PictureScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          _actualCaption(device),
-          style: Theme.of(context).textTheme.labelLarge,
+        Tooltip(
+          message: _actualCaption(device),
+          child: Text(
+            _actualCaption(device),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         // The record's own frame: this screen never writes a locally composed
         // picture into it, so what is drawn here came off the mirror.
         DevicePreview(
           device: device,
-          height: 96,
+          height: 64,
           semanticLabel: 'The display of ${device.name}',
         ),
       ],
@@ -633,7 +710,10 @@ class _PictureScreenState extends State<PictureScreen> {
         !_cropping &&
         device.supportsDisplay &&
         pictureGeometrySupported(device.width, device.height);
-    return Row(
+    return Wrap(
+      spacing: 12,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
         OutlinedButton.icon(
           key: const ValueKey<String>('picture-choose'),
@@ -641,13 +721,10 @@ class _PictureScreenState extends State<PictureScreen> {
           icon: const Icon(Icons.image_outlined),
           label: Text(_source == null ? 'Choose picture' : 'Choose another'),
         ),
-        const SizedBox(width: 12),
         if (_preparing)
-          const Expanded(
-            child: Text(
-              'Preparing the picture…',
-              key: ValueKey<String>('picture-preparing'),
-            ),
+          const Text(
+            'Preparing the picture…',
+            key: ValueKey<String>('picture-preparing'),
           ),
       ],
     );
@@ -655,8 +732,10 @@ class _PictureScreenState extends State<PictureScreen> {
 
   Widget _framingControls(BuildContext context) {
     final enabled = !_sending && !_preparing && !_cropping && _source != null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
         SegmentedButton<PictureFit>(
           segments: const <ButtonSegment<PictureFit>>[
@@ -675,18 +754,22 @@ class _PictureScreenState extends State<PictureScreen> {
           onSelectionChanged:
               enabled ? (selection) => _setFit(selection.first) : null,
         ),
-        const SizedBox(height: 8),
         OutlinedButton.icon(
           key: const ValueKey<String>('picture-crop'),
           onPressed: enabled ? _editCrop : null,
           icon: const Icon(Icons.crop),
           label: Text(_cropping ? 'Opening crop…' : 'Crop / zoom'),
         ),
-        const SizedBox(height: 4),
-        Text(
-          'Crop / zoom selects an area with the panel’s aspect ratio locked. '
-          'Fit keeps the selected area with black bars; Fill covers the panel.',
-          style: Theme.of(context).textTheme.bodySmall,
+        const Tooltip(
+          triggerMode: TooltipTriggerMode.tap,
+          message: 'Crop / zoom selects an area with the panel’s aspect ratio '
+              'locked. Fit keeps the selected area with black bars; Fill '
+              'covers the panel. The framing preview is local; the mirror’s '
+              'own preview shows its calibrated colors.',
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: Icon(Icons.info_outline, size: 20),
+          ),
         ),
       ],
     );
@@ -706,8 +789,10 @@ class _PictureScreenState extends State<PictureScreen> {
             key: const ValueKey<String>('picture-framing'),
             child: FramePreview(
               frame: frame,
-              height: frame.height *
-                  framingPreviewScale(frame.width, frame.height).toDouble(),
+              height: (frame.height *
+                      framingPreviewScale(frame.width, frame.height))
+                  .clamp(64, 160)
+                  .toDouble(),
               semanticLabel: 'Framing preview: ${frame.width} by '
                   '${frame.height} panel pixels',
             ),
@@ -831,9 +916,9 @@ class _EmptyFraming extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
-      child: Text(
+      child: const Text(
         'No picture chosen yet',
-        style: TextStyle(color: Theme.of(context).colorScheme.onInverseSurface),
+        style: TextStyle(color: Colors.white70),
       ),
     );
   }

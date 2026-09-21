@@ -353,12 +353,25 @@ class _DevicesScreenState extends State<DevicesScreen>
 
 /// One device, as a tile: its actual panel, its name, its mode and how it can
 /// be reached.
+///
+/// The tile packs itself to the width the grid gave it rather than assuming
+/// one shape: a wide tile puts the text beside the panel, which is height
+/// saved on every tile of a phone's single column, while the narrow tiles of a
+/// dense desktop grid keep the panel on top.
 class _DeviceTile extends StatelessWidget {
   const _DeviceTile({
     super.key,
     required this.device,
     required this.onOpen,
   });
+
+  /// Below this inner width the panel and the text stack.
+  static const double besideBreakpoint = 260;
+
+  /// The panel's box in each arrangement.
+  static const double panelHeight = 84;
+  static const double besidePanelHeight = 72;
+  static const double besidePanelWidth = 132;
 
   final MirrorDevice device;
   final VoidCallback onOpen;
@@ -382,40 +395,72 @@ class _DeviceTile extends StatelessWidget {
             onTap: onOpen,
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  DevicePreview(device: device, height: 84),
-                  const SizedBox(height: 10),
-                  Text(
-                    device.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    deviceModeLabel(device),
-                    style: theme.textTheme.labelMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    deviceStatusText(device),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  if (device.uploading)
-                    Text(
-                      'Sending picture…',
-                      style: theme.textTheme.bodySmall,
-                    )
-                  else if (stale && frameAt != null)
-                    Text(
-                      'Last seen ${relativeTime(frameAt)}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final beside = constraints.maxWidth >= besideBreakpoint;
+                  final details = Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        device.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
                       ),
-                    ),
-                ],
+                      const SizedBox(height: 2),
+                      Text(
+                        deviceModeLabel(device),
+                        style: theme.textTheme.labelMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        deviceStatusText(device),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      if (device.uploading)
+                        Text(
+                          'Sending picture…',
+                          style: theme.textTheme.bodySmall,
+                        )
+                      else if (stale && frameAt != null)
+                        Text(
+                          'Last seen ${relativeTime(frameAt)}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  );
+                  final preview = DevicePreview(
+                    device: device,
+                    height: beside ? besidePanelHeight : panelHeight,
+                  );
+                  if (!beside) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        preview,
+                        const SizedBox(height: 10),
+                        details,
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: besidePanelWidth,
+                        ),
+                        child: preview,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: details),
+                    ],
+                  );
+                },
               ),
             ),
           ),

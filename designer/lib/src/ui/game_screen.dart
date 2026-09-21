@@ -33,7 +33,15 @@
 //
 // Choosing and learning a game happen before it starts: the setup view states
 // the selected game's goal, its actual controls, and which screen shows the
-// game (the preview here, or the mirror's panel). During play only Pause, Help
+// game (the preview here, or the mirror's panel). The picker is a list of
+// compact tiles - a small screenshot of the game's own panel and its name -
+// because the goal sentence belongs to the selected game, not to every tile;
+// stating it once beside the picker is what leaves room for the details and
+// the mode on a phone. The start action is pinned under all of it and never
+// scrolls: on a phone held sideways the setup is taller than the screen, and
+// an action that has to be scrolled to looks unavailable. A window with the
+// width for it - a phone in landscape, a tablet, a desktop window - puts the
+// picker beside the details instead of above them. During play only Pause, Help
 // and the controls are prominent; panel size, veneer/LED, tick count, latency
 // live in a closed-by-default Display & diagnostics sheet, and Help and that
 // sheet pause the round before they open. The round's actions - Resume,
@@ -3051,6 +3059,18 @@ class _GameScreenState extends State<GameScreen>
             const SizedBox(height: 4),
             Text(goal),
           ],
+          // Where the round is shown. The setup view states it in one line
+          // above the picker; the sentence that used to sit under the mirror's
+          // picker belongs here, with the long-form explanation.
+          if (id != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              _isControllerMode
+                  ? "Shown on the mirror's panel; this phone is the gamepad."
+                  : 'Shown on the preview panel on this screen.',
+              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
           const SizedBox(height: 12),
           _buildControlSummary(id),
           const SizedBox(height: 12),
@@ -3068,7 +3088,13 @@ class _GameScreenState extends State<GameScreen>
   /// What the player can press, as the pads label it: the human name plus the
   /// keys that reach it. Axis controls are tilt, not buttons, and a game this
   /// build does not know has no controls to name.
-  Widget _buildControlSummary(String? id, {String? keyName}) {
+  ///
+  /// [compact] lays the same entries out as a wrapping run instead of one per
+  /// line: the setup view has a phone screen to fit the picker, the details,
+  /// the steering mode and the start action on, and it is the same list either
+  /// way. Help keeps one entry per line, where there is room for it.
+  Widget _buildControlSummary(String? id,
+      {String? keyName, bool compact = false}) {
     if (id == null) return const SizedBox.shrink();
     final labels = _copyControlLabels(id);
     if (labels.isEmpty) return const SizedBox.shrink();
@@ -3079,11 +3105,22 @@ class _GameScreenState extends State<GameScreen>
         const Text('Controls',
             style: TextStyle(fontSize: 12, color: Colors.grey)),
         const SizedBox(height: 4),
-        for (final wire in labels)
-          Text(
-            _controlLabel(id, wire),
-            style: const TextStyle(fontSize: 13),
-          ),
+        if (compact)
+          Wrap(
+            spacing: 16,
+            runSpacing: 2,
+            children: <Widget>[
+              for (final wire in labels)
+                Text(_controlLabel(id, wire),
+                    style: const TextStyle(fontSize: 13)),
+            ],
+          )
+        else
+          for (final wire in labels)
+            Text(
+              _controlLabel(id, wire),
+              style: const TextStyle(fontSize: 13),
+            ),
       ],
     );
   }
@@ -3461,89 +3498,61 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// The width at which the setup view stops stacking the picker above the
+  /// selected game's details and puts them side by side. A phone in portrait is
+  /// under it; a phone in landscape, a tablet and a desktop window are over it,
+  /// and those are the cases where the height is the scarce axis.
+  static const double _setupWideWidth = 600;
+
+  /// The narrowest a picker tile may be. Below it there is no room for the
+  /// game's name beside its screenshot, so the picker drops to fewer columns
+  /// rather than ellipsising every title.
+  static const double _tileMinWidth = 185;
+
+  /// The gap between two picker tiles.
+  static const double _tileGap = 8;
+
+  /// The height of a picker tile: the tap-target minimum. The picker is a list
+  /// to choose from, not a card to read, and every pixel it saves is a pixel
+  /// the details and the start action keep. Scaled-up text makes a tile taller
+  /// than this, never clipped.
+  static const double _tileHeight = 48;
+
+  /// The picker: one compact tile per game, in as many columns as the width
+  /// holds without squeezing a title. The paragraph the tiles used to repeat is
+  /// gone - what the selected game asks for is stated once, beside the picker,
+  /// instead of once per tile, which is what pushed the start action off the
+  /// bottom of a phone screen.
   Widget _buildGameTiles(
       List<String> ids, String? selected, ValueChanged<String> onSelected) {
-    final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(builder: (context, constraints) {
-      final columns = (constraints.maxWidth / 280).floor().clamp(1, 4);
-      final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+      final columns =
+          (constraints.maxWidth / _tileMinWidth).floor().clamp(1, 4);
+      final width = (constraints.maxWidth - (columns - 1) * _tileGap) / columns;
+      // The screenshot stays a screenshot of the game's own 64x32 panel: small
+      // enough to sit in a tile, large enough to recognise a game by, and never
+      // the thing that decides how tall the tile is.
+      final shotWidth = (width * 0.3).clamp(48.0, 64.0).toDouble();
+      // A tile is the tap-target minimum, and as much taller as a scaled-up
+      // title needs: it never clips the name of the game it offers, and large
+      // text makes the picker scroll rather than overflow.
+      final titleLine = MediaQuery.textScalerOf(context).scale(20);
+      final tileHeight =
+          _tileHeight > titleLine + 16 ? _tileHeight : titleLine + 16;
       return Wrap(
         key: const ValueKey<String>('game-picker'),
-        spacing: 12,
-        runSpacing: 12,
-        children: [
+        spacing: _tileGap,
+        runSpacing: _tileGap,
+        children: <Widget>[
           for (final id in ids)
             SizedBox(
               width: width,
-              child: Semantics(
+              height: tileHeight,
+              child: _buildGameTile(
+                id: id,
                 selected: id == selected,
-                child: Card(
-                  margin: EdgeInsets.zero,
-                  clipBehavior: Clip.antiAlias,
-                  color: id == selected ? colors.primaryContainer : null,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: id == selected
-                          ? colors.primary
-                          : colors.outlineVariant,
-                      width: id == selected ? 2 : 1,
-                    ),
-                  ),
-                  child: InkWell(
-                    key: ValueKey<String>('game-tile-$id'),
-                    onTap: () => onSelected(id),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AspectRatio(
-                          aspectRatio: 2,
-                          child: ColoredBox(
-                            color: Colors.black,
-                            child: _gameCopy.containsKey(id)
-                                ? Image.asset(
-                                    'assets/games/$id.png',
-                                    fit: BoxFit.contain,
-                                    filterQuality: FilterQuality.none,
-                                    semanticLabel:
-                                        '${_gameLabel(id)} screenshot',
-                                  )
-                                : const Center(
-                                    child: Text('Screenshot unavailable',
-                                        style:
-                                            TextStyle(color: Colors.white70)),
-                                  ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(_gameLabel(id),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium),
-                                  ),
-                                  if (id == selected)
-                                    Icon(Icons.check_circle,
-                                        color: colors.primary, size: 20),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(_goalFor(id) ??
-                                  'A game provided by this mirror. '
-                                      'Select it to see its controls.'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                shotWidth: shotWidth,
+                onTap: () => onSelected(id),
               ),
             ),
         ],
@@ -3551,19 +3560,263 @@ class _GameScreenState extends State<GameScreen>
     });
   }
 
-  /// The local setup view: pick a game and its panel, read what the game asks
-  /// for and which controls do it, then start. Everything here scrolls on its
-  /// own, so a small window never clips a control out of reach; the display
-  /// settings live in the Display & diagnostics sheet.
+  /// One picker tile: the game's screenshot, its name, and the mark that says
+  /// it is the selected one. The whole tile is the tap target.
+  Widget _buildGameTile({
+    required String id,
+    required bool selected,
+    required double shotWidth,
+    required VoidCallback onTap,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      selected: selected,
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        color: selected ? colors.primaryContainer : null,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(
+            color: selected ? colors.primary : colors.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          key: ValueKey<String>('game-tile-$id'),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: Row(
+              children: <Widget>[
+                _buildGameShot(id: id, width: shotWidth),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _gameLabel(id),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                if (selected) ...<Widget>[
+                  const SizedBox(width: 6),
+                  Icon(Icons.check_circle, color: colors.primary, size: 18),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The game's own panel at thumbnail size: the same 64x32 screenshot the
+  /// picker always showed, bounded to the tile instead of filling it. The
+  /// nearest-neighbour filter keeps the LED grid crisp, and the picture still
+  /// carries the game's name as its accessible label.
+  Widget _buildGameShot({required String id, required double width}) {
+    return SizedBox(
+      width: width,
+      height: width / 2,
+      child: ColoredBox(
+        color: Colors.black,
+        child: _gameCopy.containsKey(id)
+            ? Image.asset(
+                'assets/games/$id.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.none,
+                semanticLabel: '${_gameLabel(id)} screenshot',
+              )
+            : Center(
+                child: Icon(
+                  Icons.image_not_supported_outlined,
+                  size: 14,
+                  color: Colors.white54,
+                  semanticLabel: '${_gameLabel(id)} screenshot unavailable',
+                ),
+              ),
+      ),
+    );
+  }
+
+  /// The setup view, local or mirror: where the round will be shown, the
+  /// picker, the selected game's details, and the action that starts it.
+  ///
+  /// A window wide enough for two panes puts the picker beside the details -
+  /// the picker is a list, the details are what was picked, and a phone held
+  /// sideways has the width for both but not the height. A phone in portrait
+  /// stacks them. Whatever does not fit scrolls; the start action never does.
+  Widget _buildSetupView({
+    required Widget destination,
+    required Widget picker,
+    Widget? details,
+    Widget? footer,
+  }) {
+    return Column(
+      children: <Widget>[
+        Expanded(
+          // The side insets of a cutout or a landscape navigation bar are the
+          // setup view's too, and the width it decides on is the width it has
+          // to lay out in; the bottom inset belongs to the pinned footer.
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: LayoutBuilder(builder: (context, constraints) {
+              final pickerPane = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  destination,
+                  const SizedBox(height: 10),
+                  picker,
+                ],
+              );
+              final split =
+                  details != null && constraints.maxWidth >= _setupWideWidth;
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: split
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Expanded(flex: 3, child: pickerPane),
+                          const SizedBox(width: 20),
+                          Expanded(flex: 2, child: details),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          pickerPane,
+                          if (details != null) ...<Widget>[
+                            const SizedBox(height: 12),
+                            details,
+                          ],
+                        ],
+                      ),
+              );
+            }),
+          ),
+        ),
+        if (footer != null) footer,
+      ],
+    );
+  }
+
+  /// The one action that starts the round, pinned under the setup view: the
+  /// picker and the details scroll, this does not. An action that has to be
+  /// scrolled to looks unavailable, and on a phone held sideways the setup is
+  /// taller than the screen it has to fit on.
+  Widget _buildStartFooter(String hint, VoidCallback? onStart) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Align(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      FilledButton.icon(
+                        key: const ValueKey<String>('start-game'),
+                        onPressed: onStart,
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Start Game'),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        hint,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// What the picker selected, stated once: the game's name, what it asks for,
+  /// and the controls that do it. A game this build does not know keeps its raw
+  /// name and gets no invented instructions.
+  Widget _buildSelectedDetails({required String? id, String? note}) {
+    if (id == null) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          _gameLabel(id),
+          key: const ValueKey<String>('game-name'),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        if (note != null) ...<Widget>[
+          const SizedBox(height: 2),
+          Text(note, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
+        const SizedBox(height: 4),
+        ...?_goalWidget(_goalFor(id)),
+        if (_copyControlLabels(id).isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          _buildControlSummary(id, keyName: 'game-controls', compact: true),
+        ],
+        const SizedBox(height: 12),
+        _buildInputModePicker(verbose: true),
+      ],
+    );
+  }
+
+  /// The one line under the start action: which surface steers the round. The
+  /// same sentence on both setup paths, because the choice it describes is the
+  /// same one; where the round is *shown* is stated once, above the picker.
+  String _setupHint(String? id) {
+    if (_inputMode == _InputMode.motion) {
+      return switch (id) {
+        'invaders' => 'Tilt steers; tap the play area to shoot.',
+        'tetris' => 'Tilt steers; Rotate on the left, Soft drop on the right.',
+        _ => 'Tilt steers; actions stay on the right.',
+      };
+    }
+    return 'Movement on the left, actions on the right.';
+  }
+
+  /// The local setup view: pick a game, read what it asks for and which
+  /// controls do it, choose how it is steered, then start. The picker and the
+  /// details scroll on their own; the start action does not, so a small window
+  /// or large text never puts it out of reach. The display settings live in the
+  /// Display & diagnostics sheet.
   Widget _buildLocalSetup() {
     final playable = _playableGames;
     final selected = playable.isEmpty
         ? null
         : playable[_gameIndex < playable.length ? _gameIndex : 0];
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      child: Column(
+    return _buildSetupView(
+      // Where the game is shown: the panel painted right here, not the
+      // mirror's hardware.
+      destination: const Text(
+        'Preview',
+        key: ValueKey<String>('game-destination'),
+        style: TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+      picker: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (_libraryError != null) ...<Widget>[
             Text(
@@ -3572,14 +3825,6 @@ class _GameScreenState extends State<GameScreen>
             ),
             const SizedBox(height: 12),
           ],
-          // Where the game is shown: the panel painted right here, not the
-          // mirror's hardware.
-          const Text(
-            'Preview',
-            key: ValueKey<String>('game-destination'),
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
           _buildGameTiles(
             [for (final game in playable) game.id],
             selected?.id,
@@ -3589,45 +3834,19 @@ class _GameScreenState extends State<GameScreen>
               _reclaimGameplayFocus();
             },
           ),
-          if (selected != null && selected.maxPlayers > 1)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text('Solo vs computer'),
-            ),
-          const SizedBox(height: 12),
-          if (selected != null) ...<Widget>[
-            Text(
-              selected.name,
-              key: const ValueKey<String>('game-name'),
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 4),
-            ...?_goalWidget(_goalFor(selected.id)),
-            const SizedBox(height: 8),
-            _buildControlSummary(selected.id, keyName: 'game-controls'),
-            const SizedBox(height: 12),
-          ],
-          _buildInputModePicker(verbose: true),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            key: const ValueKey<String>('start-game'),
-            onPressed:
-                selected == null || _motionBusy ? null : _startLocalFromSetup,
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Start Game'),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _inputMode == _InputMode.motion
-                ? (selected?.id == 'invaders'
-                    ? 'Tilt steers; tap the play area to shoot.'
-                    : selected?.id == 'tetris'
-                        ? 'Tilt steers; Rotate on the left, Soft drop on the right.'
-                        : 'Tilt steers; actions stay on the right.')
-                : 'Movement on the left, actions on the right.',
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
-          ),
         ],
+      ),
+      details: _buildSelectedDetails(
+        id: selected?.id,
+        // The one thing about the selection the tiles cannot say: this game
+        // takes a second player, and it is the computer.
+        note: selected != null && selected.maxPlayers > 1
+            ? 'Solo vs computer'
+            : null,
+      ),
+      footer: _buildStartFooter(
+        _setupHint(selected?.id),
+        selected == null || _motionBusy ? null : _startLocalFromSetup,
       ),
     );
   }
@@ -3941,6 +4160,12 @@ class _GameScreenState extends State<GameScreen>
   Widget _buildMirrorSetup() {
     final ids = _mirrorGameIds;
     final error = _mirrorListError;
+    final playable = _mirrorPlayableIds;
+    // Whether the catalogue offers anything to start. A listing that failed
+    // offers the retry instead, exactly as it did before: the answer to a
+    // catalogue this screen could not read is to ask again, not to start a
+    // round off a list it cannot show.
+    final offer = error == null && playable.isNotEmpty;
 
     final Widget catalogue;
     if (error != null) {
@@ -3968,81 +4193,39 @@ class _GameScreenState extends State<GameScreen>
           Text('Loading games...'),
         ],
       );
-    } else if (ids.isEmpty) {
+    } else if (playable.isEmpty) {
       catalogue = const Text('No games on this mirror');
     } else {
-      final playable = _mirrorPlayableIds;
-      catalogue = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (playable.isEmpty)
-            const Text('No games on this mirror')
-          else
-            _buildGameTiles(
-              playable,
-              _mirrorPlayableSelection ?? playable.first,
-              (id) {
-                setState(() => _mirrorSelected = id);
-                _reclaimGameplayFocus();
-              },
-            ),
-          // What the selected game asks for and which controls do it, before
-          // the round starts. A mirror game this build does not know keeps its
-          // raw name and gets no invented instructions.
-          if (_copyGameId != null) ...<Widget>[
-            const SizedBox(height: 8),
-            Text(
-              _gameLabel(_copyGameId!),
-              key: const ValueKey<String>('game-name'),
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            ...?_goalWidget(_goalFor(_copyGameId!)),
-            if (_copyControlLabels(_copyGameId!).isNotEmpty) ...<Widget>[
-              const SizedBox(height: 8),
-              _buildControlSummary(_copyGameId, keyName: 'game-controls'),
-            ],
-          ],
-          const SizedBox(height: 20),
-          _buildInputModePicker(verbose: true),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            key: const ValueKey<String>('start-game'),
-            onPressed: _mirrorBusy || playable.isEmpty || _motionBusy
-                ? null
-                : () => _startMirrorGame(),
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Start Game'),
-          ),
-        ],
+      catalogue = _buildGameTiles(
+        playable,
+        _mirrorPlayableSelection ?? playable.first,
+        (id) {
+          setState(() => _mirrorSelected = id);
+          _reclaimGameplayFocus();
+        },
       );
     }
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            // Where the game is shown: the mirror's own panel, not this
-            // screen. The same statement the local setup makes about its
-            // preview.
-            Text(
-              'Playing on ${_connection.deviceName ?? 'the mirror'}',
-              key: const ValueKey<String>('game-destination'),
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 16),
-            catalogue,
-            const SizedBox(height: 24),
-            const Text(
-              'The mirror shows the game on its panel; this phone is the '
-              'gamepad.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-          ],
-        ),
+    return _buildSetupView(
+      // Where the game is shown: the mirror's own panel, not this screen. The
+      // same statement the local setup makes about its preview, and the only
+      // one it needs: the details and the start action beside it say the rest.
+      destination: Text(
+        'Playing on ${_connection.deviceName ?? 'the mirror'}',
+        key: const ValueKey<String>('game-destination'),
+        style: Theme.of(context).textTheme.titleMedium,
       ),
+      picker: catalogue,
+      // What the selected game asks for and which controls do it, before the
+      // round starts. A mirror game this build does not know keeps its raw
+      // name and gets no invented instructions.
+      details: offer ? _buildSelectedDetails(id: _copyGameId) : null,
+      footer: offer
+          ? _buildStartFooter(
+              _setupHint(_copyGameId),
+              _mirrorBusy || _motionBusy ? null : () => _startMirrorGame(),
+            )
+          : null,
     );
   }
 
@@ -4086,15 +4269,20 @@ class _GameScreenState extends State<GameScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          // Dense keeps the two choices at the 48-pixel tap target without the
+          // extra padding a full list tile carries: the setup view has a phone
+          // screen to fit the picker, the details and the start action on.
           RadioListTile<_InputMode>(
             value: _InputMode.manual,
             key: const ValueKey<String>('mode-manual'),
+            dense: true,
             title: Text(verbose ? 'Manual controls' : 'Manual'),
             contentPadding: EdgeInsets.zero,
           ),
           RadioListTile<_InputMode>(
             value: _InputMode.motion,
             key: const ValueKey<String>('mode-motion'),
+            dense: true,
             title: Text(verbose ? 'Motion controls' : 'Motion'),
             contentPadding: EdgeInsets.zero,
           ),
@@ -4346,87 +4534,50 @@ class _GameScreenState extends State<GameScreen>
     }
     final Widget body = SafeArea(
       minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final side = _padSide(
-            availableWidth: constraints.maxWidth,
-            availableHeight: constraints.maxHeight,
-            withPreview: preview != null,
-          );
-          if (side < _minPadSide) {
-            _noteInsufficientSpace();
-            return _insufficientSpaceView();
-          }
-          return Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    _runningGameId == null
-                        ? 'Game'
-                        : _gameLabel(_runningGameId!),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    steerCaption,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                  // Invaders fires from the whole board in motion mode, so the
-                  // caption has to say so: the Shoot pad is a shortcut, not
-                  // the only way.
-                  if (_runningGameId == 'invaders') ...<Widget>[
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Tap anywhere in the play area to shoot.',
-                      key: ValueKey<String>('motion-shoot-hint'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
-                    ),
-                  ],
-                  if (preview != null) ...<Widget>[
-                    const SizedBox(height: 16),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: side * 4),
-                      child: preview,
-                    ),
-                  ],
-                  if (actions.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 20),
-                    Wrap(
-                      spacing: _padGap,
-                      runSpacing: _padGap,
-                      alignment: WrapAlignment.center,
-                      children: <Widget>[
-                        for (final spec in actions)
-                          _ActionButton(
-                            spec: spec,
-                            side: side,
-                            pressed: _heldAt(spec.index),
-                            onPress: _pressAction,
-                            onMove: _moveAction,
-                            onRelease: _releasePointer,
-                            onActivate: _activatePad,
-                          ),
-                      ],
-                    ),
-                  ],
-                  for (final axis in axes) ...<Widget>[
-                    const SizedBox(height: 16),
-                    _AxisReadout(
-                      spec: axis,
-                      side: side,
-                      value: _axes[axis.index] ?? 0,
-                    ),
-                  ],
-                ],
-              ),
+      child: Column(
+        children: <Widget>[
+          Text(
+            steerCaption,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          if (_runningGameId == 'invaders')
+            const Text(
+              'Tap anywhere in the play area to shoot.',
+              key: ValueKey<String>('motion-shoot-hint'),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
-          );
-        },
+          const SizedBox(height: 8),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final rows = actions.length + axes.length;
+                final byHeight = (constraints.maxHeight - rows * _padGap) /
+                    (rows == 0 ? 1 : rows);
+                final byWidth = constraints.maxWidth -
+                    (preview == null ? 0 : 128 + _padGap);
+                final available = byHeight < byWidth ? byHeight : byWidth;
+                final side = available < _maxPadSide ? available : _maxPadSide;
+                if (side < _minPadSide) {
+                  _noteInsufficientSpace();
+                  return _insufficientSpaceView();
+                }
+                // The board gets the remaining height, not an unbounded
+                // scroll extent. Actions stay beside it, under the right thumb.
+                return Row(
+                  children: <Widget>[
+                    Expanded(child: preview ?? const SizedBox.shrink()),
+                    if (actions.isNotEmpty || axes.isNotEmpty) ...<Widget>[
+                      const SizedBox(width: _padGap),
+                      _buildActionColumn(_padSpecs(), axes, side),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
 

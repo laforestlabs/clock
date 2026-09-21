@@ -563,6 +563,146 @@ void main() {
         reason: 'opening the page is read-only');
   });
 
+  // The page exists for three actions — put the clock on the panel, start a
+  // game, choose a picture. On the phone the app is used on, all three have to
+  // be on screen without scrolling: a page that pushes them under the fold may
+  // as well not have them.
+  testWidgets('the device page keeps its three actions on a phone screen',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    await tester.runAsync(() async {
+      await _addDevice(dashboard, host: '127.0.0.1', port: 8080);
+    });
+
+    await pumpHome(tester, dashboard.registry, size: const Size(360, 800));
+    await tester.tap(find.text('Hall mirror'));
+    await settleRoute(tester);
+
+    final screen = tester.getRect(find.byType(DeviceScreen));
+    for (final label in <String>[
+      'Use smart clock',
+      'Start a game',
+      'Choose picture',
+    ]) {
+      final action = find.widgetWithText(FilledButton, label);
+      expect(action, findsOneWidget, reason: '$label is on the page');
+      expect(tester.getRect(action).bottom, lessThanOrEqualTo(screen.bottom),
+          reason: '$label is not below the fold of a phone screen');
+    }
+    expect(find.widgetWithText(OutlinedButton, 'Reconnect'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // A window with room spends it on width rather than height: the three cards
+  // share one row instead of stacking, so a desktop page stops growing down
+  // the screen. The one thing that must not be repeated for that is the
+  // settings route: it lives in the app bar.
+  testWidgets('a wide window lays the display cards out side by side',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    await tester.runAsync(() async {
+      await _addDevice(dashboard, host: '127.0.0.1', port: 8080);
+    });
+
+    await pumpHome(tester, dashboard.registry, size: const Size(1280, 800));
+    await tester.tap(find.text('Hall mirror'));
+    await settleRoute(tester);
+
+    // One info control per card, and the three cards start at the same height:
+    // they share a row instead of stacking.
+    final controls = find.byTooltip('What this does');
+    expect(controls, findsNWidgets(3), reason: 'one control per display card');
+    Rect card(String title) => tester.getRect(find
+        .ancestor(
+          of: find.descendant(
+            of: find.byType(DeviceScreen),
+            matching: find.text(title),
+          ),
+          matching: find.byType(Card),
+        )
+        .first);
+    final clock = card('Smart clock');
+    final games = card('Games');
+    final picture = card('Picture display');
+    expect(games.top, closeTo(clock.top, 0.5),
+        reason: 'the games card shares the clock card\'s row');
+    expect(picture.top, closeTo(clock.top, 0.5),
+        reason: 'the picture card shares the clock card\'s row');
+    expect(games.left, greaterThan(clock.right),
+        reason: 'the games card sits beside the clock card, not over it');
+    expect(picture.left, greaterThan(games.right),
+        reason: 'the picture card sits beside the games card, not over it');
+
+    expect(find.byTooltip('Device settings'), findsOneWidget,
+        reason: 'settings stays one tap away in the app bar');
+    expect(tester.takeException(), isNull);
+  });
+
+  // What each card does is a one-time read, so it opens from the card's info
+  // control instead of costing three paragraphs of height on every page. The
+  // state and the actions never move behind it.
+  testWidgets('a display card explains itself when asked', (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    await tester.runAsync(() async {
+      await _addDevice(dashboard, host: '127.0.0.1', port: 8080);
+    });
+
+    await pumpHome(tester, dashboard.registry, size: const Size(360, 800));
+    await tester.tap(find.text('Hall mirror'));
+    await settleRoute(tester);
+
+    const explanation =
+        'The clock the mirror falls back to when no game is running.';
+    expect(find.text('Saved display · showing now'), findsOneWidget,
+        reason: 'the state is on screen without asking');
+    expect(find.text(explanation), findsNothing,
+        reason: 'the explanation is not permanent page height');
+
+    await tester.tap(find.byTooltip('What this does').first);
+    await tester.pump();
+    expect(find.text(explanation), findsOneWidget,
+        reason: 'the info control opens the explanation');
+
+    await tester.tap(find.byTooltip('Hide what this does'));
+    await tester.pump();
+    expect(find.text(explanation), findsNothing, reason: 'and closes it again');
+  });
+
+  // A tile gets whatever width the grid gives it. In a phone's single column
+  // that is room for the text beside the panel, which keeps the card short and
+  // spends less vertical space per device; the dense tiles of a desktop grid
+  // are too narrow for that and keep the panel above the text.
+  testWidgets('a tile packs its text beside the panel when it has the width',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    await tester.runAsync(() async {
+      await _addDevice(dashboard, host: '127.0.0.1', port: 8080);
+    });
+
+    await pumpHome(tester, dashboard.registry, size: const Size(360, 800));
+    final phonePanel = tester.getRect(find.byType(DevicePreview));
+    final phoneName = tester.getRect(find.text('Hall mirror'));
+    expect(phoneName.left, greaterThanOrEqualTo(phonePanel.right),
+        reason: 'a one-column phone tile puts the text beside the panel');
+    expect(phoneName.top, lessThan(phonePanel.bottom),
+        reason: 'the text shares the panel row rather than starting under it');
+    expect(tester.takeException(), isNull);
+
+    await pumpHome(tester, dashboard.registry, size: const Size(1280, 800));
+    final gridPanel = tester.getRect(find.byType(DevicePreview));
+    final gridName = tester.getRect(find.text('Hall mirror'));
+    expect(gridName.top, greaterThanOrEqualTo(gridPanel.bottom),
+        reason: 'a narrow grid tile keeps the panel above the text');
+  });
+
   // The device page reads its preview off the record, so a frame that lands
   // after the page opened only reaches the panel if the record announces it.
   // The page decodes through `dart:ui` itself (the decoder seam lives on

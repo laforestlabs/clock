@@ -691,22 +691,48 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                   onRetry: _retryLayout,
                 ),
               Expanded(
-                flex: 3,
-                child: _CanvasArea(controller: _c, readOnly: true),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                flex: 2,
-                child: _SimplePanel(
-                  controller: _c,
-                  stock: _visibleStock,
-                  activeStockPath: _activeStockPath,
-                  connected: _pushesToDevice,
-                  bound: device != null,
-                  panelWidth: device?.width ?? 0,
-                  panelHeight: device?.height ?? 0,
-                  onPickStock: _openStock,
-                ),
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 760 ||
+                      (constraints.maxWidth >= 600 &&
+                          constraints.maxWidth > constraints.maxHeight * 1.4);
+                  final panel = _SimplePanel(
+                    controller: _c,
+                    stock: _visibleStock,
+                    activeStockPath: _activeStockPath,
+                    connected: _pushesToDevice,
+                    bound: device != null,
+                    panelWidth: device?.width ?? 0,
+                    panelHeight: device?.height ?? 0,
+                    onPickStock: _openStock,
+                  );
+                  final preview = _CanvasArea(controller: _c, readOnly: true);
+                  if (wide) {
+                    return Row(
+                      children: <Widget>[
+                        Expanded(child: preview),
+                        const VerticalDivider(width: 1),
+                        SizedBox(
+                          width: (constraints.maxWidth * .45)
+                              .clamp(300, 440)
+                              .toDouble(),
+                          child: panel,
+                        ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: <Widget>[
+                      SizedBox(
+                        height: (constraints.maxHeight * .34)
+                            .clamp(0, 240)
+                            .toDouble(),
+                        child: preview,
+                      ),
+                      const Divider(height: 1),
+                      Expanded(child: panel),
+                    ],
+                  );
+                }),
               ),
             ],
           ),
@@ -837,37 +863,42 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Widget _buildNarrow() {
-    return Column(
-      children: <Widget>[
-        // The preview keeps the top of the screen on a phone. Watching the
-        // panel react is the entire point, so it never gets tabbed away.
-        SizedBox(height: 240, child: _CanvasArea(controller: _c)),
-        const Divider(height: 1),
-        Expanded(
-          child: DefaultTabController(
-            length: 2,
-            child: Column(
-              children: <Widget>[
-                const TabBar(
-                  tabs: <Widget>[
-                    Tab(text: 'Widgets', icon: Icon(Icons.layers, size: 18)),
-                    Tab(text: 'Properties', icon: Icon(Icons.tune, size: 18)),
-                  ],
-                ),
-                Expanded(
-                  child: TabBarView(
-                    children: <Widget>[
-                      WidgetListPanel(controller: _c),
-                      InspectorPanel(controller: _c),
+    return LayoutBuilder(builder: (context, constraints) {
+      return Column(
+        children: <Widget>[
+          // The preview keeps the top of the screen on a phone. Watching the
+          // panel react is the entire point, so it never gets tabbed away.
+          SizedBox(
+            height: (constraints.maxHeight * .35).clamp(0, 240).toDouble(),
+            child: _CanvasArea(controller: _c),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: DefaultTabController(
+              length: 2,
+              child: Column(
+                children: <Widget>[
+                  const TabBar(
+                    tabs: <Widget>[
+                      Tab(text: 'Widgets', icon: Icon(Icons.layers, size: 18)),
+                      Tab(text: 'Properties', icon: Icon(Icons.tune, size: 18)),
                     ],
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: TabBarView(
+                      children: <Widget>[
+                        WidgetListPanel(controller: _c),
+                        InspectorPanel(controller: _c),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
-    );
+        ],
+      );
+    });
   }
 }
 

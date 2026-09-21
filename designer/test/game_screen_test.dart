@@ -684,16 +684,14 @@ Rect _panelRect(WidgetTester tester) =>
 
 /// Open a game in motion mode on the real widget, calibrate it with a still
 /// phone, and hand the live round to [script] with the sampler that moves it.
-///
-/// The window is taller than the default: motion mode stacks the panel, the
-/// captions, the Shoot pad and the axis readout, and on a 600-pixel window the
-/// pad and the readout are scrolled out of the play area, where nothing can be
-/// pressed. The round's own frames do not depend on the window.
 Future<void> _motionRound(
   WidgetTester tester,
   String id,
-  Future<void> Function(_Scene scene, _Sampler sample) script,
-) async {
+  Future<void> Function(_Scene scene, _Sampler sample) script, {
+  Size surface = const Size(1000, 600),
+  double textScale = 1,
+  double inset = 0,
+}) async {
   final sample = _mockSensors(tester);
   await _scene(tester, (scene) async {
     await scene.pick(id);
@@ -716,7 +714,7 @@ Future<void> _motionRound(
     expect(find.text('Hold the phone still'), findsNothing,
         reason: 'a still phone calibrates and the round goes live');
     await script(scene, sample);
-  }, surface: const Size(1000, 900));
+  }, surface: surface, textScale: textScale, inset: inset);
 }
 
 /// The whole motion play area of the round on screen, and a point near its top
@@ -1311,6 +1309,36 @@ void main() {
     });
   });
 
+  testWidgets(
+      'motion boards and controls fit a landscape phone without scrolling',
+      (tester) async {
+    const surface = Size(684, 384);
+    for (final id in <String>['rally', 'invaders', 'probe']) {
+      await _motionRound(tester, id, (scene, sample) async {
+        expect(scene.paused, isFalse,
+            reason: '$id must have enough room to keep playing');
+        final bounds = (Offset.zero & surface).deflate(12);
+        final panel = _panelRect(tester);
+        expect(bounds.contains(panel.topLeft), isTrue, reason: '$id board top');
+        expect(panel.right, lessThanOrEqualTo(bounds.right),
+            reason: '$id whole board width');
+        expect(panel.bottom, lessThanOrEqualTo(bounds.bottom),
+            reason: '$id whole board height');
+        for (final wire in _axisWires(id)) {
+          final readout = find.byKey(ValueKey<String>('axis-$wire'));
+          expect(tester.getBottomRight(readout).dy,
+              lessThanOrEqualTo(bounds.bottom),
+              reason: '$id $wire remains visible');
+        }
+        if (id == 'invaders') {
+          expect(scene.pad('Shoot').hitTestable(), findsOneWidget,
+              reason: 'Shoot stays reachable beside the board');
+        }
+        expect(tester.takeException(), isNull);
+      }, surface: surface, textScale: 1.5, inset: 12);
+    }
+  });
+
   testWidgets('motion steers the preview: the probe dot follows the phone',
       (tester) async {
     // The whole tilt path in the app's own preview: neutral from the
@@ -1526,6 +1554,62 @@ void main() {
       } finally {
         semantics.dispose();
       }
+    });
+  }
+
+  // The setup view is where a round is chosen, so it is the view a phone sits
+  // on longest: the bundled games and the one action that starts one have to
+  // be on screen together, at the sizes a phone really is. The picker is a
+  // list of compact tiles and the start action is pinned under it, so neither
+  // depends on scrolling through a card per game; a phone held sideways spends
+  // its width on two panes instead of stacking them into a screen that is only
+  // 384 pixels tall.
+  for (final (Size surface, double textScale, double inset)
+      in const <(Size, double, double)>[
+    (Size(360, 800), 1.5, 24),
+    (Size(390, 844), 1.5, 24),
+    (Size(684, 384), 1, 0),
+  ]) {
+    testWidgets(
+        'the picker and Start Game fit on '
+        '${surface.width.toInt()}x${surface.height.toInt()} at '
+        '${textScale}x text', (tester) async {
+      await _scene(
+        tester,
+        (scene) async {
+          final Finder start = find.byKey(const ValueKey<String>('start-game'));
+          expect(start, findsOneWidget);
+          expect(_onScreen(tester.getRect(start), surface), isTrue,
+              reason: 'Start Game is on screen without scrolling');
+          for (final String id in const <String>[
+            'rally',
+            'snake',
+            'tetris',
+            'breakout',
+            'invaders',
+            'probe',
+          ]) {
+            final Finder tile = find.byKey(ValueKey<String>('game-tile-$id'));
+            expect(tile, findsOneWidget, reason: '$id tile');
+            expect(_onScreen(tester.getRect(tile), surface), isTrue,
+                reason: '$id is reachable without scrolling');
+          }
+
+          // Picking one selects it, states what it asks for once, and leaves
+          // the start action where it was.
+          await scene.pick('tetris');
+          expect(
+              find.byKey(const ValueKey<String>('game-name')), findsOneWidget);
+          expect(find.byKey(const ValueKey<String>('game-controls')),
+              findsOneWidget);
+          expect(_onScreen(tester.getRect(start), surface), isTrue,
+              reason: 'Start Game stays on screen after a pick');
+          expect(tester.takeException(), isNull, reason: 'setup overflow');
+        },
+        surface: surface,
+        textScale: textScale,
+        inset: inset,
+      );
     });
   }
 
