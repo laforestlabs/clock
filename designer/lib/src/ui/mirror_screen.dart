@@ -146,10 +146,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   void _handleError(Object e, String what) {
-    final msg = e is BleUnavailableException || e is BlePushException
-        ? e.toString()
-        : e.toString().replaceFirst('Exception: ', '');
-    _toast('$what: $msg');
+    _toast('$what: ${bleErrorMessage(e)}');
   }
 
   // ---------------------------------------------------------- scan

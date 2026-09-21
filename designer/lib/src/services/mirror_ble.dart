@@ -42,6 +42,16 @@ class BlePushException implements Exception {
   String toString() => message;
 }
 
+/// The user-facing text for a BLE failure.
+///
+/// An exception this file raises already carries a sentence written for the
+/// user, so it is passed through as-is. Anything else came from the plugin or
+/// the platform, where Dart's `Exception: ` prefix is noise on a toast.
+String bleErrorMessage(Object e) {
+  if (e is BleUnavailableException || e is BlePushException) return e.toString();
+  return e.toString().replaceFirst('Exception: ', '');
+}
+
 /// One mirror found by [scanForMirrors].
 class BleScanEntry {
   BleScanEntry(this.device, this.name, this.rssi);
@@ -166,6 +176,15 @@ class BleSession {
   // while [_writeCmd] only queues the write itself. A transaction that fails
   // must not hold up the next one, hence the error-swallowing tail.
   Future<void> _gameTail = Future<void>.value();
+
+  // Serialization tail for whole pushes, which is coarser than [_writeTail]:
+  // a push is a begin/data/commit handshake whose status lines are matched to
+  // it by arrival order, so two transfers in the air at once would race for
+  // both the wire and the reply. The device answers "commit error busy" to
+  // whichever loses, and the user would be told a push failed for a reason
+  // that was not its own. A push that failed must not hold up the next one,
+  // hence the error-swallowing tail.
+  Future<void> _pushTail = Future<void>.value();
 
   /// Connect, discover the service and start listening for status
   /// notifications. Throws [BlePushException] when the service is missing.
@@ -525,7 +544,17 @@ class BleSession {
     }
   }
 
-  Future<String> _push(String kind, List<int> payload) async {
+  /// One transfer, queued behind any other in flight.
+  ///
+  /// The queue is what makes a push that was accepted the only thing that
+  /// happened on the link: see [_pushTail].
+  Future<String> _push(String kind, List<int> payload) {
+    final result = _pushTail.then((_) => _pushTransfer(kind, payload));
+    _pushTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
+  Future<String> _pushTransfer(String kind, List<int> payload) async {
     final writer = BlePayloadWriter(chunkSize: _chunkSize);
     // The mirror answers "begin ok" to the begin write and the commit status
     // to the commit write; subscribe for both before writing anything so

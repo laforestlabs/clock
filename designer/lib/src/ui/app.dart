@@ -14,6 +14,7 @@ import '../engine/engine.dart';
 import '../model/layout.dart';
 import '../services/bundled_firmware.dart';
 import '../services/firmware_update.dart';
+import '../services/layout_pusher.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
 import '../services/panel_orientation.dart';
@@ -72,6 +73,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   late final MirrorConnection _connection =
       widget.connection ?? MirrorConnection();
   late final bool _ownsConnection = widget.connection == null;
+
+  /// Sends a tapped stock layout to the connected mirror. Owned here for the
+  /// same reason as the link: the picks happen on this screen, and the queue
+  /// has to outlive the widget that is repainted between them.
+  late final LayoutPusher _pusher =
+      LayoutPusher(connection: _connection, onOutcome: _reportPush);
 
   /// The firmware this app ships, loaded the first time a mirror connects: a
   /// run that never connects never reads the 1.3MB image.
@@ -322,9 +329,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
+    // Replaced rather than queued, like the Mirror screen's toasts. A preset
+    // tapped four times in a second reports four outcomes, and the only one
+    // worth reading is the last.
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+      );
   }
 
   void _openMirror() {
@@ -449,11 +461,37 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
+  /// Open a stock preset, and while a mirror is connected send it there in the
+  /// same tap.
+  ///
+  /// That is what makes the picker a live preview: the panel changes as the
+  /// user clicks through the layouts, instead of after a separate trip to the
+  /// Mirror screen. Tapping a preset writes it to the mirror exactly as the
+  /// Push layout button does, so the layout it ends on is the one it keeps.
   Future<void> _openStock(StockLayout layout) async {
     if (!await _confirmDiscard()) return;
+    final json = await _repo.loadAsset(layout.assetPath);
     _activeStockPath = layout.assetPath;
-    await _c.loadJson(await _repo.loadAsset(layout.assetPath));
-    _toast('Opened ${layout.name}');
+
+    final connected = _connection.session != null;
+    if (connected) {
+      // The asset's own text rather than the loaded document: the panel is
+      // meant to get exactly the layout that was picked, and it can be on its
+      // way while this screen renders it.
+      _pusher.push(layout.name, json);
+    }
+
+    await _c.loadJson(json);
+    // Connected, the push reports for itself what became of the tap; a second
+    // toast for the local open would only queue behind it.
+    if (!connected) _toast('Opened ${layout.name}');
+  }
+
+  /// Report the outcome of one preset push. A tap that a later tap replaced
+  /// never reaches here: nothing was sent, so there is nothing to say.
+  void _reportPush(LayoutPushOutcome outcome) {
+    final error = outcome.error;
+    _toast(error == null ? 'Pushed ${outcome.label}' : 'Not pushed: $error');
   }
 
   /// Stock presets that match the panel the mirror reported: the live pong
@@ -613,6 +651,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                   controller: _c,
                   stock: _visibleStock,
                   activeStockPath: _activeStockPath,
+                  connected: connected,
                   panelWidth: _connection.panelWidth,
                   panelHeight: _connection.panelHeight,
                   onPickStock: _openStock,
@@ -863,6 +902,9 @@ class _DiagnosticsBar extends StatelessWidget {
 /// The simplified user-facing panel: pick a stock layout, then tune the few
 /// inputs a stock layout actually exposes. No selection, no geometry.
 ///
+/// A connected mirror is sent every layout the user picks, so the chips double
+/// as a live preview of the presets on the panel itself.
+///
 /// Rather than mirror every widget's colour and text field, it promotes a
 /// small fixed set: the background, the dominant foreground ("main") colour,
 /// at most one accent, up to two literal text strings, and a target time when
@@ -873,6 +915,7 @@ class _SimplePanel extends StatelessWidget {
     required this.controller,
     required this.stock,
     required this.activeStockPath,
+    required this.connected,
     required this.panelWidth,
     required this.panelHeight,
     required this.onPickStock,
@@ -881,6 +924,9 @@ class _SimplePanel extends StatelessWidget {
   final DesignerController controller;
   final List<StockLayout> stock;
   final String? activeStockPath;
+
+  /// Whether a mirror is connected, which is what makes a pick a push.
+  final bool connected;
   final int panelWidth;
   final int panelHeight;
   final ValueChanged<StockLayout> onPickStock;
@@ -894,6 +940,14 @@ class _SimplePanel extends StatelessWidget {
         final doc = controller.doc;
         final children = <Widget>[
           Text('Layout', style: theme.textTheme.titleMedium),
+          if (connected && stock.isNotEmpty)
+            // Said out loud because a tap now changes the panel as well as the
+            // preview, and a picker that quietly rewrites the mirror is a
+            // surprise worth spending a line on.
+            Text(
+              'Pick a layout to preview it on your mirror.',
+              style: theme.textTheme.bodySmall,
+            ),
           if (stock.isEmpty)
             Text(
               panelWidth > 0

@@ -188,6 +188,27 @@ cursor.
 One more detail that matters: the image is drawn with `FilterQuality.none`. Any
 smoothing turns a 5x7 glyph into grey mush.
 
+## Picking a layout
+
+The default view's **Layout** chips are the stock presets, and with a mirror
+connected a tap on one is delivered, not merely previewed: the layout is pushed
+to the mirror in the same tap, so the panel in front of you changes as you
+click through them. Comparing presets on the real hardware is then six taps
+rather than six taps and six pushes from the Mirror screen. The developer view's
+**Stock** menu entries are the same action, so a preset means the same thing in
+both views. (`src/services/layout_pusher.dart`.)
+
+A push writes the layout to the mirror exactly as **Push layout** does, so the
+preset the picker ends on is the one the mirror keeps; there is no separate
+preview-only mode. Picks are allowed to outpace the radio, so they are queued:
+one transfer at a time, and a pick made while one is in flight replaces any
+other that is waiting, because only the layout picked last is worth showing.
+Every push that goes out is reported - *Pushed weather*, or the mirror's own
+reason when it refuses - and a pick that a newer one replaced says nothing.
+
+The presets offered are filtered to the connected panel's size, so a pick is
+always something the mirror can render.
+
 ## Games
 
 Open the game-controller icon in **My Mirror**. With no mirror connected,
