@@ -19,10 +19,19 @@ import 'model/layout.dart';
 import 'services/panel_orientation.dart';
 
 class DesignerController extends ChangeNotifier {
-  DesignerController(this._engine);
+  /// [persistFlip180] records the preview's orientation where its owner keeps
+  /// it: the global simulator seed for a local workspace, the device's own
+  /// registry record for a bound one. The controller only decides when the
+  /// value changed; it never assumes which store that is.
+  DesignerController(
+    this._engine, {
+    Future<void> Function(bool flipped) persistFlip180 = savePanelFlip180,
+  }) : _persistFlip180 = persistFlip180;
 
   final MirrorEngine _engine;
   MirrorEngine get engine => _engine;
+
+  final Future<void> Function(bool flipped) _persistFlip180;
 
   LayoutDoc _doc = LayoutDoc.blank();
   LayoutDoc get doc => _doc;
@@ -326,7 +335,8 @@ class DesignerController extends ChangeNotifier {
 
   /// Edits the widget at [index] directly, for surfaces without a selection
   /// (the simplified view). Pushes undo and marks dirty like [updateSelected].
-  Future<void> updateWidget(int index, void Function(LayoutWidget w) mutate) async {
+  Future<void> updateWidget(
+      int index, void Function(LayoutWidget w) mutate) async {
     final widget = _doc.widgetAt(index);
     if (widget == null) return;
     await _applyEdit(() => mutate(widget));
@@ -442,9 +452,13 @@ class DesignerController extends ChangeNotifier {
     await _refresh();
   }
 
+  /// Flips the preview and records it through the owner's callback. The
+  /// preview follows the tap either way; a device that refuses the write keeps
+  /// the panel where it was, and the record the callback writes is the last
+  /// confirmed state, not this optimistic one.
   Future<void> setFlip180(bool on) async {
     flip180 = on;
-    await savePanelFlip180(on);
+    await _persistFlip180(on);
   }
 
   Future<void> setBrightnessOverride(int? value) async {
@@ -483,7 +497,7 @@ class DesignerController extends ChangeNotifier {
     final bytes = _engine.renderBytes();
     final decoded = bytes == null ? null : await _engine.decodeImage(bytes);
     if (seq != _renderSeq) {
-      // A newer render already landed. Drop this frame and its image.
+      // A newer render or disposal invalidated this decode.
       decoded?.dispose();
       return;
     }
@@ -499,6 +513,7 @@ class DesignerController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _renderSeq++;
     _image?.dispose();
     _engine.dispose();
     super.dispose();

@@ -54,6 +54,19 @@ char mirror_config_temp_unit(void);
 const char *mirror_config_device_name(void);
 
 /*
+ * The device's hardware identity: the Wi-Fi station MAC as exactly 12
+ * lowercase hexadecimal digits with no separators ("a1b2c3d4e5f6"), cached
+ * during mirror_config_init(). It is what /api/status, the BLE "get device"
+ * reply and the mDNS hostname all report, so one board keeps one identity
+ * across transports and across an owner rename.
+ *
+ * Deliberately not the friendly name above (renamable, and two boards may
+ * share one) and not a BLE remote address (which is per-phone and can be
+ * randomised). Never NULL.
+ */
+const char *mirror_config_device_id(void);
+
+/*
  * The stored brightness override: -1 when the device follows the layout,
  * 0..255 when the owner set a manual override (over BLE). The panel's live
  * brightness is read with panel_get_brightness().

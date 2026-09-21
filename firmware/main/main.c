@@ -27,6 +27,8 @@
 
 #include "mirror/mirror.h"
 #include "config.h"
+#include "display_store.h"
+#include "frame_snapshot.h"
 #include "games/game_runner.h"
 #include "layout_store.h"
 #include "model_store.h"
@@ -102,6 +104,9 @@ static void render_task(void *arg)
     ml_model_init(&model);
 
     uint32_t frames = 0;
+    /* Counts every displayed frame, games included, and restarts at reboot:
+     * the snapshot header uses it to say which sampling a preview is. */
+    uint32_t frame_sequence = 0;
     bool was_synced = false;
     bool valid_marked = false;
 
@@ -139,20 +144,26 @@ static void render_task(void *arg)
         static ml_layout layout;
         layout_store_snapshot(&layout);
 
-        /* While a BLE-driven game runs, the panel shows the game instead of
-         * the layout. The game draws into the same PSRAM canvas and blits
-         * through the same frame buffer at roughly 60 fps; the layout path
-         * (and its 500 ms cadence) is untouched for idle frames, so the
-         * periodic log stays tied to layout frames. */
-        if (game_runner_service()) {
+        /*
+         * Three possible pictures of the same canvas. A BLE-driven game is a
+         * transient override and comes first: it draws into the same PSRAM
+         * canvas at roughly 60 fps. Otherwise the saved picture is copied in
+         * when it is both stored and the selected base display, and the
+         * layout is rendered when it is not. Every path leaves a complete
+         * frame in the canvas and then shares the export, the blit and the
+         * first-frame OTA acknowledgement below, so the panel driver is
+         * entered exactly once per frame.
+         */
+        const bool game = game_runner_service();
+        if (game) {
             game_runner_render(&canvas);
-            ml_canvas_export_rgb888(&canvas, 255, rgb);
-            panel_blit_rgb888(rgb);
-            vTaskDelay(pdMS_TO_TICKS(16));
-            continue;
+        } else if (!display_store_render_picture(&canvas)) {
+            ml_render(&layout, &model, &canvas);
         }
 
-        ml_render(&layout, &model, &canvas);
+        /* What this frame shows: a game overrides the saved base display. */
+        const mirror_display_mode_t shown_mode =
+            game ? MIRROR_DISPLAY_GAMES : display_store_base_mode();
 
         /*
          * Export at full scale. Dimming is the driver's job, done by
@@ -163,22 +174,48 @@ static void render_task(void *arg)
          * the device-versus-host framebuffer diff in M4 meaningful. The golden
          * tests hash the same frame exported at the layout's brightness
          * instead, because that is what the designer's preview draws.
+         *
+         * Uploaded picture bytes enter the canvas before this transform, so
+         * the gamma curve is applied to them exactly once, here.
          */
         ml_canvas_export_rgb888(&canvas, 255, rgb);
+
+        /*
+         * Hand the frame to the preview snapshot before the blit, which
+         * rotates and channel-swaps rgb in place for the shift registers:
+         * the copy has to be the picture as the app should draw it, not the
+         * panel's wiring. This is a cheap no-op unless the app is asking for
+         * a frame, and it never touches a snapshot the LAN handler is still
+         * sending. presented() after the blit is what makes a leased frame
+         * one the panel really showed.
+         */
+        frame_snapshot_prepare(rgb, w, h, frame_sequence++,
+                               panel_get_brightness(), mirror_config_flip180(),
+                               shown_mode);
         panel_blit_rgb888(rgb);
+        frame_snapshot_presented();
 
         /*
          * The first frame on the panel is the proof that this image boots:
-         * the task started, the canvas and frame buffers were allocated, the
-         * layout parsed and the blit went through. Cancelling the update's
-         * pending rollback is only honest once that has happened, so it is
-         * done here rather than in app_main, where a task that never started
-         * would still mark the image good and strand a mirror that draws
-         * nothing.
+         * the task started, the canvas and frame buffers were allocated, and
+         * a frame was composited and blitted. Cancelling the update's pending
+         * rollback is only honest once that has happened, so it is done here
+         * rather than in app_main, where a task that never started would
+         * still mark the image good and strand a mirror that draws nothing.
+         * A game or picture frame reaches it too: a mirror whose saved base
+         * display is a picture boots straight into it and must still confirm
+         * the update.
          */
         if (!valid_marked) {
             valid_marked = true;
             ota_mark_valid();
+        }
+
+        if (game) {
+            /* Games run at roughly 60 fps; the 500 ms path below, and the
+             * periodic log tied to its cadence, is untouched for them. */
+            vTaskDelay(pdMS_TO_TICKS(16));
+            continue;
         }
 
         /* Roughly every 30 seconds. Internal SRAM, not the total: this board
@@ -188,13 +225,14 @@ static void render_task(void *arg)
          * heap of 8MB reads like room to spare and is not. */
         if ((frames % (30000 / RENDER_PERIOD_MS)) == 0) {
             ESP_LOGI(TAG,
-                     "up %lus, wifi %s (%s, %d dBm), clock %s, weather %s; "
-                     "internal free %u (largest %u), PSRAM free %u",
+                     "up %lus, wifi %s (%s, %d dBm), clock %s, weather %s, "
+                     "display %s; internal free %u (largest %u), PSRAM free %u",
                      (unsigned long)model.uptime_s,
                      model.online ? "up" : "down",
                      wifi_ip(), model.wifi_rssi,
                      model.now.valid ? "set" : "unset",
                      model.weather.valid ? "ok" : "stale",
+                     display_mode_name(display_store_base_mode()),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -259,6 +297,31 @@ void app_main(void)
      * clock sync below: the brightness override must win from the first
      * frame, and sntp_time_start() needs the zone set. */
     ESP_ERROR_CHECK(mirror_config_init());
+
+    /*
+     * The stored picture and the saved base display (clock or picture).
+     * Deliberately after layout_store_init(), which is what mounts SPIFFS
+     * the slots live on, and after mirror_config_init(). A failure here is
+     * not fatal: the picture contract is an addition, and the clock and the
+     * games must keep working on a mirror whose storage or PSRAM is
+     * unavailable. The store reports itself unavailable by refusing picture
+     * mutations and reporting picture_ready false; nothing here disables the
+     * render path.
+     */
+    if (display_store_init() != ESP_OK) {
+        ESP_LOGW(TAG, "display store unavailable: picture display disabled");
+    }
+
+    /*
+     * The preview snapshot buffer, which the render task fills on request and
+     * the LAN /api/frame handler leases. After panel_init(), whose geometry
+     * sizes it, and before the render task. Failure is not fatal either: the
+     * clock, the games and the picture all keep drawing, and /api/frame
+     * answers 503, which is what "this mirror has no preview" means.
+     */
+    if (frame_snapshot_init() != ESP_OK) {
+        ESP_LOGW(TAG, "frame snapshots unavailable: previews disabled");
+    }
 
     /* The game runner's queues, before the render task starts: it drains
      * them every frame. */

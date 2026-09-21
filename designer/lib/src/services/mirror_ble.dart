@@ -18,6 +18,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'mirror_ble_protocol.dart';
 import 'mirror_ble_game.dart';
 import 'mirror_ble_status.dart';
+import 'mirror_display.dart';
 import 'mirror_wifi.dart';
 import 'mirror_wifi_status.dart';
 
@@ -131,6 +132,13 @@ bool _isPongReply(String line) => line.startsWith('pong ');
 
 /// Whether [line] can answer a `get latency` diagnostic.
 bool _isLatencyReply(String line) => line.startsWith('latency ');
+
+/// Whether [line] can answer a `get device` identity query: the reply itself,
+/// or the "unknown command" firmware predating it answers. Nothing else may
+/// satisfy the request — a `game ok` push arriving mid-flight would otherwise
+/// be parsed as an identity line.
+bool _isDeviceReply(String line) =>
+    line.startsWith('device ') || line == unknownCommandReply;
 
 /// A connected mirror. All writes are with-response and serialized through a
 /// queue, so chunk order is preserved and the device's ATT backpressure is
@@ -318,10 +326,35 @@ class BleSession {
   /// The raw "config {...}" line, or null when the mirror has none.
   Future<String?> getConfigRaw() => _sendAndWait('get config');
 
+  /// The mirror's firmware identity and display capabilities, or null when
+  /// the firmware predates `get device`.
+  ///
+  /// Queued on [_pushTail] for the whole request/reply lifetime, not just the
+  /// write: the reply is an unsolicited status line like a push's begin and
+  /// commit, so an identity query running alongside a transfer would let one
+  /// exchange's reply be read as the other's. Holding the slot for the whole
+  /// wait keeps each exchange whole; the predicate below keeps an unsolicited
+  /// game line from ending this one.
+  Future<MirrorDeviceInfo?> getDeviceInfo() {
+    final result = _pushTail.then((_) async =>
+        parseDeviceInfoLine(await _sendAndWait('get device',
+            accepts: _isDeviceReply)));
+    _pushTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
   /// Push a layout and return the device's commit status text.
   /// Throws [BlePushException] with the device's reason on rejection.
   Future<String> pushLayout(String json) {
     return _push('layout', utf8.encode(json));
+  }
+
+  /// Persist the base display; games remain a temporary controller override.
+  Future<String> setDisplayMode(DisplayMode mode) {
+    if (mode == DisplayMode.games) {
+      throw ArgumentError.value(mode, 'mode', 'Games are not a base display');
+    }
+    return _push('display', utf8.encode(jsonEncode({'mode': mode.name})));
   }
 
   /// Push a config object and return the device's commit status text.
@@ -556,22 +589,24 @@ class BleSession {
 
   Future<String> _pushTransfer(String kind, List<int> payload) async {
     final writer = BlePayloadWriter(chunkSize: _chunkSize);
-    // The mirror answers "begin ok" to the begin write and the commit status
-    // to the commit write; subscribe for both before writing anything so
-    // neither can arrive into a stream with no listener.
-    final statuses = _takeStatuses(2);
+    final begin = await _sendAndWait('begin $kind ${payload.length}',
+        accepts: (line) => line.startsWith('begin '));
+    if (begin != 'begin ok') {
+      throw BlePushException(begin.startsWith('begin error')
+          ? begin.substring('begin error'.length).trim()
+          : begin);
+    }
     for (final frame in writer.frames(kind, payload)) {
-      if (frame.kind == BleFrameKind.cmd) {
-        await _writeCmd(ascii.decode(frame.bytes));
-      } else {
+      if (frame.kind == BleFrameKind.data) {
         await _serialized(() => _data.write(frame.bytes));
       }
     }
-
-    final lines = await statuses;
-    final commit = lines.length > 1 ? lines[1] : lines.single;
-    if (commit.startsWith('commit error')) {
-      throw BlePushException(commit.substring('commit error'.length).trim());
+    final commit = await _sendAndWait('commit',
+        accepts: (line) => line.startsWith('commit '));
+    if (commit != 'commit ok' && !commit.startsWith('commit ok ')) {
+      throw BlePushException(commit.startsWith('commit error')
+          ? commit.substring('commit error'.length).trim()
+          : commit);
     }
     return commit;
   }

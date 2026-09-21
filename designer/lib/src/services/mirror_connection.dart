@@ -1,10 +1,11 @@
-// App-scoped BLE connection to the mirror.
+// One BLE link to one mirror.
 //
-// The connection lives here, not in a screen: it is owned by the workspace
-// root, survives page navigation (pushing and popping the Mirror screen no
-// longer drops the link), and remembers the last device across app launches
-// so the app can reconnect to it on startup. Screens listen to it as a
-// ChangeNotifier and read [session] / [status].
+// Transport only: the link lives here, not in a screen, so pushing and popping
+// the Mirror screen no longer drops it. Nothing is remembered across launches
+// any more -- the device registry owns persisted identities -- and a
+// connection built for a device record is bound to that device's BLE target,
+// so a route holding it cannot write to a different mirror. Screens listen to
+// it as a ChangeNotifier and read [session] / [status].
 
 import 'dart:async';
 import 'dart:io';
@@ -13,7 +14,6 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'mirror_ble.dart';
 
@@ -58,7 +58,8 @@ class BlePong {
 
 /// Outcome of requesting the Android 12+ runtime BLE permissions.
 class BlePermissionGate {
-  const BlePermissionGate({required this.granted, this.permanentDenied = false});
+  const BlePermissionGate(
+      {required this.granted, this.permanentDenied = false});
 
   final bool granted;
 
@@ -111,12 +112,32 @@ Future<BlePermissionGate> ensureBlePermissions() async {
   return const BlePermissionGate(granted: true);
 }
 
-/// The BLE link with one mirror, remembered across launches.
+/// The BLE link with one mirror.
+///
+/// Transport only: it owns the physical link, the live session and the panel
+/// size the device reports. Identity and persistence belong to the device
+/// registry, which owns the lifetime of every connection it hands to a route.
 class MirrorConnection extends ChangeNotifier {
-  static const String _lastIdKey = 'last_ble_device_id';
-  static const String _lastNameKey = 'last_ble_device_name';
-  static const String _lastWidthKey = 'last_panel_width';
-  static const String _lastHeightKey = 'last_panel_height';
+  MirrorConnection({
+    String? deviceId,
+    String? deviceName,
+    int panelWidth = 0,
+    int panelHeight = 0,
+  })  : _deviceId = _nonEmpty(deviceId),
+        _deviceName = _nonEmpty(deviceName),
+        _panelWidth = panelWidth > 0 ? panelWidth : 0,
+        _panelHeight = panelHeight > 0 ? panelHeight : 0;
+
+  static String? _nonEmpty(String? value) =>
+      (value == null || value.isEmpty) ? null : value;
+
+  /// The BLE remote id this link is bound to, or null when it was built
+  /// without a target (local simulator, test fake). [connectDevice] and
+  /// [connect] refuse any other id rather than writing to the wrong mirror; a
+  /// connection built without one adopts the target of its first successful
+  /// connect.
+  String? _deviceId;
+  String? get deviceId => _deviceId;
 
   MirrorConnectionStatus _status = MirrorConnectionStatus.disconnected;
   MirrorConnectionStatus get status => _status;
@@ -133,24 +154,21 @@ class MirrorConnection extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
-  int? _lastPanelWidth;
-  int? _lastPanelHeight;
+  // The panel size the device last reported. The registry seeds it from the
+  // stored record and persists what [updatePanelSize] reports.
+  int _panelWidth;
+  int _panelHeight;
 
-  /// The last panel size the mirror reported, remembered across launches so
-  /// stock layouts stay filtered to the right hardware after a disconnect.
-  int? get lastPanelWidth => _lastPanelWidth;
-  int? get lastPanelHeight => _lastPanelHeight;
-
-  /// The panel size to target right now: the live mirror when connected,
-  /// otherwise the last remembered size. 0 means unknown.
+  /// The panel size to target right now: the live mirror when it answers,
+  /// otherwise the last size it reported. 0 means unknown.
   int get panelWidth {
     final w = _pong?.width ?? 0;
-    return w > 0 ? w : (_lastPanelWidth ?? 0);
+    return w > 0 ? w : _panelWidth;
   }
 
   int get panelHeight {
     final h = _pong?.height ?? 0;
-    return h > 0 ? h : (_lastPanelHeight ?? 0);
+    return h > 0 ? h : _panelHeight;
   }
 
   // Watches the link so a dropped connection (mirror rebooted, powered off,
@@ -158,29 +176,25 @@ class MirrorConnection extends ChangeNotifier {
   // "connected".
   StreamSubscription<BluetoothConnectionState>? _stateSub;
 
-  /// Whether a device was connected before and is remembered for reconnect.
-  Future<bool> hasLastDevice() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_lastIdKey);
-    return id != null && id.isNotEmpty;
+  // Bumped when an attempt starts and by everything that abandons one
+  // ([disconnect], [dispose]). A link that lands after its attempt was
+  // abandoned is closed instead of adopted; see [connectDevice].
+  int _attempt = 0;
+
+  /// Record [width]x[height] as the panel size the device reported. Positive
+  /// dimensions only, and only a real change notifies: the registry persists
+  /// what it is told here.
+  void updatePanelSize(int width, int height) {
+    if (_setPanelSize(width, height)) notifyListeners();
   }
 
-  /// Populates the remembered panel size from prefs, for startup before any
-  /// connection exists.
-  Future<void> loadLastPanelSize() async {
-    final prefs = await SharedPreferences.getInstance();
-    _lastPanelWidth = prefs.getInt(_lastWidthKey);
-    _lastPanelHeight = prefs.getInt(_lastHeightKey);
-  }
-
-  /// Records [width]x[height] as the panel size the mirror last reported.
-  Future<void> rememberPanelSize(int width, int height) async {
-    if (width <= 0 || height <= 0) return;
-    _lastPanelWidth = width;
-    _lastPanelHeight = height;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_lastWidthKey, width);
-    await prefs.setInt(_lastHeightKey, height);
+  /// Stores a positive size and reports whether it changed what is stored.
+  bool _setPanelSize(int width, int height) {
+    if (width <= 0 || height <= 0) return false;
+    if (width == _panelWidth && height == _panelHeight) return false;
+    _panelWidth = width;
+    _panelHeight = height;
+    return true;
   }
 
   /// Connect to a device found by a scan.
@@ -188,23 +202,23 @@ class MirrorConnection extends ChangeNotifier {
     return connectDevice(id: entry.device.remoteId.str, name: entry.name);
   }
 
-  /// Reconnect to the last remembered device. No-op when nothing is
-  /// remembered or a connection already exists. The caller is responsible
-  /// for permissions and the adapter being on.
-  Future<void> connectLast() async {
+  /// Reconnect the bound target. No-op when this connection has no target (a
+  /// local simulator never reaches out on its own), when a session is already
+  /// up, or when a connect is already running. The caller is responsible for
+  /// permissions and the adapter being on.
+  Future<void> reconnect() async {
+    final id = _deviceId;
+    if (id == null) return;
     if (_status == MirrorConnectionStatus.connected) return;
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_lastIdKey);
-    final name = prefs.getString(_lastNameKey);
-    if (id == null || id.isEmpty || name == null || name.isEmpty) return;
     // A short timeout: at launch the mirror may not be in range, and a
     // 35-second hang on the way into the app is worse than a quick failure
-    // the user can retry from the Mirror screen.
-    await connectDevice(id: id, name: name,
-        timeout: const Duration(seconds: 10));
+    // the user can retry.
+    await connectDevice(
+        id: id, name: _deviceName ?? id, timeout: const Duration(seconds: 10));
   }
 
-  /// Adopt [name] as the remembered display name after a setup rename.
+  /// Adopt [name] as the display name after a setup rename. Transport only:
+  /// listeners (the registry) persist it.
   /// The device puts the new identity back on air the next time it starts
   /// advertising (a config commit while connected only lands in NVS and
   /// the GAP name; the packet is rebuilt on the following advertise), so
@@ -213,56 +227,64 @@ class MirrorConnection extends ChangeNotifier {
     if (name.isEmpty) return;
     _deviceName = name;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastNameKey, name);
   }
 
   /// Connect to the mirror and bring up its session. The short [timeout]
   /// only bounds the link establishment; the pong exchange has its own.
+  ///
+  /// A connection built with a `deviceId` only ever connects to that target:
+  /// a different id is refused with a [StateError] before anything is sent. A
+  /// connection built without one adopts the target of its first successful
+  /// connect, so the local simulator can still attach to a mirror by hand (and
+  /// a failed attempt binds nothing, so another device can be tried).
   Future<void> connectDevice({
     required String id,
     required String name,
     Duration timeout = const Duration(seconds: 35),
   }) async {
+    final bound = _deviceId;
+    if (bound != null && bound != id) {
+      throw StateError(
+          'this connection is bound to $bound; refusing to connect to $id');
+    }
     if (_status == MirrorConnectionStatus.connecting) return;
 
+    final attempt = ++_attempt;
     _status = MirrorConnectionStatus.connecting;
     _deviceName = name;
     _error = null;
     notifyListeners();
 
-    final device = BluetoothDevice.fromId(id);
-    final previous = _stateSub;
-    if (previous != null) unawaited(previous.cancel());
-    _stateSub = device.connectionState.listen((state) {
-      if (state == BluetoothConnectionState.disconnected &&
-          _status == MirrorConnectionStatus.connected) {
-        // The link died on its own. Drop the dead session so the UI stops
-        // showing a connection that no longer answers.
-        final dead = _session;
-        _session = null;
-        _pong = null;
-        _status = MirrorConnectionStatus.disconnected;
-        notifyListeners();
-        if (dead != null) unawaited(dead.close());
-      }
-    });
-
+    BleSession? opened;
     try {
-      final session = await BleSession.connect(device, timeout: timeout);
-      final pong = await session.ping();
-      _session = session;
+      opened = await openLink(id, timeout);
+      if (attempt != _attempt) {
+        // The attempt was abandoned while the radio was coming up (the route
+        // left, the registry handed the link to another device): close what
+        // landed instead of adopting a session nobody owns any more.
+        await opened.close();
+        return;
+      }
+      final pong = await opened.ping();
+      if (attempt != _attempt) {
+        await opened.close();
+        return;
+      }
+      _session = opened;
       _pong = BlePong.parse(pong);
-      await rememberPanelSize(_pong?.width ?? 0, _pong?.height ?? 0);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_lastIdKey, id);
-      await prefs.setString(_lastNameKey, name);
+      _deviceId ??= id;
+      // Folded into this attempt's notification: a second one for the size
+      // would make the registry persist the same record twice.
+      _setPanelSize(_pong?.width ?? 0, _pong?.height ?? 0);
       _status = MirrorConnectionStatus.connected;
       notifyListeners();
     } catch (e) {
+      if (opened != null) await opened.close();
+      // An abandoned attempt reports nothing: the failure belongs to a state
+      // that no longer exists.
+      if (attempt != _attempt) return;
       await _stateSub?.cancel();
       _stateSub = null;
-      await _session?.close();
       _session = null;
       _pong = null;
       _status = MirrorConnectionStatus.failed;
@@ -271,16 +293,57 @@ class MirrorConnection extends ChangeNotifier {
     }
   }
 
-  /// Drop the link. The device stays remembered, so the next app launch
-  /// reconnects to it (a reboot or a power cycle should not forget the
-  /// mirror).
+  /// Bring up the BLE link and watch it while it is live.
+  ///
+  /// This is the only part of a connect attempt that needs a radio, so it is
+  /// the seam a test drives with a fake [BleSession] to exercise the attempt
+  /// rules.
+  @visibleForTesting
+  Future<BleSession> openLink(String remoteId, Duration timeout) async {
+    final device = BluetoothDevice.fromId(remoteId);
+    final previous = _stateSub;
+    if (previous != null) unawaited(previous.cancel());
+    late final StreamSubscription<BluetoothConnectionState> sub;
+    sub = device.connectionState.listen((state) {
+      // Only the watch still installed may act: a drop reported by an
+      // abandoned attempt's subscription must not tear down a newer session.
+      if (!identical(_stateSub, sub)) return;
+      if (state == BluetoothConnectionState.disconnected) linkLost();
+    });
+    _stateSub = sub;
+    try {
+      return await BleSession.connect(device, timeout: timeout);
+    } catch (_) {
+      await sub.cancel();
+      if (identical(_stateSub, sub)) _stateSub = null;
+      rethrow;
+    }
+  }
+
+  /// The watched link dropped on its own: drop the dead session so the UI
+  /// stops showing a connection that no longer answers. The bound target and
+  /// its name stay, so [reconnect] can bring the same mirror back.
+  void linkLost() {
+    if (_status != MirrorConnectionStatus.connected) return;
+    final dead = _session;
+    _session = null;
+    _pong = null;
+    _status = MirrorConnectionStatus.disconnected;
+    notifyListeners();
+    if (dead != null) unawaited(dead.close());
+  }
+
+  /// Drop the link. The bound target and its name stay, so [reconnect] brings
+  /// the same mirror back (a reboot or a power cycle should not forget it).
+  /// A connect still in flight is abandoned: its link is closed when it lands,
+  /// never adopted.
   Future<void> disconnect() async {
+    _attempt++;
     await _stateSub?.cancel();
     _stateSub = null;
     final dead = _session;
     _session = null;
     _pong = null;
-    _deviceName = null;
     _error = null;
     _status = MirrorConnectionStatus.disconnected;
     notifyListeners();
@@ -288,9 +351,9 @@ class MirrorConnection extends ChangeNotifier {
   }
 
   /// Drop a stale `failed` connect and its error so a fresh scan's results can
-  /// render. The remembered device is kept, so the next launch still tries to
-  /// reconnect to it; only the transient failure banner goes away. No-op
-  /// unless the last connect attempt actually failed.
+  /// render. The bound target is kept, so the next [reconnect] still tries it;
+  /// only the transient failure banner goes away. No-op unless the last
+  /// connect attempt actually failed.
   void clearFailed() {
     if (_status != MirrorConnectionStatus.failed) return;
     _status = MirrorConnectionStatus.disconnected;
@@ -300,6 +363,9 @@ class MirrorConnection extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Abandon any attempt still in flight: its session is closed when it
+    // lands, and this object is never notified again.
+    _attempt++;
     _stateSub?.cancel();
     _stateSub = null;
     final dead = _session;

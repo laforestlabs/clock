@@ -1,6 +1,7 @@
-// The BLE payload writer, checked against a Dart re-implementation of the
-// firmware's transfer rules (firmware/main/net/ble.c): begin/append/commit,
-// busy rejection, length mismatch, size cap. No device needed.
+// The BLE payload writer and transfer handshake, checked against a Dart
+// re-implementation of the firmware's transfer rules
+// (firmware/main/net/ble.c): begin/append/commit, busy rejection, length
+// mismatch, size cap. No device needed.
 
 import 'dart:convert';
 

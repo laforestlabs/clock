@@ -35,6 +35,22 @@ int panel_width(void);
 int panel_height(void);
 
 /*
+ * Ceiling on an RGB888 picture payload: 256x256 pixels, 196608 bytes. It is
+ * the router's payload cap, not a panel property, but the two are compared
+ * together everywhere a picture is accepted, so they live next to the
+ * geometry they are checked against.
+ */
+#define PANEL_PICTURE_MAX_BYTES (256 * 256 * 3)
+
+/*
+ * True when this panel's frame fits the picture payload cap, i.e. the build
+ * can store and render an uploaded picture. Bigger builds still draw the
+ * clock and the games; they just do not advertise the picture display
+ * contract, so the app offers the clock instead of a doomed upload.
+ */
+bool panel_supports_picture(void);
+
+/*
  * Blit a full frame. Expects panel_width() * panel_height() * 3 bytes of
  * packed RGB888, already gamma corrected, which is exactly what
  * ml_canvas_export_rgb888 produces at brightness 255.

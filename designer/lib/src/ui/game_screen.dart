@@ -232,6 +232,7 @@ class GameScreen extends StatefulWidget {
     required this.connection,
     this.decodeFrame,
     this.simplified = false,
+    this.requireDevice = false,
   });
 
   /// Shares veneer and LED settings with the layout designer.
@@ -257,6 +258,17 @@ class GameScreen extends StatefulWidget {
   /// display settings and the round's diagnostics stay in the developer
   /// workspace.
   final bool simplified;
+
+  /// Whether this route is a device's own Games surface, which has no panel
+  /// of its own to simulate on.
+  ///
+  /// The mirror runs a device game; this screen is only the gamepad. Without a
+  /// Bluetooth link there is nothing to play, so the screen says so and offers
+  /// to reconnect rather than starting the local simulation in the device's
+  /// place - a local round on the phone would never reach the device and would
+  /// be mistaken for it. A local simulator route leaves this false: there the
+  /// panel on this screen *is* the display.
+  final bool requireDevice;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -602,7 +614,13 @@ class _GameScreenState extends State<GameScreen>
   final ValueNotifier<int> _diagRevision = ValueNotifier<int>(0);
 
   /// Whether this screen is a gamepad for a connected mirror.
-  bool get _isControllerMode => _connection.session != null;
+  ///
+  /// A device-required route is in controller mode with or without a live
+  /// link: its device is the display, and a local round must never stand in
+  /// for one. Everything that starts, pauses, or discards a round reads this,
+  /// so an absent or lost session leaves nothing local to fall back to.
+  bool get _isControllerMode =>
+      widget.requireDevice || _connection.session != null;
 
   /// Whether a mirror transition is in flight. Conflicting and duplicate
   /// actions stay disabled until it settles.
@@ -669,8 +687,7 @@ class _GameScreenState extends State<GameScreen>
   /// has no mode to pick, so it starts on tilt and drops to the pads the
   /// moment the accelerometer says it does not report.
   void _startInputMode() {
-    _inputMode =
-        widget.simplified ? _InputMode.motion : _InputMode.manual;
+    _inputMode = widget.simplified ? _InputMode.motion : _InputMode.manual;
     if (widget.simplified) {
       // The panel an offline preview round runs on is the mirror's, when the
       // mirror has said what it is: the size picker that would otherwise offer
@@ -756,8 +773,7 @@ class _GameScreenState extends State<GameScreen>
   static bool _isProbeId(String id) => id == 'probe';
 
   /// The mirror's catalogue, as offered by its own picker.
-  List<String> get _mirrorPlayableIds =>
-      _mirrorGameIds ?? const <String>[];
+  List<String> get _mirrorPlayableIds => _mirrorGameIds ?? const <String>[];
 
   /// The game a fresh Start on the mirror begins: the picker's selection, or
   /// the mirror's first game that is played for score. The probe is never
@@ -797,6 +813,11 @@ class _GameScreenState extends State<GameScreen>
   /// round is to be steered by the phone. A calibration the player cancelled
   /// or a sensor that never reported leaves the setup view alone.
   Future<void> _startLocalFromSetup() async {
+    // A device-required route has no local panel: the setup view it would
+    // start from is not on screen there, and the round would never reach the
+    // device. Refused here as well as in [_startGame], because a keyboard
+    // activation can reach this path without the button that draws it.
+    if (_isControllerMode) return;
     final games = _playableGames;
     if (games.isEmpty || _gameIndex >= games.length) return;
     final game = games[_gameIndex];
@@ -828,6 +849,10 @@ class _GameScreenState extends State<GameScreen>
   /// source is released so a key that was down in the old round cannot appear
   /// pressed in the new one.
   void _startLocalGame(GameInfo game) {
+    // The last line of defence for the device contract, whatever called in:
+    // while this screen is a device's gamepad, no native round is opened
+    // here. A session that went away is not a reason to simulate instead.
+    if (_isControllerMode) return;
     final panel = _panelSizes[_sizeIndex];
     _disposeLocalSession();
     final GameEngine engine;
@@ -3422,7 +3447,9 @@ class _GameScreenState extends State<GameScreen>
     }
     // Neutral comes first: while it is being established there is no round to
     // show and nothing may start, on the preview exactly as on a mirror.
-    if (_motionPhase == _MotionPhase.calibrating) return _buildCalibrationView();
+    if (_motionPhase == _MotionPhase.calibrating) {
+      return _buildCalibrationView();
+    }
     if (!_localRound) return _buildLocalSetup();
     // The panel is painted with the designer's veneer and LED settings, and
     // the round's controls are built from the same theme: listen to the
@@ -3635,6 +3662,12 @@ class _GameScreenState extends State<GameScreen>
   /// The controller-mode body: a gamepad for the game the mirror runs. The
   /// mirror is the display, so there is no simulated panel here.
   Widget _buildControllerBody() {
+    // No link to the device this route belongs to. Only a device-required
+    // route can get here (an ordinary one is not in controller mode without a
+    // session), and it has no local panel to stand in for the device: the way
+    // forward is the link, not a simulated round.
+    if (_connection.session == null) return _buildDeviceUnavailable();
+
     if (_mirrorUnsupported) {
       return const Center(
         child: Padding(
@@ -3714,6 +3747,56 @@ class _GameScreenState extends State<GameScreen>
     return _inputMode == _InputMode.motion
         ? _buildMotionGamepad()
         : _buildPlaySurface(preview: null);
+  }
+
+  /// No Bluetooth link to the device this route belongs to.
+  ///
+  /// This is a deviceless state, not an offline one: the device's panel is
+  /// where the game would be shown, and this screen cannot reach it. Nothing
+  /// local starts here, and the panel on this phone is not offered as a
+  /// substitute - so the copy says what is missing and the one action that
+  /// can fix it is to bring the link back.
+  Widget _buildDeviceUnavailable() {
+    final name = _connection.deviceName ?? 'this device';
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.bluetooth_disabled, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              'Not connected to $name',
+              key: const ValueKey<String>('device-not-connected'),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'The game runs on the device itself, so it cannot be played from '
+              'here without a Bluetooth link. Reconnect to play on its panel.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              key: const ValueKey<String>('device-reconnect'),
+              onPressed: _reconnectDevice,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reconnect'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Try to bring this device's link back. The connection owns the target it
+  /// is bound to, so this can only reconnect the device this route belongs to
+  /// - never a different one, and never a device chosen here.
+  void _reconnectDevice() {
+    unawaited(_connection.reconnect());
   }
 
   /// The "hold the phone still" view a motion round passes through before it
@@ -3960,8 +4043,7 @@ class _GameScreenState extends State<GameScreen>
     // it is on tilt, and the pads are the fallback when the device cannot
     // report. Recalibrate stays either way - a fresh neutral is part of
     // playing, not a mode.
-    final canRecalibrate =
-        widget.simplified || _inputMode == _InputMode.motion;
+    final canRecalibrate = widget.simplified || _inputMode == _InputMode.motion;
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),

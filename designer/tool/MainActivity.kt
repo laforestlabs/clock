@@ -1,8 +1,10 @@
 package com.example.mirror_designer
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -10,7 +12,8 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
 
-/// The bare Flutter activity, plus the native half of "Open" and "Save As".
+/// The bare Flutter activity, plus the native halves of "Open"/"Save As" and
+/// of LAN discovery.
 ///
 /// `file_selector` has no save support on Android, so the Dart side routes
 /// saves through this channel and the Storage Access Framework
@@ -18,22 +21,90 @@ import java.io.IOException
 /// Open goes through `ACTION_OPEN_DOCUMENT` for the same reason: it keeps the
 /// document URI so a later Save can write back to the file that was opened.
 ///
+/// Android also drops IPv4 multicast while no app holds a
+/// `WifiManager.MulticastLock`, which is why mDNS discovery found nothing while
+/// plain HTTP to the mirror worked. `mirror_discovery.dart` holds the lock for
+/// exactly one browse; this activity grants it and releases a stray one on
+/// teardown.
+///
 /// This file is the source of truth; designer/setup.sh installs it over the
 /// stub that `flutter create` generates for the (gitignored) android/ tree.
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     private companion object {
         const val CHANNEL = "com.example.mirror_designer/file_io"
+        const val MULTICAST_CHANNEL = "com.example.mirror_designer/multicast"
+        const val MULTICAST_LOCK_TAG = "mirror_discovery"
         const val SAVE_REQUEST_CODE = 0x5A9
         const val OPEN_REQUEST_CODE = 0x5A8
     }
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSaveContents: String? = null
     private var pendingOpenResult: MethodChannel.Result? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MULTICAST_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "acquireMulticastLock" -> {
+                        acquireMulticastLock()
+                        result.success(null)
+                    }
+                    "releaseMulticastLock" -> {
+                        releaseMulticastLock()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /// Lets mDNS answers through the Wi-Fi stack for one discovery browse.
+    ///
+    /// Repeated acquires while the lock is already held are ignored, and a
+    /// missing grant is not an error: discovery then simply sees whatever
+    /// multicast the stack delivers, and manual IP entry still works.
+    private fun acquireMulticastLock() {
+        val lock = multicastLock ?: newMulticastLock() ?: return
+        multicastLock = lock
+        if (lock.isHeld) return
+        try {
+            lock.acquire()
+        } catch (_: SecurityException) {
+            // CHANGE_WIFI_MULTICAST_STATE is declared in the manifest, so this
+            // only happens on a build that dropped it.
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        val lock = multicastLock ?: return
+        multicastLock = null
+        try {
+            lock.release()
+        } catch (_: RuntimeException) {
+            // Already released (or never acquired); nothing left to undo.
+        }
+    }
+
+    private fun newMulticastLock(): WifiManager.MulticastLock? {
+        val wifi =
+            applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return null
+        return try {
+            wifi.createMulticastLock(MULTICAST_LOCK_TAG)
+        } catch (_: SecurityException) {
+            null
+        }
+    }
+
+    override fun onDestroy() {
+        // A browse that was still running when the activity went away cannot
+        // call back any more; make sure its lock does not outlive it.
+        releaseMulticastLock()
+        super.onDestroy()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {

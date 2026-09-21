@@ -54,6 +54,9 @@ static const char *TAG = "config";
 #define PLACE_BUF_LEN (PLACE_MAX_LEN + 1)
 #define COORD_BUF_LEN 16
 #define NAME_BUF_LEN  (NAME_MAX_LEN + 1)
+/* 12 hex digits plus the terminator; the form is fixed, see
+ * mirror_config_device_id(). */
+#define DEVICE_ID_LEN 13
 
 static char        s_tz[TZ_BUF_LEN];
 static char        s_lat[COORD_BUF_LEN];
@@ -63,6 +66,9 @@ static char        s_place[PLACE_BUF_LEN];
  * generated verb-and-animal identity below. */
 static char        s_name[NAME_BUF_LEN];
 static char        s_auto_name[NAME_BUF_LEN];
+/* The hardware identity: the station MAC, hex, no separators. Read once in
+ * mirror_config_init(); the MAC cannot change afterwards. */
+static char        s_device_id[DEVICE_ID_LEN];
 /* -1 means "follow the layout"; 0..255 is a manual override. */
 static int         s_brightness = CONFIG_MIRROR_BRIGHTNESS_DEFAULT;
 /* Display settings; Kconfig values are the factory defaults, see the "Display"
@@ -244,6 +250,19 @@ static const char *const s_name_animals[] = {
     "Panther", "Penguin", "Wombat", "Zebra",
 };
 
+/*
+ * The hardware identity reported to the app and used for the mDNS names.
+ * %02x is lower-case, and a 6-byte MAC always fills exactly 12 digits, so
+ * the buffer is always complete and the string always 12 characters long.
+ */
+static void build_device_id(void)
+{
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(s_device_id, sizeof(s_device_id), "%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
 static void build_auto_name(void)
 {
     uint8_t mac[6];
@@ -270,6 +289,10 @@ esp_err_t mirror_config_init(void)
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) return ESP_ERR_NO_MEM;
 
+    /* Hardware first, so the identity is valid even if NVS turns out to be
+     * unreadable: it is what a half-initialised device still reports. */
+    build_device_id();
+
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) {
@@ -292,9 +315,9 @@ esp_err_t mirror_config_init(void)
 
     nvs_close(h);
 
-    ESP_LOGI(TAG, "tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d, "
+    ESP_LOGI(TAG, "id %s, tz \"%s\", lat %s, lon %s, place \"%s\", brightness %d, "
              "clock %s, temp %c, flip180 %s",
-             s_tz, s_lat, s_lon, s_place, s_brightness,
+             s_device_id, s_tz, s_lat, s_lon, s_place, s_brightness,
              s_clock_12h ? "12h" : "24h", s_temp_unit,
              s_flip180 ? "on" : "off");
     return ESP_OK;
@@ -308,6 +331,11 @@ const char *mirror_config_place(void)     { return s_place; }
 const char *mirror_config_device_name(void)
 {
     return s_name[0] != '\0' ? s_name : s_auto_name;
+}
+
+const char *mirror_config_device_id(void)
+{
+    return s_device_id;
 }
 
 bool mirror_config_clock_12h(void)

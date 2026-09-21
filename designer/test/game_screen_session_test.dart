@@ -176,7 +176,8 @@ void main() {
   /// One gyroscope sample, in rad/s. A motion round runs without these too:
   /// that is the accelerometer-only path, which is what a device with no
   /// gyroscope delivers and what every test that does not call this exercises.
-  Future<void> sampleGyro(WidgetTester tester, double x, double y, double z) async {
+  Future<void> sampleGyro(
+      WidgetTester tester, double x, double y, double z) async {
     await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
         gyroChannel,
         const StandardMethodCodec().encodeSuccessEnvelope(<double>[x, y, z, 0]),
@@ -222,6 +223,8 @@ void main() {
     Future<ui.Image?> Function(GameEngine, Uint8List)? decodeFrame,
     Size surface = const Size(1000, 600),
     bool simplified = false,
+    bool requireDevice = false,
+    bool startDisconnected = false,
   }) async {
     tester.view.physicalSize = surface;
     tester.view.devicePixelRatio = 1;
@@ -232,13 +235,14 @@ void main() {
         '{"canvas":{"width":64,"height":32},"background":"#000000","widgets":[]}'));
     final session = _Session();
     configure?.call(session);
-    final connection = _Connection(session);
+    final connection = _Connection(startDisconnected ? null : session);
     await tester.pumpWidget(MaterialApp(
         home: GameScreen(
             controller: c,
             connection: connection,
             decodeFrame: decodeFrame,
-            simplified: simplified)));
+            simplified: simplified,
+            requireDevice: requireDevice)));
     await tester.pump();
     await tester.pump();
     addTearDown(() async {
@@ -411,8 +415,8 @@ void main() {
     }
 
     expect(session.started, isEmpty);
-    expect(find.text('Could not calibrate: hold the phone still'),
-        findsWidgets);
+    expect(
+        find.text('Could not calibrate: hold the phone still'), findsWidgets);
     expect(find.text('Motion unavailable; use manual controls'), findsNothing);
     // The sensors are not at fault, so motion mode is still the choice.
     expect(find.byKey(const ValueKey<String>('mode-motion')), findsOneWidget);
@@ -525,7 +529,10 @@ void main() {
       await sample(tester, 0, 0, 9.8);
     }
     await tester.pump(const Duration(milliseconds: 200));
-    expect(session.inputs.sublist(settledFrom).every((p) => p[4] == 0 && p[5] == 0),
+    expect(
+        session.inputs
+            .sublist(settledFrom)
+            .every((p) => p[4] == 0 && p[5] == 0),
         isTrue,
         reason: 'a still phone must only ever send a level position');
 
@@ -1085,10 +1092,12 @@ void main() {
     feed(atSurfaceDown);
     engine.step(25);
     final Uint8List rendered = engine.renderBytes()!;
-    expect(_whitePixels(rendered), unorderedEquals(<Offset>[
-      const Offset(31, 24),
-      const Offset(31, 26),
-    ]),
+    expect(
+        _whitePixels(rendered),
+        unorderedEquals(<Offset>[
+          const Offset(31, 24),
+          const Offset(31, 26),
+        ]),
         reason: 'the firmware sees two bullets climbing, as local play does');
 
     expect(tester.takeException(), isNull);
@@ -1154,6 +1163,161 @@ void main() {
         reason: 'panel size and display settings are design-time knobs');
     expect(find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('menu-choose')), findsOneWidget);
+  });
+
+  /// Take an item from the app bar's overflow menu. The items live in the tree
+  /// only while the menu is open.
+  Future<void> menu(WidgetTester tester, String item) async {
+    await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(ValueKey<String>(item)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  /// Answer the question that guards a nonterminal round, throwing it away.
+  Future<void> discardRound(WidgetTester tester) async {
+    expect(find.byKey(const ValueKey<String>('discard-round-dialog')),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('discard-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets('a device-required route without a link cannot start locally',
+      (tester) async {
+    var decoded = false;
+    final (session, connection) = await boot(
+      tester,
+      requireDevice: true,
+      startDisconnected: true,
+      decodeFrame: (engine, bytes) {
+        decoded = true;
+        return Future<ui.Image?>.value(null);
+      },
+    );
+    expect(connection.session, isNull);
+    // The device's panel is the display, so a route without its link has
+    // nothing to play and says which link is missing.
+    expect(find.byKey(const ValueKey<String>('device-not-connected')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('device-reconnect')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('start-game')), findsNothing);
+    expect(find.text('Preview'), findsNothing,
+        reason: 'the local simulator is not offered in the device place');
+
+    // Reconnect is the way forward, and it can only ever target the device
+    // this route was built for - an unbound fixture connection does nothing.
+    await tester.tap(find.byKey(const ValueKey<String>('device-reconnect')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('device-not-connected')),
+        findsOneWidget);
+
+    // Space starts the local game on a simulator route. Here it must not open
+    // a round that could never reach the device.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(session.started, isEmpty);
+    expect(decoded, isFalse, reason: 'no local engine was stepped');
+    expect(find.text('Preview'), findsNothing);
+  });
+
+  testWidgets('a device-required round that loses its link does not go local',
+      (tester) async {
+    var decoded = false;
+    final (session, connection) = await boot(
+      tester,
+      requireDevice: true,
+      decodeFrame: (engine, bytes) {
+        decoded = true;
+        return Future<ui.Image?>.value(null);
+      },
+    );
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(session.started, ['snake']);
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsOneWidget);
+
+    // The link drops mid-round. The firmware stops its own game on disconnect;
+    // this screen must not keep playing it on the phone's panel instead.
+    await connection.disconnect();
+    await tester.pump();
+    await tester.pump();
+    expect(connection.session, isNull);
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsNothing);
+    expect(find.text('Start Game'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('device-not-connected')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('device-reconnect')), findsOneWidget);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(session.started, ['snake'],
+        reason: 'nothing was started into the lost link');
+    expect(decoded, isFalse, reason: 'no local engine was stepped');
+    expect(find.text('Preview'), findsNothing);
+  });
+
+  testWidgets('a device-required route plays again once the link returns',
+      (tester) async {
+    final (session, connection) =
+        await boot(tester, requireDevice: true, startDisconnected: true);
+    expect(find.byKey(const ValueKey<String>('device-not-connected')),
+        findsOneWidget);
+
+    // The no-link view is not a dead end: the link coming back puts the
+    // device's own catalogue on screen, exactly as on an ordinary route.
+    connection.replace(session);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('device-not-connected')),
+        findsNothing);
+    expect(find.text('Start Game'), findsOneWidget);
+    expect(find.text('No games on this mirror'), findsNothing);
+  });
+
+  testWidgets('stopping a device round returns to its picker, not a local game',
+      (tester) async {
+    var decoded = false;
+    final (session, connection) = await boot(
+      tester,
+      requireDevice: true,
+      decodeFrame: (engine, bytes) {
+        decoded = true;
+        return Future<ui.Image?>.value(null);
+      },
+    );
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsOneWidget);
+
+    // Stopping the round is what tells the device to restore the display it
+    // was showing before the game - and the picker is what comes back here,
+    // never a round played on this phone.
+    await menu(tester, 'menu-choose');
+    await discardRound(tester);
+    expect(session.stops, 1);
+    expect(connection.session, isNotNull,
+        reason: 'stopping a round leaves the device link up');
+    expect(find.text('Start Game'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsNothing);
+    expect(decoded, isFalse, reason: 'no local engine was opened');
+    expect(find.text('Preview'), findsNothing);
   });
 }
 

@@ -43,7 +43,7 @@ void main() {
   }
 
   /// The workspace on a fresh preference store: the default view, and no
-  /// remembered mirror for the launch reconnect to chase.
+  /// device bound - the local simulator a user reaches without picking one.
   Future<void> bootWorkspace(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       kUserViewPrefsKey: 'default',
@@ -74,7 +74,8 @@ void main() {
     expect(find.byKey(const ValueKey<String>('mode-manual')), findsNothing);
     await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('menu-diagnostics')), findsNothing);
+    expect(
+        find.byKey(const ValueKey<String>('menu-diagnostics')), findsNothing);
   });
 
   testWidgets('the developer view keeps the controls the default view drops',
@@ -95,8 +96,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('game-menu')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('menu-diagnostics')),
-        findsOneWidget,
+    expect(
+        find.byKey(const ValueKey<String>('menu-diagnostics')), findsOneWidget,
         reason: 'the workspace keeps the panel size and diagnostics');
   });
 }

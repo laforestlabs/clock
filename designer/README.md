@@ -1,10 +1,30 @@
 # Mirror Designer
 
-Layout designer and pixel-exact simulator, running on desktop and on a phone.
+Device dashboard, layout designer and pixel-exact simulator for desktop and phone.
 
-The preview is not an approximation. It is the same C renderer that runs on the
-ESP32, compiled for whatever platform this app is running on and called through
-`dart:ffi`. If a layout looks right here, it looks right on the panel.
+The app opens on **Devices**, without loading the native simulator or connecting
+every remembered Bluetooth device. Tiles show actual framebuffer snapshots from
+each mirror. Offline devices remain selectable, with a timestamped last-known
+preview. Add devices through LAN discovery, a manual host and port, or an explicit
+nearby Bluetooth scan. Android holds a multicast lock only during discovery.
+
+Select a device for **Smart clock**, **Games**, **Picture display**, and device
+settings. Opening its page or clock editor changes nothing on the panel. Actions
+stay bound to that device; equal names do not merge identities. Legacy firmware
+without a stable identity keeps separate LAN/Bluetooth records.
+
+**Picture display** accepts one static PNG or JPEG (20 MiB / 40 million source
+pixels maximum). **Fit** preserves the whole image with black bars; **Fill**
+center-crops without stretching. The framing preview is local and uncalibrated.
+**Display on …** sends panel-sized RGB over Wi-Fi and waits for persistence.
+Saved pictures survive phone closure and mirror reboot. Selecting **Use smart
+clock** retains the picture; **Show saved picture** restores it. Games temporarily
+override either base display and restore it on Stop or Bluetooth disconnect.
+Uploads and fresh previews require the phone and mirror on the same local network.
+
+The app menu's **Layout designer / simulator** remains an explicitly local
+workspace. Its preview uses the same C renderer as the ESP32 through `dart:ffi`.
+Native-library failures affect that workspace, not home or picture upload.
 
 ## Setup
 
@@ -56,12 +76,11 @@ version bump (`tools/firmware_version.py`; see `firmware/README.md`,
 Versioning). One version describes one image, so the version the mirror reports
 after an OTA is evidence about exactly one build.
 
-The app reads that version against the one the mirror reports in its pong
-whenever a link comes up, and offers the update itself when the mirror is
-behind (`src/ui/firmware_prompt.dart`). The offer is once per device version
-per run: declining it is an answer, and the next launch asks again. A mirror on
-the bundled version, on a newer one, or on a version the app cannot read is
-left alone.
+Opening a device page compares its reported version with the bundled image and
+offers an update when it is older. The offer is once per `(device, version)` per
+run; background tile polling never opens update dialogs. Declining is an answer,
+and the next launch asks again. Current, newer, or unreadable versions are left
+alone. Updates and reconnects stay bound to that device.
 
 ## Launching it without a terminal
 
@@ -174,8 +193,8 @@ bytes rather than asking the engine for it.
 emitter's light into the dead space around it. The view adds that as blurred
 passes of the frame underneath the discs; the engine's pixels stay untouched.
 
-Brightness is the opposite case and *is* applied by the engine, because the
-device genuinely scales by it before applying gamma.
+Brightness is applied after gamma by the core. Actual device snapshots already
+include brightness and physical orientation; the dashboard applies neither again.
 
 **Panel orientation** is a device setting, not a preview trick. The Settings
 screen's *Upside down* toggle pushes `flip180` over Bluetooth and reads the
@@ -190,13 +209,14 @@ smoothing turns a 5x7 glyph into grey mush.
 
 ## Picking a layout
 
-The default view's **Layout** chips are the stock presets, and with a mirror
-connected a tap on one is delivered, not merely previewed: the layout is pushed
-to the mirror in the same tap, so the panel in front of you changes as you
-click through them. Comparing presets on the real hardware is then six taps
-rather than six taps and six pushes from the Mirror screen. The developer view's
-**Stock** menu entries are the same action, so a preset means the same thing in
-both views. (`src/services/layout_pusher.dart`.)
+Select **Edit clock** on a device to load its current LAN layout without sending
+anything. If it cannot be downloaded, the workspace explicitly labels its local
+draft and offers Retry. The local simulator never connects a remembered device.
+
+In a device-bound workspace, **Layout** chips and the developer **Stock** menu
+send the selected preset to that device. The simulator only previews the selection.
+Sending a layout does not switch picture mode to clock; use **Use smart clock**
+explicitly. (`src/services/layout_pusher.dart`.)
 
 A push writes the layout to the mirror exactly as **Push layout** does, so the
 preset the picker ends on is the one the mirror keeps; there is no separate
@@ -211,10 +231,11 @@ always something the mirror can render.
 
 ## Games
 
-Open the game-controller icon in **My Mirror**. With no mirror connected,
-**Preview** runs the native simulation locally. With a mirror connected,
-**Playing on …** identifies the physical display; the phone is its controller.
-Connecting a mirror discards any local preview.
+Choose **Games** on a device page. Pairing confirms the Bluetooth device's hardware
+identity before attaching it to the LAN record. Catalogue browsing is read-only;
+**Start Game** runs the round on that mirror and turns the phone into its controller.
+Missing or lost Bluetooth never starts a local substitute. Local **Preview**
+games remain available only through the explicit simulator workspace.
 
 Tilt is the controller. A round establishes neutral first, by having the phone
 held still, and the angle it is then held at *is* the player's position, so a

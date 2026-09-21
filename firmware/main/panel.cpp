@@ -151,6 +151,14 @@ extern "C" esp_err_t panel_init(void)
 extern "C" int panel_width(void) { return s_width; }
 extern "C" int panel_height(void) { return s_height; }
 
+extern "C" bool panel_supports_picture(void)
+{
+    /* 64-bit arithmetic: the dimensions come from Kconfig and two large
+     * ints overflow their own product long before the byte count does. */
+    if (s_width <= 0 || s_height <= 0) return false;
+    return (int64_t)s_width * s_height * 3 <= PANEL_PICTURE_MAX_BYTES;
+}
+
 extern "C" void panel_blit_rgb888(uint8_t *rgb)
 {
     if (s_driver == nullptr || rgb == nullptr) return;

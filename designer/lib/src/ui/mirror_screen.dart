@@ -1,18 +1,15 @@
-// The Mirror screen: push the current layout to a mirror, configure it, and
-// update its firmware.
+// The device's own control surface: its Bluetooth link, its network status,
+// and the settings, firmware and setup actions that belong to it.
 //
-// Two ways to reach a mirror:
-//   - Bluetooth (phone): scan for mirrors (found by their advertised GATT
-//     service, not by their name), connect, push layout or
-//     open the configure dialog. The BLE session's pong reports the mirror's
-//     WiFi IP, which is what the phone would use for a firmware upload.
-//   - On this network (desktop): mDNS discovery plus a manual IP field (the
-//     fallback for every platform where discovery fails, and how you point
-//     at tool/fake_mirror.dart during development). LAN entries get Push
-//     layout and Update firmware.
+// Everything here is scoped to one device record. The Bluetooth section is a
+// view over that record's own [MirrorConnection], and the network section uses
+// only that record's endpoint, so no control on this screen can reach a
+// different mirror. Finding and adding devices happens on the dashboard (Add
+// device); this screen never scans or lists other devices.
 //
-// Missing BLE or mDNS on a desktop is tolerated: the sections show
-// "unavailable" instead of crashing, and the manual IP path still works.
+// Missing BLE on a desktop is tolerated: the Bluetooth section says so and
+// points at the network section, which keeps firmware updates and status
+// working.
 
 import 'dart:async';
 import 'dart:convert';
@@ -32,7 +29,7 @@ import '../services/device_location.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_connection.dart';
-import '../services/mirror_discovery.dart';
+import '../services/mirror_devices.dart';
 import '../services/mirror_lan.dart';
 import '../services/mirror_location.dart';
 import '../services/mirror_wifi.dart';
@@ -48,15 +45,16 @@ class MirrorScreen extends StatefulWidget {
   const MirrorScreen({
     super.key,
     required this.controller,
-    required this.connection,
+    required this.device,
     this.simplified = false,
   });
 
   final DesignerController controller;
 
-  /// The app-scoped BLE link, owned by the workspace so it survives this
-  /// screen being pushed and popped.
-  final MirrorConnection connection;
+  /// The device this screen controls. Its own connection is the Bluetooth
+  /// link used, and its endpoint the only LAN address, so every action here
+  /// is pinned to this record.
+  final MirrorDevice device;
 
   /// Trimmed deployment surface: BLE only, no LAN, bundled firmware only.
   final bool simplified;
@@ -67,14 +65,17 @@ class MirrorScreen extends StatefulWidget {
 
 class _MirrorScreenState extends State<MirrorScreen> {
   DesignerController get _c => widget.controller;
-  MirrorConnection get _connection => widget.connection;
+  MirrorDevice get _device => widget.device;
+  MirrorDevices get _devices => widget.device.owner;
+  MirrorConnection get _connection => widget.device.connection;
 
   // ------------------------------------------------------------- BLE
 
-  final List<BleScanEntry> _bleDevices = <BleScanEntry>[];
-  bool _scanning = false;
-  String? _bleUnavailable;
   bool _bleBusy = false;
+
+  /// Why a connect could not even be started (permissions, adapter, no
+  /// Bluetooth address). Cleared when one starts.
+  String? _connectProblem;
 
   /// Bundled firmware version, loaded only in simplified mode for the
   /// "Update to latest" button.
@@ -94,24 +95,13 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   // ------------------------------------------------------------- LAN
 
-  final List<LanDevice> _lanDevices = <LanDevice>[];
-  final List<MirrorStatus?> _lanStatuses = <MirrorStatus?>[];
-  final List<bool> _lanBusy = <bool>[];
-  bool _browsing = false;
-  String? _mdnsUnavailable;
-  final TextEditingController _ipField = TextEditingController();
-
-  // Avoid overlapping async work on the same device. Separate from the browse
-  // generation below: a status refresh is triggered by every device discovery
-  // finds, so sharing one counter made the first result cancel the search it
-  // came from.
-  int _workToken = 0;
-  int _browseToken = 0;
+  /// True while a firmware upload runs, so the section's buttons disable
+  /// rather than start a second transfer.
+  bool _otaBusy = false;
 
   @override
   void initState() {
     super.initState();
-    _browse();
     if (_connection.session != null) {
       // Re-entering with a live session: refresh the brightness slider and
       // the WiFi control from the device instead of waiting for a new connect.
@@ -121,6 +111,13 @@ class _MirrorScreenState extends State<MirrorScreen> {
       });
     }
     if (widget.simplified) _loadBundledVersion();
+    if (_device.endpoint != null) {
+      // One status pull on entry; the dashboard's own poll keeps it current
+      // while the tile is visible.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_refreshDevice());
+      });
+    }
   }
 
   /// Loads the bundled firmware for the simplified "Update to latest" button.
@@ -132,9 +129,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   @override
   void dispose() {
-    // Deliberately no connection teardown here: the session is owned by the
-    // workspace and must survive this screen being popped.
-    _ipField.dispose();
+    // Deliberately no connection teardown here: the record owns the session
+    // and it must survive this screen being popped.
     super.dispose();
   }
 
@@ -149,60 +145,54 @@ class _MirrorScreenState extends State<MirrorScreen> {
     _toast('$what: ${bleErrorMessage(e)}');
   }
 
-  // ---------------------------------------------------------- scan
+  // ------------------------------------------------------- connection
 
-  Future<void> _scan() async {
-    setState(() {
-      _scanning = true;
-      _bleUnavailable = null;
-      _blePermissionPermanent = false;
-      _bleDevices.clear();
-    });
-    // A manual scan means the user wants a fresh device list, not the stale
-    // "could not connect" banner left by the launch auto-reconnect to a
-    // remembered mirror that is no longer the board on air. Drop that failed
-    // state here so the results collected below can actually render.
-    _connection.clearFailed();
-    try {
-      final gate = await ensureBlePermissions();
-      if (!mounted) return;
-      if (!gate.granted) {
-        setState(() {
-          _bleUnavailable = gate.permanentDenied
-              ? 'Bluetooth permission denied; grant it in Settings'
-              : 'Bluetooth permission denied';
-          _blePermissionPermanent = gate.permanentDenied;
-        });
-        return;
-      }
-      if (!await FlutterBluePlus.isSupported) {
-        if (!mounted) return;
-        setState(() => _bleUnavailable = 'Bluetooth is not available here');
-        return;
-      }
-      if (!mounted) return;
-      if (!await ensureBluetoothOn(context)) {
-        if (!mounted) return;
-        setState(
-            () => _bleUnavailable = 'Bluetooth is off; enable it to scan');
-        return;
-      }
-      final found = await scanForMirrors();
-      if (!mounted) return;
-      setState(() => _bleDevices.addAll(found));
-    } on BleUnavailableException catch (e) {
-      if (!mounted) return;
-      setState(() => _bleUnavailable = e.message);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _bleUnavailable = '$e');
-    } finally {
-      if (mounted) setState(() => _scanning = false);
+  /// Bring up this device's Bluetooth link. The record's own connection is
+  /// the only target, so this can never attach to another mirror.
+  Future<void> _connectDevice() async {
+    if (_device.bleId == null) {
+      setState(() => _connectProblem =
+          'This device has no Bluetooth address yet. Pair it from Add '
+              'device.');
+      return;
     }
-  }
-
-  Future<void> _connect(BleScanEntry entry) async {
-    await _connection.connect(entry);
+    setState(() {
+      _connectProblem = null;
+      _blePermissionPermanent = false;
+    });
+    final gate = await ensureBlePermissions();
+    if (!mounted) return;
+    if (!gate.granted) {
+      setState(() {
+        _connectProblem = gate.permanentDenied
+            ? 'Bluetooth permission denied; grant it in Settings'
+            : 'Bluetooth permission denied';
+        _blePermissionPermanent = gate.permanentDenied;
+      });
+      return;
+    }
+    if (!await FlutterBluePlus.isSupported) {
+      if (!mounted) return;
+      setState(() => _connectProblem = 'Bluetooth is not available here');
+      return;
+    }
+    if (!mounted) return;
+    if (!await ensureBluetoothOn(context)) {
+      if (!mounted) return;
+      setState(
+          () => _connectProblem = 'Bluetooth is off; enable it to connect');
+      return;
+    }
+    setState(() => _bleBusy = true);
+    try {
+      // Through the registry: it serializes the handover, verifies the
+      // session's identity and records what the link reports.
+      await _devices.connect(_device);
+    } catch (e) {
+      if (mounted) setState(() => _connectProblem = bleErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _bleBusy = false);
+    }
     if (!mounted) return;
     if (_connection.status != MirrorConnectionStatus.connected) return;
     setState(() {
@@ -210,27 +200,9 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _brightnessAuto = true;
       _wifi = null;
     });
-    _toast('Connected to ${entry.name}');
     await _loadWifi();
     await _maybeRunSetup();
     await _loadBrightness();
-  }
-
-  /// Reconnect to the last remembered mirror after a failed connect.
-  Future<void> _retryConnect() async {
-    if (!await ensureBluetoothOn(context)) return;
-    await _connection.connectLast();
-    if (!mounted) return;
-    if (_connection.status == MirrorConnectionStatus.connected) {
-      setState(() {
-        _brightness = null;
-        _brightnessAuto = true;
-        _wifi = null;
-      });
-      await _loadWifi();
-      await _maybeRunSetup();
-      await _loadBrightness();
-    }
   }
 
   /// Read the live brightness once so the slider starts at the truth. A
@@ -284,7 +256,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
     if (session == null) return;
 
     final saved = await showDialog<WifiConfig>(
-       context: context,
+      context: context,
       builder: (_) => _WifiSetupDialog(session: session),
     );
     if (saved == null || !mounted) return;
@@ -319,7 +291,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
 
   /// Full guided setup as a page: WiFi (when [includeWifi]), location, and
   /// time & units. The page owns its pushes; this only wires the BLE seams
-  /// and refreshes the controls afterwards.
+  /// and refreshes the controls afterwards. The name it collects is recorded
+  /// on this device's own record.
   Future<void> _runSetup({required bool includeWifi}) async {
     final session = _connection.session;
     if (session == null) return;
@@ -327,8 +300,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
       MaterialPageRoute(
         builder: (_) => MirrorOnboardingPage(
           includeWifi: includeWifi,
-          currentName: _connection.deviceName,
-          nameApplied: (n) => _connection.renameDevice(n),
+          currentName: _device.name,
+          nameApplied: (n) => _devices.rename(_device, n),
           wifiScan: session.scanWifi,
           wifiPush: session.pushWifi,
           wifiAwait: session.awaitWifiResult,
@@ -429,23 +402,36 @@ class _MirrorScreenState extends State<MirrorScreen> {
         'canvas.');
   }
 
-  Future<void> _pushLayoutBle() async {
-    final session = _connection.session;
-    if (session == null) return;
-    final pong = _connection.pong;
-    if (pong != null && pong.width > 0 && pong.height > 0 &&
-        (_c.doc.width != pong.width || _c.doc.height != pong.height)) {
-      _toastSizeMismatch(pong.width, pong.height);
+  /// Push the workspace's layout to this device. The registry picks the
+  /// transport (a live Bluetooth session first, otherwise the device's own
+  /// endpoint) and refreshes the record from the device's answer.
+  Future<void> _pushLayout() async {
+    final width = _connection.panelWidth;
+    final height = _connection.panelHeight;
+    if (width > 0 &&
+        height > 0 &&
+        (_c.doc.width != width || _c.doc.height != height)) {
+      _toastSizeMismatch(width, height);
       return;
     }
     setState(() => _bleBusy = true);
     try {
-      final status = await session.pushLayout(_c.exportJson());
-      _toast('Pushed: $status');
+      await _devices.sendLayout(_device, _c.exportJson());
+      if (mounted) _toast('Layout sent to ${_device.name}');
     } catch (e) {
       _handleError(e, 'push layout');
     } finally {
       if (mounted) setState(() => _bleBusy = false);
+    }
+  }
+
+  /// Pull this device's status (and reachability) through its own endpoint.
+  Future<void> _refreshDevice() async {
+    try {
+      await _devices.refresh(_device);
+    } catch (_) {
+      // The record's own error and reachability flags are what the section
+      // renders; a failure here has nowhere better to go.
     }
   }
 
@@ -490,135 +476,10 @@ class _MirrorScreenState extends State<MirrorScreen> {
     }
   }
 
-  // ------------------------------------------------------- discovery
+  // ------------------------------------------------------- firmware
 
-  Future<void> _browse() async {
-    setState(() {
-      _browsing = true;
-      _mdnsUnavailable = null;
-    });
-    // Its own generation counter. The per-device status refreshes started
-    // below bump _workToken, and while that was the same counter the first
-    // device found ended the search and left the button stuck on "browsing".
-    final token = ++_browseToken;
-    try {
-      await for (final device in browseMdns()) {
-        if (!mounted || token != _browseToken) return;
-        setState(() {
-          if (!_lanDevices.any((d) => d.ip == device.ip)) {
-            _lanDevices.add(device);
-            _lanStatuses.add(null);
-            _lanBusy.add(false);
-            _refreshLanStatus(_lanDevices.length - 1);
-          }
-        });
-      }
-    } catch (_) {
-      if (mounted && token == _browseToken) {
-        setState(() => _mdnsUnavailable = 'mDNS discovery unavailable here');
-      }
-    } finally {
-      if (mounted && token == _browseToken) {
-        setState(() => _browsing = false);
-      }
-    }
-  }
-
-  void _addManualIp() {
-    final raw = _ipField.text.trim();
-    if (raw.isEmpty) return;
-    var host = raw;
-    if (!host.contains('://')) host = 'http://$host';
-    final uri = Uri.tryParse(host);
-    if (uri == null || uri.host.isEmpty) {
-      _toast('Enter an IP or host, optionally with a port (e.g. 127.0.0.1:8080)');
-      return;
-    }
-    final ip = uri.hasPort ? '${uri.host}:${uri.port}' : uri.host;
-    if (_lanDevices.any((d) => d.ip == ip)) {
-      _toast('$ip is already listed');
-      return;
-    }
-    setState(() {
-      _lanDevices.add(LanDevice('manual ($ip)', ip, uri.hasPort ? uri.port : 80));
-      _lanStatuses.add(null);
-      _lanBusy.add(false);
-      _ipField.clear();
-    });
-    _refreshLanStatus(_lanDevices.length - 1);
-  }
-
-  Future<void> _refreshLanStatus(int index) async {
-    final token = ++_workToken;
-    final device = _lanDevices[index];
-    try {
-      final status = await MirrorLan(device.ip).status();
-      if (!mounted || token != _workToken) return;
-      setState(() => _lanStatuses[index] = status);
-    } catch (e) {
-      if (!mounted || token != _workToken) return;
-      setState(() {
-        _lanStatuses[index] = null;
-      });
-      // A mirror that is just rebooting answers nothing for a while; the
-      // user can hit the entry's refresh via a new status pull on push.
-    }
-  }
-
-  Future<void> _pushLayoutLan(int index) async {
-    final device = _lanDevices[index];
-    final status = _lanStatuses[index];
-    if (status != null && status.width > 0 && status.height > 0 &&
-        (_c.doc.width != status.width || _c.doc.height != status.height)) {
-      _toastSizeMismatch(status.width, status.height);
-      return;
-    }
-    if (!await ensureMirrorReachable(context, device.ip)) return;
-    setState(() => _lanBusy[index] = true);
-    try {
-      final result = await MirrorLan(device.ip).putLayout(_c.exportJson());
-      if (result.ok) {
-        _toast(result.diag.isEmpty
-            ? 'Layout pushed to ${device.ip}'
-            : 'Pushed with warnings: ${result.diag.join('; ')}');
-      } else {
-        _toast('Rejected by ${device.ip}: ${result.error}');
-      }
-      await _refreshLanStatus(index);
-    } catch (e) {
-      _handleError(e, 'push layout');
-    } finally {
-      if (mounted) setState(() => _lanBusy[index] = false);
-    }
-  }
-
-  Future<void> _updateFirmwareLan(int index) async {
-    final device = _lanDevices[index];
-    final status = _lanStatuses[index];
-    if (status == null ||
-        status.ip.isEmpty ||
-        status.ip == '0.0.0.0' ||
-        status.ip == '0.0.0.0:0') {
-      _toast('No WiFi IP reported; firmware upload needs the LAN address');
-      return;
-    }
-    await _updateFirmware(device.ip, deviceVersion: status.version);
-    if (mounted) await _refreshLanStatus(index);
-  }
-
-  /// Firmware update from the BLE section: the pong carries the mirror's
-  /// WiFi IP, which is what the upload talks to.
-  Future<void> _updateFirmwareBle() async {
-    final ip = _connection.pong?.ip;
-    if (ip == null || ip.isEmpty || ip == '0.0.0.0') {
-      _toast('The mirror has no WiFi IP; the phone and mirror must be on '
-          'the same network');
-      return;
-    }
-    await _updateFirmware(ip, deviceVersion: _connection.pong?.version ?? '');
-  }
-
-  /// Bundled-only firmware update: no file or URL source, no source dialog.
+  /// Bundled-only firmware update for the trimmed surface: no file or URL
+  /// source, no source dialog.
   Future<void> _updateFirmwareLatest() async {
     final bundled = _bundled ?? await loadBundledFirmware();
     if (!mounted) return;
@@ -626,13 +487,15 @@ class _MirrorScreenState extends State<MirrorScreen> {
       _toast('No firmware bundled with this app');
       return;
     }
-    final ip = _connection.pong?.ip;
-    if (ip == null || ip.isEmpty || ip == '0.0.0.0') {
-      _toast('The mirror has no WiFi IP; the phone and mirror must be on the same network');
+    final endpoint = _device.endpoint;
+    if (endpoint == null) {
+      _toast(_noAddress);
       return;
     }
-    if (!await ensureMirrorReachable(context, ip)) return;
-    await _uploadAndWait(ip, bundled.bytes, 'bundled v${bundled.version}');
+    if (!await ensureMirrorReachable(context, endpoint)) return;
+    if (!await _confirmEndpoint(endpoint)) return;
+    await _uploadAndWait(
+        endpoint, bundled.bytes, 'bundled v${bundled.version}');
   }
 
   /// Shared OTA flow: prefer the firmware bundled with this app, offering a
@@ -640,8 +503,18 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// then poll until the mirror answers again after its reboot. Probes the
   /// LAN first: everything that follows sends megabytes over WiFi, and there
   /// is no point picking a source for an address this phone cannot reach.
-  Future<void> _updateFirmware(String ip, {String deviceVersion = ''}) async {
-    if (!await ensureMirrorReachable(context, ip)) return;
+  ///
+  /// The endpoint is captured before the first await and rechecked after the
+  /// last one: a source dialog, a file picker or a download can all be open
+  /// while the address is handed to a different mirror, and a firmware image
+  /// must never land on hardware the owner did not choose.
+  Future<void> _updateFirmware() async {
+    final endpoint = _device.endpoint;
+    if (endpoint == null) {
+      _toast(_noAddress);
+      return;
+    }
+    if (!await ensureMirrorReachable(context, endpoint)) return;
     final bundled = await loadBundledFirmware();
     if (!mounted) return;
 
@@ -649,7 +522,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
       context: context,
       builder: (_) => _FirmwareSourceDialog(
         bundledVersion: bundled?.version,
-        deviceVersion: deviceVersion,
+        deviceVersion:
+            _device.status?.version ?? _connection.pong?.version ?? '',
       ),
     );
     if (source == null || !mounted) return;
@@ -685,29 +559,87 @@ class _MirrorScreenState extends State<MirrorScreen> {
       fileName = 'ota.bin';
     }
 
-    await _uploadAndWait(ip, bytes, fileName);
+    if (!await _confirmEndpoint(endpoint)) return;
+    await _uploadAndWait(endpoint, bytes, fileName);
   }
 
-  /// Stream [bytes] to the mirror's OTA endpoint, wait until it answers after
-  /// the reboot, then toast the result. The transport is shared with the
-  /// workspace's update prompt (ui/firmware_prompt.dart).
+  /// Rechecks, immediately before the bytes go out, that [endpoint] is still
+  /// this record's address and still answers as this device. The record's
+  /// firmware id is the comparison: an address that now reports a different
+  /// one belongs to another mirror, and a mismatch is never written to.
+  Future<bool> _confirmEndpoint(String endpoint) async {
+    if (!mounted) return false;
+    if (_device.removed) {
+      _toast('Not sent: this device is no longer in the list.');
+      return false;
+    }
+    if (_device.endpoint != endpoint) {
+      _toast('Not sent: this device\'s address changed. Refresh and try '
+          'again.');
+      return false;
+    }
+    final expected = _device.id;
+    if (expected == null) return true; // firmware without an identity to check
+    final MirrorStatus status;
+    try {
+      status = await MirrorLan(endpoint).status();
+    } catch (e) {
+      _handleError(e, 'update');
+      return false;
+    }
+    if (!mounted) return false;
+    // Exactly this device's identity, and nothing less: a status with no id
+    // (firmware that predates it) or a different one means the address is not
+    // answering as the mirror this record describes, and an image is never
+    // written to it.
+    if (status.id != expected) {
+      _toast('Not sent: $endpoint is not answering as ${_device.name} any '
+          'more.');
+      return false;
+    }
+    return true;
+  }
+
+  /// Shown when an upload has no address to send to.
+  static const String _noAddress =
+      'This device has no Wi-Fi address yet; a firmware upload needs it. '
+      'Connect it to the network, or add its address from Add device.';
+
+  /// Stream [bytes] to this device's OTA endpoint, wait until it answers
+  /// after the reboot, then toast the result. The transport is shared with
+  /// the workspace's update prompt (ui/firmware_prompt.dart).
   Future<void> _uploadAndWait(
-      String ip, Uint8List bytes, String fileName) async {
+      String endpoint, Uint8List bytes, String fileName) async {
+    setState(() => _otaBusy = true);
     try {
       final newStatus = await pushFirmwareWithProgress(context,
-          ip: ip, bytes: bytes, label: fileName);
+          ip: endpoint, bytes: bytes, label: fileName);
       if (!mounted) return;
       if (newStatus != null) {
-        // The mirror rebooted, so the BLE link died. Reconnect it now that
-        // the device is advertising again (no-op when nothing is remembered
-        // or on platforms without BLE).
-        unawaited(_connection.connectLast());
+        // The mirror rebooted, so the BLE link died with it. Reconnect this
+        // device only, now that it is advertising the new image.
+        await _reconnectQuietly();
       }
       _toast(newStatus == null
           ? 'Update uploaded; the mirror is rebooting'
           : 'Updated to ${newStatus.version}');
+      if (mounted) await _refreshDevice();
     } catch (e) {
       if (mounted) _handleError(e, 'update');
+    } finally {
+      if (mounted) setState(() => _otaBusy = false);
+    }
+  }
+
+  /// Best-effort reconnect of this device's link after an OTA. Never touches
+  /// another device, and never surfaces a failure: the mirror may simply not
+  /// be advertising yet.
+  Future<void> _reconnectQuietly() async {
+    if (_device.bleId == null) return;
+    try {
+      await _devices.connect(_device);
+    } catch (_) {
+      // The device is still coming back; the Connect button is there for it.
     }
   }
 
@@ -719,7 +651,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
     if (uri == null || uri.host.isEmpty) {
       throw MirrorApiException('enter a full http:// URL');
     }
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 10);
     try {
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 10));
       final resp = await req.close().timeout(const Duration(seconds: 30));
@@ -733,7 +666,8 @@ class _MirrorScreenState extends State<MirrorScreen> {
         throw MirrorApiException('the downloaded image is empty');
       }
       if (bytes.length > 4 * 1024 * 1024) {
-        throw MirrorApiException('the downloaded image is too large (max 4 MB)');
+        throw MirrorApiException(
+            'the downloaded image is too large (max 4 MB)');
       }
       return bytes;
     } on SocketException catch (e) {
@@ -784,8 +718,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   Future<void> _factoryResetBle() async {
     final session = _connection.session;
     if (session == null) return;
-    final confirmed = await _confirmFactoryReset(
-        _connection.deviceName ?? 'the connected mirror');
+    final confirmed = await _confirmFactoryReset(_device.name);
     if (!confirmed) return;
     if (!mounted) return;
     setState(() => _bleBusy = true);
@@ -885,12 +818,13 @@ class _MirrorScreenState extends State<MirrorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Mirror')),
-      // The BLE section is a view over the workspace-owned connection, so a
-      // state change (connect, disconnect, dropped link) rebuilds it even
-      // when it happened while this screen was not on stage.
+      appBar: AppBar(title: Text(_device.name)),
+      // The Bluetooth section is a view over this device's own connection and
+      // the record's status, so a state change (connect, disconnect, dropped
+      // link, a fresh poll) rebuilds it even when it happened while this
+      // screen was not on stage.
       body: ListenableBuilder(
-        listenable: _connection,
+        listenable: Listenable.merge(<Listenable>[_connection, _device]),
         builder: (context, _) => ListView(
           padding: const EdgeInsets.all(16),
           children: <Widget>[
@@ -915,19 +849,53 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 
   Widget _buildBleSection() {
-    if (_bleUnavailable != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final connection = _connection;
+    final session = connection.session;
+    if (session != null) return _buildConnected();
+    if (connection.status == MirrorConnectionStatus.connecting) {
+      return Row(
         children: <Widget>[
-          Text(_bleUnavailable!, style: const TextStyle(color: Colors.grey)),
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 12),
+          Text('Connecting to ${_device.name}...'),
+        ],
+      );
+    }
+
+    // Not connected: say why, and offer the one action that can change it.
+    // Everything here is still this device's own link, so a retry can only
+    // bring back the mirror this screen is about.
+    final String message;
+    if (_connectProblem != null) {
+      message = _connectProblem!;
+    } else if (connection.status == MirrorConnectionStatus.failed) {
+      message = 'Could not connect to ${_device.name}: '
+          '${connection.error ?? 'unknown error'}';
+    } else if (_device.bleId == null) {
+      message = 'This device has no Bluetooth address yet. Pair it from Add '
+          'device to reach its setup, WiFi and game controls.';
+    } else {
+      message = 'Not connected.';
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(message, style: const TextStyle(color: Colors.grey)),
+        if (_device.bleId != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(
               children: <Widget>[
                 OutlinedButton.icon(
-                  onPressed: _scanning ? null : _scan,
-                  icon: const Icon(Icons.bluetooth_searching, size: 18),
-                  label: const Text('Scan again'),
+                  onPressed: _bleBusy ? null : _connectDevice,
+                  icon: const Icon(Icons.bluetooth, size: 18),
+                  label: Text(connection.status == MirrorConnectionStatus.failed
+                      ? 'Retry'
+                      : 'Connect'),
                 ),
                 if (_blePermissionPermanent) ...<Widget>[
                   const SizedBox(width: 8),
@@ -939,343 +907,226 @@ class _MirrorScreenState extends State<MirrorScreen> {
               ],
             ),
           ),
-        ],
-      );
-    }
+      ],
+    );
+  }
 
+  /// The controls that need a live Bluetooth session. Every one of them
+  /// talks over this device's own link.
+  Widget _buildConnected() {
     final connection = _connection;
-    if (connection.status == MirrorConnectionStatus.connecting) {
-      return Row(
-        children: <Widget>[
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 12),
-          Text('Connecting to ${connection.deviceName}...'),
-        ],
-      );
-    }
-
-    final session = connection.session;
-    if (session != null) {
-      final pong = connection.pong;
-      final otaReady = pong != null &&
-          pong.ip.isNotEmpty &&
-          pong.ip != '0.0.0.0';
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text('Connected to ${connection.deviceName}'),
-          if (!widget.simplified && pong != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'v${pong.version}  IP ${pong.ip}  layout ${pong.layout} '
-                '(${pong.width}x${pong.height})',
-                style: const TextStyle(color: Colors.grey),
-              ),
-            ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: _bleBusy ? null : _pushLayoutBle,
-                icon: const Icon(Icons.send, size: 18),
-                label: const Text('Push layout'),
-              ),
-              if (widget.simplified)
-                OutlinedButton.icon(
-                  onPressed: (_bleBusy || _bundled == null)
-                      ? null
-                      : _updateFirmwareLatest,
-                  icon: const Icon(Icons.system_update, size: 18),
-                  label: Text(_bundled == null
-                      ? 'Update unavailable'
-                      : 'Update to latest (v${_bundled!.version})'),
-                )
-              else ...<Widget>[
-                OutlinedButton.icon(
-                  onPressed: _bleBusy ? null : _configure,
-                  icon: const Icon(Icons.tune, size: 18),
-                  label: const Text('Configure'),
-                ),
-                Tooltip(
-                  message: 'Uploads over WiFi, so the phone and mirror must be '
-                      'on the same network',
-                  child: OutlinedButton.icon(
-                    onPressed: _bleBusy || !otaReady ? null : _updateFirmwareBle,
-                    icon: const Icon(Icons.system_update, size: 18),
-                    label: const Text('Update firmware'),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _bleBusy ? null : _rebootBle,
-                  icon: const Icon(Icons.restart_alt, size: 18),
-                  label: const Text('Reboot'),
-                ),
-                // The only destructive entry in the cluster, and the one
-                // that cannot be walked back: painted in the theme error
-                // red so it can never be mistaken for the Reboot beside it.
-                FilledButton.icon(
-                  onPressed: _bleBusy ? null : _factoryResetBle,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    foregroundColor: Theme.of(context).colorScheme.onError,
-                  ),
-                  icon: const Icon(Icons.delete_forever_outlined, size: 18),
-                  label: const Text('Factory reset'),
-                ),
-              ],
-              TextButton(
-                onPressed: _disconnectBle,
-                child: const Text('Disconnect'),
-              ),
-            ],
-          ),
-          // WiFi: shown whenever the mirror answered "get wifi", in every
-          // view. Setting up or changing the network is a normal owner task,
-          // not a developer-only one. A fresh mirror gets a prominent "Set up
-          // WiFi" call to action; a configured one offers Change / Forget.
-          if (_wifi != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _wifi!.saved
-                  ? Row(
-                      children: <Widget>[
-                        const Icon(Icons.wifi, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _wifi!.connected
-                                ? '${_wifi!.ssid} (${_wifi!.ip})'
-                                : _wifi!.ssid,
-                            style: const TextStyle(color: Colors.grey),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: _bleBusy ? null : _wifiSetup,
-                          child: const Text('Change'),
-                        ),
-                        TextButton(
-                          onPressed: _bleBusy ? null : _wifiForget,
-                          child: const Text('Forget'),
-                        ),
-                        // The trimmed phone view has no Configure dialog, so
-                        // the walkthrough is its only setup surface: rerun it
-                        // here to revisit location and time & units later.
-                        if (widget.simplified)
-                          TextButton(
-                            onPressed:
-                                _bleBusy ? null : () => _runSetup(includeWifi: false),
-                            child: const Text('Set up'),
-                          ),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        const Text('WiFi not set up',
-                            style: TextStyle(color: Colors.orange)),
-                        const SizedBox(height: 4),
-                        FilledButton.icon(
-                          onPressed: _bleBusy
-                              ? null
-                              : () => _runSetup(includeWifi: true),
-                          icon: const Icon(Icons.wifi_find, size: 18),
-                          label: const Text('Set up WiFi'),
-                        ),
-                      ],
-                    ),
-            ),
-
-          // Brightness is only shown once the mirror answered "get
-          // brightness"; old firmware hides the whole control.
-          if (!widget.simplified && _brightness != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                children: <Widget>[
-                  const Text('Brightness'),
-                  Expanded(
-                    child: Slider(
-                      value: (_brightness ?? 0).clamp(0, 255).toDouble(),
-                      min: 0,
-                      max: 255,
-                      divisions: 255,
-                      label: '$_brightness',
-                      // The layout owns brightness in auto mode; dragging is
-                      // what takes manual control.
-                      onChanged: _bleBusy || _brightnessAuto
-                          ? null
-                          : (v) => setState(() => _brightness = v.round()),
-                      onChangeEnd: _bleBusy || _brightnessAuto
-                          ? null
-                          : (v) => _sendBrightness(v.round()),
-                    ),
-                  ),
-                  Text('${_brightness ?? 0}/255'),
-                  const SizedBox(width: 8),
-                  Switch(
-                    value: _brightnessAuto,
-                    onChanged: _bleBusy ? null : _setBrightnessAuto,
-                  ),
-                  const Text('Auto'),
-                ],
-              ),
-            ),
-        ],
-      );
-    }
-
-    if (connection.status == MirrorConnectionStatus.failed) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text('Could not connect to ${connection.deviceName}: '
-              '${connection.error ?? 'unknown error'}'),
-          const SizedBox(height: 8),
-          Row(
-            children: <Widget>[
-              OutlinedButton.icon(
-                onPressed: _retryConnect,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _scanning ? null : _scan,
-                icon: const Icon(Icons.bluetooth_searching, size: 18),
-                label: const Text('Scan again'),
-              ),
-            ],
-          ),
-        ],
-      );
-    }
-
+    final pong = connection.pong;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
+        Text('Connected to ${_device.name}'),
+        if (!widget.simplified && pong != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'v${pong.version}  IP ${pong.ip}  layout ${pong.layout} '
+              '(${pong.width}x${pong.height})',
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
           children: <Widget>[
             FilledButton.icon(
-              onPressed: _scanning ? null : _scan,
-              icon: const Icon(Icons.bluetooth_searching, size: 18),
-              label: Text(_scanning ? 'Scanning...' : 'Scan'),
+              onPressed: _bleBusy ? null : _pushLayout,
+              icon: const Icon(Icons.send, size: 18),
+              label: const Text('Push layout'),
+            ),
+            if (widget.simplified)
+              OutlinedButton.icon(
+                onPressed: (_bleBusy || _otaBusy || _bundled == null)
+                    ? null
+                    : _updateFirmwareLatest,
+                icon: const Icon(Icons.system_update, size: 18),
+                label: Text(_bundled == null
+                    ? 'Update unavailable'
+                    : 'Update to latest (v${_bundled!.version})'),
+              )
+            else ...<Widget>[
+              OutlinedButton.icon(
+                onPressed: _bleBusy ? null : _configure,
+                icon: const Icon(Icons.tune, size: 18),
+                label: const Text('Configure'),
+              ),
+              TextButton.icon(
+                onPressed: _bleBusy ? null : _rebootBle,
+                icon: const Icon(Icons.restart_alt, size: 18),
+                label: const Text('Reboot'),
+              ),
+              // The only destructive entry in the cluster, and the one
+              // that cannot be walked back: painted in the theme error
+              // red so it can never be mistaken for the Reboot beside it.
+              FilledButton.icon(
+                onPressed: _bleBusy ? null : _factoryResetBle,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
+                icon: const Icon(Icons.delete_forever_outlined, size: 18),
+                label: const Text('Factory reset'),
+              ),
+            ],
+            TextButton(
+              onPressed: _disconnectBle,
+              child: const Text('Disconnect'),
             ),
           ],
         ),
-        if (_scanning)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text('Scanning for mirrors...',
-                style: TextStyle(color: Colors.grey)),
-          )
-        else if (_bleDevices.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text('No mirrors found. Make sure a mirror is powered '
-                'and within range.',
-                style: TextStyle(color: Colors.grey)),
-          )
-        else
-          for (final entry in _bleDevices)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: Text(entry.name),
-              subtitle: widget.simplified ? null : Text('${entry.rssi} dBm'),
-              trailing: FilledButton(
-                onPressed: _bleBusy ? null : () => _connect(entry),
-                child: const Text('Connect'),
-              ),
+        // WiFi: shown whenever the mirror answered "get wifi", in every
+        // view. Setting up or changing the network is a normal owner task,
+        // not a developer-only one. A fresh mirror gets a prominent "Set up
+        // WiFi" call to action; a configured one offers Change / Forget.
+        if (_wifi != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _wifi!.saved
+                ? Row(
+                    children: <Widget>[
+                      const Icon(Icons.wifi, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _wifi!.connected
+                              ? '${_wifi!.ssid} (${_wifi!.ip})'
+                              : _wifi!.ssid,
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _bleBusy ? null : _wifiSetup,
+                        child: const Text('Change'),
+                      ),
+                      TextButton(
+                        onPressed: _bleBusy ? null : _wifiForget,
+                        child: const Text('Forget'),
+                      ),
+                      // The trimmed phone view has no Configure dialog, so
+                      // the walkthrough is its only setup surface: rerun it
+                      // here to revisit location and time & units later.
+                      if (widget.simplified)
+                        TextButton(
+                          onPressed: _bleBusy
+                              ? null
+                              : () => _runSetup(includeWifi: false),
+                          child: const Text('Set up'),
+                        ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Text('WiFi not set up',
+                          style: TextStyle(color: Colors.orange)),
+                      const SizedBox(height: 4),
+                      FilledButton.icon(
+                        onPressed: _bleBusy
+                            ? null
+                            : () => _runSetup(includeWifi: true),
+                        icon: const Icon(Icons.wifi_find, size: 18),
+                        label: const Text('Set up WiFi'),
+                      ),
+                    ],
+                  ),
+          ),
+
+        // Brightness is only shown once the mirror answered "get
+        // brightness"; old firmware hides the whole control.
+        if (!widget.simplified && _brightness != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              children: <Widget>[
+                const Text('Brightness'),
+                Expanded(
+                  child: Slider(
+                    value: (_brightness ?? 0).clamp(0, 255).toDouble(),
+                    min: 0,
+                    max: 255,
+                    divisions: 255,
+                    label: '$_brightness',
+                    // The layout owns brightness in auto mode; dragging is
+                    // what takes manual control.
+                    onChanged: _bleBusy || _brightnessAuto
+                        ? null
+                        : (v) => setState(() => _brightness = v.round()),
+                    onChangeEnd: _bleBusy || _brightnessAuto
+                        ? null
+                        : (v) => _sendBrightness(v.round()),
+                  ),
+                ),
+                Text('${_brightness ?? 0}/255'),
+                const SizedBox(width: 8),
+                Switch(
+                  value: _brightnessAuto,
+                  onChanged: _bleBusy ? null : _setBrightnessAuto,
+                ),
+                const Text('Auto'),
+              ],
             ),
+          ),
       ],
     );
   }
 
+  /// This device's own network address and the one action that needs it. The
+  /// endpoint is the record's, port included, so a mirror on a non-default
+  /// mDNS or manual port keeps working; nothing here can address another
+  /// device.
   Widget _buildLanSection() {
+    final endpoint = _device.endpoint;
+    if (endpoint == null) {
+      return const Text(
+        'No Wi-Fi address is known for this device yet. Let discovery find it '
+        'again, or add its address from Add device.',
+        style: TextStyle(color: Colors.grey),
+      );
+    }
+    final status = _device.status;
+    final reachable = _device.lanReachable;
+    final String statusText;
+    if (!reachable) {
+      statusText = 'Not reached yet';
+    } else if (status == null) {
+      statusText = 'Connected';
+    } else {
+      statusText =
+          'v${status.version}${status.core.isNotEmpty ? '  core ${status.core}' : ''}'
+          '  ${status.layout} ${status.width}x${status.height}  '
+          '${status.brightness}/255';
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
+        Text(endpoint, style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 4),
+        Text(statusText, style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
           children: <Widget>[
-            if (_mdnsUnavailable == null)
-              OutlinedButton.icon(
-                onPressed: _browsing ? null : _browse,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: Text(_browsing ? 'Browsing...' : 'Browse'),
-              ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _ipField,
-                decoration: const InputDecoration(
-                  hintText: 'Manual IP (e.g. 127.0.0.1:8080)',
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                ),
-                onSubmitted: (_) => _addManualIp(),
-              ),
+            OutlinedButton.icon(
+              onPressed: _otaBusy ? null : _refreshDevice,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Refresh'),
             ),
-            const SizedBox(width: 8),
-            OutlinedButton(
-              onPressed: _addManualIp,
-              child: const Text('Add'),
+            Tooltip(
+              message: 'Uploads over WiFi, so the phone and mirror must be '
+                  'on the same network',
+              child: OutlinedButton.icon(
+                onPressed: _otaBusy ? null : _updateFirmware,
+                icon: const Icon(Icons.system_update, size: 18),
+                label: const Text('Update firmware'),
+              ),
             ),
           ],
         ),
-        if (_mdnsUnavailable != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(_mdnsUnavailable!,
-                style: const TextStyle(color: Colors.grey)),
-          ),
-        if (_lanDevices.isEmpty && _mdnsUnavailable == null)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text('No mirrors on this network. Add an IP manually.',
-                style: TextStyle(color: Colors.grey)),
-          ),
-        for (var i = 0; i < _lanDevices.length; i++) _buildLanTile(i),
       ],
-    );
-  }
-
-  Widget _buildLanTile(int index) {
-    final device = _lanDevices[index];
-    final status = _lanStatuses[index];
-    final busy = _lanBusy[index];
-
-    final statusText = status == null
-        ? 'status unknown'
-        : 'v${status.version}${status.core.isNotEmpty ? '  core ${status.core}' : ''}'
-            '  ${status.layout} ${status.width}x${status.height}  '
-            '${status.brightness}/255';
-
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      title: Text('${device.name} (${device.ip})'),
-      subtitle: Text(statusText,
-          style: const TextStyle(color: Colors.grey)),
-      trailing: Wrap(
-        spacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          FilledButton(
-            onPressed: busy ? null : () => _pushLayoutLan(index),
-            child: const Text('Push layout'),
-          ),
-          OutlinedButton(
-            onPressed: busy ? null : () => _updateFirmwareLan(index),
-            child: const Text('Update firmware'),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1546,10 +1397,8 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
               showSelectedIcon: false,
               style: const ButtonStyle(visualDensity: VisualDensity.compact),
               segments: const <ButtonSegment<bool>>[
-                ButtonSegment<bool>(
-                    value: true, label: Text('12-hour clock')),
-                ButtonSegment<bool>(
-                    value: false, label: Text('24-hour clock')),
+                ButtonSegment<bool>(value: true, label: Text('12-hour clock')),
+                ButtonSegment<bool>(value: false, label: Text('24-hour clock')),
               ],
               selected: <bool>{_clock12h},
               onSelectionChanged: (s) => setState(() => _clock12h = s.first),
@@ -1640,8 +1489,8 @@ class _FirmwareSourceDialog extends StatelessWidget {
       content: Text(body),
       actions: <Widget>[
         TextButton(
-          onPressed: () => Navigator.of(context)
-              .pop(const _FirmwareSource.chooseFile()),
+          onPressed: () =>
+              Navigator.of(context).pop(const _FirmwareSource.chooseFile()),
           child: const Text('Choose file...'),
         ),
         TextButton(
@@ -1658,8 +1507,8 @@ class _FirmwareSourceDialog extends StatelessWidget {
         ),
         if (bundled != null)
           FilledButton(
-            onPressed: () => Navigator.of(context)
-                .pop(const _FirmwareSource.bundled()),
+            onPressed: () =>
+                Navigator.of(context).pop(const _FirmwareSource.bundled()),
             child: Text(deviceVersion == bundled
                 ? 'Reinstall v$bundled'
                 : 'Install v$bundled'),

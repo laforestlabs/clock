@@ -1,9 +1,18 @@
 // App settings: the workspace mode and the panel's physical orientation.
 //
 // Orientation is a device setting, not a view setting: the panel itself is
-// rotated, so a change here is pushed over the same BLE link the Mirror screen
-// uses. The local pref is only the seed for the preview when there is no
-// mirror to ask.
+// rotated, so a change here is pushed over the same BLE link the device's own
+// route uses. Two shapes are supported, and neither can reach a device other
+// than the one it was opened for:
+//
+//   - Bound to a device record: the link is that record's own, the toggle is
+//     only live while that record has a session, and the accepted value is
+//     recorded on that record through the controller's persist callback (the
+//     workspace binds it to the registry, so nothing here writes the global
+//     preview seed). Offline the toggle is disabled: an orientation the panel
+//     never acknowledged must not be saved as its state.
+//   - Local simulator (no record, null connection): the toggle edits the
+//     preview only, exactly as it always did.
 
 import 'dart:async';
 import 'dart:convert';
@@ -14,6 +23,7 @@ import '../controller.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_connection.dart';
+import '../services/mirror_devices.dart';
 import '../services/user_view.dart';
 
 /// App settings: the workspace mode and how the panel is oriented.
@@ -24,15 +34,23 @@ class SettingsScreen extends StatefulWidget {
     required this.view,
     required this.onViewChanged,
     this.connection,
+    this.device,
   });
 
   final DesignerController controller;
   final UserView view;
   final ValueChanged<UserView> onViewChanged;
 
-  /// The workspace's link to the mirror, or null where there is none (tests,
-  /// desktop with no mirror): the screen then only edits the preview.
+  /// The workspace's link to the mirror when this screen is not bound to a
+  /// device record, or null where there is none (tests, local simulator): the
+  /// screen then only edits the preview.
   final MirrorConnection? connection;
+
+  /// The device this screen is scoped to, or null for the local simulator.
+  /// Its own connection is the link used, its recorded orientation is the
+  /// truth, and offline the toggle is disabled rather than saving a state the
+  /// panel never confirmed.
+  final MirrorDevice? device;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -46,6 +64,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// a failure could revert to a state the panel was never in.
   bool _flipBusy = false;
 
+  /// The link the toggle drives: the bound record's own connection, never a
+  /// free-standing one that could point at another mirror.
+  MirrorConnection? get _link => widget.device?.connection ?? widget.connection;
+
+  /// Whether this screen is scoped to a device record.
+  bool get _bound => widget.device != null;
+
+  /// Whether the orientation can be applied right now. Orientation travels
+  /// over Bluetooth only, so a bound device with no live session has no
+  /// transport for it; the simulator has no panel to contradict the preview.
+  bool get _canFlip => !_bound || _link?.session != null;
+
   @override
   void initState() {
     super.initState();
@@ -56,8 +86,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// for when there is no mirror to ask: a phone that never flipped this
   /// mirror would otherwise preview (and push) the wrong state. Best-effort,
   /// so an older firmware that does not answer keeps the seed.
+  ///
+  /// Bound to a device, [DesignerController.setFlip180] writes the record the
+  /// workspace bound it to, never the global preview seed; the simulator
+  /// keeps the default seed.
   Future<void> _adoptDeviceFlip180() async {
-    final session = widget.connection?.session;
+    final session = _link?.session;
     if (session == null) return;
     bool? flipped;
     try {
@@ -70,37 +104,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {
       return;
     }
-    // Through setFlip180, not the bare setter: the pref is the offline seed
-    // for the next launch and must not keep claiming a state the panel left.
+    if (!mounted || !identical(_link?.session, session)) return;
+    // Through setFlip180, not the bare setter: the stored value must not keep
+    // claiming a state the panel left.
     if (flipped != null) await widget.controller.setFlip180(flipped);
   }
 
   Future<void> _setFlip180(bool value) async {
+    // A disabled control cannot fire, but a stale callback could: never touch
+    // a bound device's orientation without a live session to apply it on.
+    if (!_canFlip) return;
     final previous = widget.controller.flip180;
     if (value == previous || _flipBusy) return;
 
-    // Preview and seed first, so the toggle never lags the finger; a rejected
-    // push reverts both below.
-    await widget.controller.setFlip180(value);
-
-    final session = widget.connection?.session;
+    final session = _link?.session;
     // Offline this stays a preview-only setting, as it always was: nothing on
     // a panel contradicts it and there is no link to push over.
-    if (session == null) return;
+    if (session == null) {
+      await widget.controller.setFlip180(value);
+      return;
+    }
 
-    _flipBusy = true;
+    // Persist only acknowledged device state; a crash during a push must not
+    // leave an unconfirmed orientation recorded as the panel's truth.
+    setState(() => _flipBusy = true);
     try {
       await session.pushConfig(<String, dynamic>{'flip180': value});
+      if (!mounted || !identical(_link?.session, session)) return;
+      await widget.controller.setFlip180(value);
     } catch (e) {
-      // The panel is still in [previous], so the preview must not keep
-      // claiming the new value just because the tap landed.
-      await widget.controller.setFlip180(previous);
       final reason = e is BlePushException
           ? e.toString()
           : e.toString().replaceFirst('Exception: ', '');
-      _toast('Panel not flipped: $reason');
+      _toast('Could not confirm panel orientation: $reason');
     } finally {
-      _flipBusy = false;
+      if (mounted) setState(() => _flipBusy = false);
     }
   }
 
@@ -111,6 +149,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// What the orientation control does here, said for the surface the owner
+  /// is actually on.
+  String _orientationNote() {
+    final device = widget.device;
+    if (device == null) {
+      return 'Rotates the mirror\'s display 180 degrees, for a panel '
+          'mounted upside down. The preview follows it; with no mirror '
+          'connected the toggle changes the preview only.';
+    }
+    if (!_canFlip) {
+      return 'Rotates the mirror\'s display 180 degrees, for a panel '
+          'mounted upside down. Connect ${device.name} over Bluetooth to '
+          'change it: an orientation the panel has not acknowledged is not '
+          'saved.';
+    }
+    return 'Rotates the mirror\'s display 180 degrees, for a panel '
+        'mounted upside down. Sent to ${device.name} over Bluetooth and '
+        'saved on that device.';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -119,6 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         animation: widget.controller,
         builder: (context, _) {
           final c = widget.controller;
+          final canFlip = _canFlip;
           return ListView(
             children: <Widget>[
               SwitchListTile(
@@ -127,8 +186,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Full workspace: widget editing and firmware tools'),
                 value: _view == UserView.developer,
                 onChanged: (v) {
-                  final view =
-                      v ? UserView.developer : UserView.defaultView;
+                  final view = v ? UserView.developer : UserView.defaultView;
                   setState(() => _view = view);
                   widget.onViewChanged(view);
                 },
@@ -157,17 +215,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     selected: <bool>{c.flip180},
-                    onSelectionChanged: (selection) =>
-                        _setFlip180(selection.first),
+                    onSelectionChanged: canFlip
+                        ? (selection) => _setFlip180(selection.first)
+                        : null,
                   ),
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Text(
-                  'Rotates the mirror\'s display 180 degrees, for a panel '
-                  'mounted upside down. The preview follows it; with no mirror '
-                  'connected the toggle changes the preview only.',
+                  _orientationNote(),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

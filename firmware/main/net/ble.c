@@ -1,12 +1,13 @@
 /*
  * ble.c - NimBLE GATT server for config + layout push from the phone.
  *
- * The service carries the same two payloads as the LAN API, over a phone-
- * friendly channel: a small command characteristic, a data characteristic
- * that receives the payload in chunks, and a status characteristic that
- * notifies responses and returns the last one on read. The phone drives the
- * protocol: "begin <kind> <len>", a series of data writes, "commit" or
- * "abort". Chunking is explicit on the client, so every data write is a
+ * The service carries the same payloads as the LAN API (layout, config, WiFi
+ * credentials, and the saved display mode), over a phone-friendly channel: a
+ * small command characteristic, a data characteristic that receives the
+ * payload in chunks, and a status characteristic that notifies responses and
+ * returns the last one on read. The phone drives the protocol:
+ * "begin <kind> <len>", a series of data writes, "commit" or "abort".
+ * Chunking is explicit on the client, so every data write is a
  * single ATT write within the negotiated MTU; the server is MTU-agnostic and
  * just appends.
  *
@@ -33,6 +34,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "display_store.h"
 #include "esp_app_desc.h"
 #include "esp_bt.h"
 #include "esp_heap_caps.h"
@@ -89,6 +91,11 @@ static const ble_uuid128_t s_chr_game_in = BLE_UUID128_INIT(0x05, UUID_TAIL);
 #define MAX_STATUS_LEN   256
 #define MAX_DEV_NAME     32
 
+/* The display transfer carries a two-member mode object, and the LAN endpoint
+ * caps the same document at 64 bytes, so a "begin display" larger than this is
+ * a protocol error rather than something to stage. */
+#define DISPLAY_MODE_JSON_MAX 64
+
 /* ------------------------------------------------------------- state */
 
 typedef enum {
@@ -96,6 +103,10 @@ typedef enum {
     TRANSFER_LAYOUT,
     TRANSFER_CONFIG,
     TRANSFER_WIFI,
+    /* {"mode":"clock"} or {"mode":"picture"}: the saved base display, applied
+     * through the same display store the LAN API writes, so both transports
+     * accept exactly the same document. */
+    TRANSFER_DISPLAY,
     /* Not a payload transfer: a commit-queue job kind with no buffer,
      * queued by the "factory reset" command. */
     TRANSFER_RESET
@@ -280,6 +291,42 @@ static void cmd_get_config(void)
                 mirror_config_flip180() ? "true" : "false");
 }
 
+static void cmd_get_device(void)
+{
+    /*
+     * The compact identity/display reply, read by the phone when it activates
+     * a device and after an acknowledged display change. "id" is the hardware
+     * identity, the same one the LAN status reports, so the phone can tell two
+     * devices apart across transports. "mode" is the effective display: games
+     * only while a session is live. "base_mode" is what sits underneath, and
+     * "display_api" says whether this build can hold a picture at all.
+     *
+     * Name, panel size, IP and orientation already have their own replies
+     * ("get config", "pong"), so they are not repeated here — the point of
+     * this message is that it is short enough to answer without growing the
+     * 256-byte status buffer.
+     *
+     * Both display fields come from the display store, the same source the
+     * LAN status reads, so the two transports cannot disagree about the
+     * saved base display or whether a picture is ready. A mode change or a
+     * commit that lands while a game is running changes "base_mode" here
+     * without disturbing the session the render task is drawing.
+     */
+    _Static_assert(sizeof("device {\"id\":\"001122334455\",\"display_api\":1,"
+                           "\"mode\":\"games\",\"base_mode\":\"picture\","
+                           "\"picture_ready\":true}") <= MAX_STATUS_LEN,
+                   "get device reply must fit the status buffer");
+
+    const mirror_display_mode_t base_mode = display_store_base_mode();
+    send_status("device {\"id\":\"%s\",\"display_api\":%d,\"mode\":\"%s\","
+                "\"base_mode\":\"%s\",\"picture_ready\":%s}",
+                mirror_config_device_id(),
+                panel_supports_picture() ? 1 : 0,
+                game_runner_active() ? "games" : display_mode_name(base_mode),
+                display_mode_name(base_mode),
+                display_store_picture_ready() ? "true" : "false");
+}
+
 static void cmd_begin(const char *arg)
 {
     char kind[16];
@@ -296,11 +343,17 @@ static void cmd_begin(const char *arg)
         k = TRANSFER_WIFI;
     } else if (strcmp(kind, "config") == 0) {
         k = TRANSFER_CONFIG;
+    } else if (strcmp(kind, "display") == 0) {
+        k = TRANSFER_DISPLAY;
     } else {
         send_status("begin error bad kind");
         return;
     }
     if (len < 1 || len > MAX_PAYLOAD) {
+        send_status("begin error too large");
+        return;
+    }
+    if (k == TRANSFER_DISPLAY && len > DISPLAY_MODE_JSON_MAX) {
         send_status("begin error too large");
         return;
     }
@@ -403,14 +456,26 @@ static void commit_task(void *arg)
              * and only this task has the stack for it. Order is defensive:
              * remove the stored layout file first, so a failure leaves
              * every other byte untouched and the phone can simply retry;
-             * then stop the WiFi retries and blank the driver's own saved
-             * station config; then erase the NVS namespace that holds the
-             * config, the credentials, and the station hint. The reset is
-             * complete the moment the chip comes back with no credentials
-             * and no stored layout: the setup portal opens and the panel
-             * draws the embedded layout. */
+             * then the stored picture and its display state, which the
+             * config erase below does not cover; then stop the WiFi retries
+             * and blank the driver's own saved station config; then erase
+             * the NVS namespace that holds the config, the credentials, and
+             * the station hint. The reset is complete the moment the chip
+             * comes back with no credentials, no stored layout and no
+             * stored picture: the setup portal opens and the panel draws
+             * the embedded layout. */
             if (layout_store_clear() != ESP_OK) {
                 send_status("factory reset error stored layout could not be cleared");
+                continue;
+            }
+            /* The saved picture and its display state live outside the config
+             * namespace: a file per slot under /spiffs plus the "display" NVS
+             * namespace, so wiping the config below would leave them behind.
+             * Cleared before the credentials so a failure here is one the
+             * phone can retry with the picture still intact; what must never
+             * happen is the owner's picture reappearing after a reset. */
+            if (display_store_clear() != ESP_OK) {
+                send_status("factory reset error stored picture could not be cleared");
                 continue;
             }
             wifi_forget();
@@ -454,6 +519,22 @@ static void commit_task(void *arg)
             char err[96];
             if (provision_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
                 ESP_LOGW(TAG, "wifi commit rejected: %s", err);
+                send_status("commit error %s", err);
+                heap_caps_free((void *)job.buf);
+                continue;
+            }
+            send_status("commit ok");
+        } else if (job.kind == TRANSFER_DISPLAY) {
+            /* The saved base display, committed here and not on the NimBLE
+             * host task: the state byte lands in NVS through flash_write_run.
+             * The parser is the one the LAN endpoint uses, so a mode the app
+             * sends over Bluetooth is accepted or refused with exactly the
+             * same message. A game running underneath is untouched — this
+             * changes what the panel returns to when the session ends. */
+            char err[96];
+            if (display_store_apply_mode_json(job.buf, job.len, err,
+                                              sizeof(err)) != ESP_OK) {
+                ESP_LOGW(TAG, "display commit rejected: %s", err);
                 send_status("commit error %s", err);
                 heap_caps_free((void *)job.buf);
                 continue;
@@ -652,6 +733,8 @@ static void handle_cmd(char *line)
         cmd_ping();
     } else if (strcmp(line, "get config") == 0) {
         cmd_get_config();
+    } else if (strcmp(line, "get device") == 0) {
+        cmd_get_device();
     } else if (strcmp(line, "get brightness") == 0) {
         cmd_get_brightness();
     } else if (strcmp(line, "get wifi") == 0) {

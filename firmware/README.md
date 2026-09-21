@@ -271,6 +271,11 @@ USB, `0.2.30`):
 | NVS (`nvs`) | 756 entries (24 KB) | **566 entries (75%)** | 190 entries — credentials, owner config, station hint, WiFi driver |
 | Flash, unpartitioned | 16 MB total | **6.9 MB unallocated** | — |
 
+These measurements predate picture display. It adds a resident picture and one
+snapshot buffer in PSRAM (each roughly width × height × 3 bytes), transient upload
+buffers, and two SPIFFS slots (each 16 bytes plus the RGB payload). Account for
+those separately; the historical 33 KB storage ceiling does not include pictures.
+
 Reading the numbers by pool: internal SRAM is the only pool that is *tight*, and
 it is tight by design — the panel's DMA memory cannot be anywhere else, and the
 two things that could be moved (mbedTLS buffers, NimBLE host allocations)
@@ -294,6 +299,45 @@ a 1.31 MB image, the storage partition that holds the pushed layout and the
 network log is at 1% of its 956 KB and stabilises below 4% once the log ring
 fills, and 6.9 MB of the 16 MB flash is not even partitioned. If a future
 feature needs space rather than RAM, it is there.
+
+## Device identity, pictures and actual previews
+
+`GET /api/status` retains the existing status fields and adds the station-MAC
+`id` (12 lowercase hex digits), friendly `name`, `display_api`, effective `mode`,
+saved `base_mode`, `picture_ready`, and `flip180`. BLE `get device` reports the
+same identity and display state without changing `ping` or `get config`.
+mDNS advertises `_smartmirror._tcp` at `smart-mirror-<id>.local`, with instance
+`Smart Mirror <id>`; renaming does not change identity.
+
+Clock and picture are persistent base displays. A BLE game temporarily overrides
+them, including while paused, and Stop/disconnect restores the saved base.
+Layout uploads never implicitly switch the base display.
+
+| Request | Contract |
+|---|---|
+| `PUT /api/mode` | JSON `{"mode":"clock"}` or `{"mode":"picture"}`; picture without a valid saved image returns 409. |
+| `POST /api/image` | `application/octet-stream`, explicit Content-Length, decimal `X-Mirror-Width` / `X-Mirror-Height`, exactly panel-width × panel-height × 3 pre-gamma RGB888 bytes. |
+| `GET /api/frame` | `application/octet-stream`, `Cache-Control: no-store`; actual presented frame, or 503 if unavailable/busy. |
+
+Mode/image success is acknowledged only after persistence, with JSON `ok`, `mode`,
+`base_mode`, and `picture_ready`. Rejections use `{"ok":false,"error":"..."}`.
+BLE mode changes use `begin display <len>` / commit with the same mode JSON.
+Pictures and snapshots do not travel over BLE. These APIs inherit the trusted-LAN,
+unauthenticated transport: do not expose them to the Internet.
+
+Pictures are static raw RGB, not firmware-decoded JPEG/PNG. The maximum is 196608
+bytes (256×256 RGB). Larger panels keep clock/games but do not advertise display
+API support. Two CRC-checked SPIFFS slots and one committed NVS state byte retain
+the previous picture on an incomplete replacement. Boot loads only the committed
+slot; corrupt or dimension-mismatched data falls back to clock. Factory reset
+clears both picture slots and display state.
+
+Snapshots have a 16-byte `MRF1` header: little-endian u16 width/height at offsets
+4/6, u32 frame sequence at 8, brightness at 12, mode at 13 (clock=0, games=1,
+picture=2), flip180 at 14, reserved zero at 15. Exactly width × height × 3 RGB
+bytes follow. Pixels include gamma, brightness scaling, and physical rotation,
+but not electrical channel swapping. Clients render them as-is. Sequence resets
+on reboot; it is not a device identity.
 
 ## OTA updates
 

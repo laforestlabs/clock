@@ -3,6 +3,13 @@
 // Two arrangements from one widget tree: side by side on a desktop, stacked
 // with tabs on a phone. The preview is always visible in both, because the
 // point of the app is watching the panel change as you edit.
+//
+// It edits one of two things, and says which: a device record it is bound to,
+// or the local simulator. A bound workspace reads the layout the mirror is
+// actually showing, sends every preset it is given over that record's own
+// transports, and takes its panel geometry and orientation from the device.
+// The simulator never reaches out at all - opening it from the app menu must
+// not write to whichever mirror happens to be remembered.
 
 import 'dart:async';
 
@@ -12,23 +19,21 @@ import 'package:flutter/services.dart';
 import '../controller.dart';
 import '../engine/engine.dart';
 import '../model/layout.dart';
-import '../services/bundled_firmware.dart';
-import '../services/firmware_update.dart';
 import '../services/layout_pusher.dart';
 import '../services/layout_repository.dart';
 import '../services/mirror_connection.dart';
+import '../services/mirror_devices.dart';
 import '../services/panel_orientation.dart';
 import '../services/user_view.dart';
-import 'ble_prompt.dart';
 import 'datetime_field.dart';
 import 'color_field.dart';
-import 'firmware_prompt.dart';
 import 'inspector.dart';
 import 'mirror_screen.dart';
 import 'panel_view.dart';
 import 'game_screen.dart';
 import 'settings_screen.dart';
 import 'widget_list.dart';
+
 const double _wideBreakpoint = 900;
 
 /// Below this width the app bar folds the less-used actions into the overflow
@@ -49,49 +54,67 @@ bool hasTextEditingFocus() {
 }
 
 class WorkspaceScreen extends StatefulWidget {
-  const WorkspaceScreen({super.key, required this.engine, this.connection});
+  const WorkspaceScreen({super.key, required this.engine, this.device});
 
   final MirrorEngine engine;
 
-  /// The BLE link to drive. The app leaves this null and the workspace owns
-  /// and closes its own; a test injects one to drive the connection states
-  /// without a radio.
-  final MirrorConnection? connection;
+  /// The mirror this workspace edits, or null for the local simulator.
+  ///
+  /// Bound, every preset goes to this record over its own transports and the
+  /// panel size and orientation come from it. Null never reaches any radio:
+  /// the local simulator is an offline development surface, so a remembered
+  /// mirror cannot be written to by opening it.
+  final MirrorDevice? device;
 
   @override
   State<WorkspaceScreen> createState() => _WorkspaceScreenState();
 }
 
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
-  late final DesignerController _c = DesignerController(widget.engine);
+  late final DesignerController _c = DesignerController(
+    widget.engine,
+    persistFlip180: _persistFlip180,
+  );
   final LayoutRepository _repo = LayoutRepository();
   final FocusNode _keyboardFocus = FocusNode();
 
-  // Owned here, not by the Mirror screen, so the BLE link survives page
-  // navigation: pushing and popping the Mirror screen never touches it. An
-  // injected link belongs to the caller and is never closed here.
-  late final MirrorConnection _connection =
-      widget.connection ?? MirrorConnection();
-  late final bool _ownsConnection = widget.connection == null;
+  /// The record being edited, or null for the local simulator.
+  MirrorDevice? get _device => widget.device;
 
-  /// Sends a tapped stock layout to the connected mirror. Owned here for the
-  /// same reason as the link: the picks happen on this screen, and the queue
-  /// has to outlive the widget that is repainted between them.
-  late final LayoutPusher _pusher =
-      LayoutPusher(connection: _connection, onOutcome: _reportPush);
+  /// Whether a stock pick is also a push.
+  ///
+  /// Only with a confirmed panel size: the firmware refuses a layout that does
+  /// not match its own geometry, so a send before that is known could only be
+  /// rejected - and a layout the panel never took must not look like it did.
+  bool get _pushesToDevice {
+    final device = _device;
+    return device != null && device.width > 0 && device.height > 0;
+  }
 
-  /// The firmware this app ships, loaded the first time a mirror connects: a
-  /// run that never connects never reads the 1.3MB image.
-  BundledFirmware? _bundled;
+  /// The local simulator's inert link, built on first use and owned here.
+  ///
+  /// It is never connected and never discovered: the local Game screen needs a
+  /// connection to build against, and that is the whole of its job.
+  MirrorConnection? _localConnection;
 
-  /// Device versions this run has already offered an update for, so a link
-  /// that drops and comes back does not ask about the same one twice.
-  final Set<String> _offeredFirmware = <String>{};
+  /// The link for the screens this workspace opens: the record's own while
+  /// bound, the inert one for the simulator.
+  MirrorConnection get _connection =>
+      _device?.connection ?? (_localConnection ??= MirrorConnection());
 
-  /// Whether the offer is in flight, from the version check to the end of the
-  /// update: the listeners fire on every state change and only one prompt may
-  /// be open at a time.
-  bool _offeringFirmware = false;
+  /// Sends a tapped stock layout to the bound device. Owned here for the same
+  /// reason as the document: the picks happen on this screen and the queue has
+  /// to outlive the widget repainted between them. Null on the simulator,
+  /// where nothing leaves the machine.
+  LayoutPusher? _pusher;
+
+  /// Why the document on screen is a local draft rather than the layout the
+  /// mirror holds, or null when it is the mirror's own (or there is no
+  /// device). Shown until a preset is explicitly sent or a read succeeds.
+  String? _draftReason;
+
+  /// True while the device's layout is being read, so Retry reports progress.
+  bool _loadingLayout = false;
 
   List<StockLayout> _stock = const <StockLayout>[];
   UserView _view = UserView.defaultView;
@@ -100,103 +123,44 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   @override
   void initState() {
     super.initState();
-    _connection.addListener(_onConnectionChanged);
+    final device = _device;
+    if (device != null) {
+      _pusher = LayoutPusher(
+        send: (json) => device.owner.sendLayout(device, json),
+        onOutcome: _reportPush,
+      );
+    }
     _bootstrap();
-    // Dialogs (the Bluetooth-on prompt) need the first frame to exist.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _autoConnect());
   }
 
-  /// Offer the app's own firmware to a mirror that just connected running
-  /// something older. Nothing happens for a mirror on the same version, on a
-  /// newer one, or on a build whose version this app cannot read.
-  void _onConnectionChanged() {
-    if (_connection.status != MirrorConnectionStatus.connected) return;
-    unawaited(_offerFirmwareUpdate());
+  /// A workspace is bound once: the route is opened for one device, and the
+  /// pusher captures that record when it is built. Retargeting in place would
+  /// leave the queue pointed at the record the route was opened with.
+  @override
+  void didUpdateWidget(WorkspaceScreen old) {
+    super.didUpdateWidget(old);
+    assert(identical(old.device, widget.device),
+        'a workspace does not retarget; open a route for the other device');
   }
 
-  Future<void> _offerFirmwareUpdate() async {
-    if (_offeringFirmware || !mounted) return;
-    final version = _connection.pong?.version ?? '';
-    if (version.isEmpty || _offeredFirmware.contains(version)) return;
-
-    _offeringFirmware = true;
-    try {
-      final bundled = _bundled ?? await loadBundledFirmware();
-      if (!mounted || bundled == null) return;
-      _bundled = bundled;
-      if (!firmwareUpdateAvailable(
-          deviceVersion: version, bundledVersion: bundled.version)) {
-        return;
-      }
-      // Recorded before the ask: an answer of "not now" is an answer, and the
-      // next reconnect should not raise it again.
-      _offeredFirmware.add(version);
-
-      final accepted = await confirmFirmwareUpdate(
-        context,
-        deviceVersion: version,
-        bundledVersion: bundled.version,
-      );
-      if (!accepted || !mounted) return;
-      await _installBundledFirmware(bundled);
-    } finally {
-      _offeringFirmware = false;
-    }
-  }
-
-  /// Push the image this app ships to the connected mirror and report what
-  /// happened. The address is the one the pong reported: the upload is
-  /// megabytes over WiFi, and Bluetooth only carries the command.
-  Future<void> _installBundledFirmware(BundledFirmware bundled) async {
-    final ip = _connection.pong?.ip ?? '';
-    if (ip.isEmpty || ip == '0.0.0.0') {
-      _toast('The mirror has no WiFi IP; the phone and mirror must be on the '
-          'same network');
-      return;
-    }
-    if (!await ensureMirrorReachable(context, ip)) return;
-    if (!mounted) return;
-
-    try {
-      final status = await pushFirmwareWithProgress(
-        context,
-        ip: ip,
-        bytes: bundled.bytes,
-        label: 'bundled v${bundled.version}',
-      );
-      if (!mounted) return;
-      if (status != null) {
-        // The mirror rebooted, so the BLE link died with it. Reconnect now
-        // that the device is advertising the new image.
-        unawaited(_connection.connectLast());
-      }
-      _toast(status == null
-          ? 'Update uploaded; the mirror is rebooting'
-          : 'Updated to ${status.version}');
-    } catch (e) {
-      if (mounted) {
-        _toast('Update: ${e.toString().replaceFirst('Exception: ', '')}');
-      }
-    }
-  }
-
-  /// Reconnect to the last mirror on launch. Best-effort: a mirror that is
-  /// out of range or powered off just lands in the "failed" state with the
-  /// error visible on the Mirror screen.
-  Future<void> _autoConnect() async {
-    if (!await _connection.hasLastDevice()) return;
-    final gate = await ensureBlePermissions();
-    if (!gate.granted) return;
-    if (!mounted) return;
-    if (!await ensureBluetoothOn(context)) return;
-    await _connection.connectLast();
+  /// Records the preview's orientation where the owner of this workspace
+  /// keeps it: the device's registry record while bound, the global simulator
+  /// seed otherwise. Never both - a device's orientation is not the desktop
+  /// pref's to write.
+  Future<void> _persistFlip180(bool flipped) async {
+    final device = _device;
+    if (device == null) return savePanelFlip180(flipped);
+    await device.owner.setFlip180(device, flipped);
   }
 
   Future<void> _bootstrap() async {
     final stock = await _repo.stockLayouts();
     final view = await loadUserView();
-    final flipped = await loadPanelFlip180();
-    await _connection.loadLastPanelSize();
+    final device = _device;
+    // The device's own orientation while bound: the global pref describes the
+    // simulator's preview, not this panel, and seeding from it would draw the
+    // panel's own snapshot the wrong way up.
+    final flipped = device?.flip180 ?? await loadPanelFlip180();
     if (!mounted) return;
     _c.flip180 = flipped;
     setState(() {
@@ -204,49 +168,105 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       _view = view;
     });
 
-    // Prefer a stock layout matching the panel the mirror last reported, so
-    // the default never opens at a size the hardware cannot show. With no
-    // remembered size, fall back to the 64x32 reference build ('mini').
-    final panelW = _connection.lastPanelWidth;
-    final panelH = _connection.lastPanelHeight;
-    StockLayout? preferred;
-    if (panelW != null && panelW > 0 && panelH != null && panelH > 0) {
-      for (final s in stock) {
-        if (s.width == panelW && s.height == panelH) {
-          preferred = s;
-          break;
-        }
-      }
+    if (device == null) {
+      await _openLocalDefault();
+    } else {
+      await _loadDeviceLayout(device);
     }
-    if (preferred == null) {
-      for (final s in stock) {
-        if (s.name == 'mini') {
-          preferred = s;
-          break;
-        }
-      }
-    }
-    preferred ??= stock.isNotEmpty ? stock.first : null;
+  }
 
+  /// The simulator's opening document: the reference build, which is the
+  /// panel the desktop preview is designed around. Deliberately not the panel
+  /// size of any remembered mirror - this workspace is not that mirror's.
+  Future<void> _openLocalDefault() async {
+    final preferred = _preferredStock(0, 0);
     if (preferred != null) {
       _activeStockPath = preferred.assetPath;
       await _c.loadJson(await _repo.loadAsset(preferred.assetPath));
     } else {
-      // No stock layouts at all: start on a blank canvas of the last-known
-      // panel size (or the reference build when that is unknown too).
-      await _c.newLayout(
-        width: (panelW != null && panelW > 0) ? panelW : 128,
-        height: (panelH != null && panelH > 0) ? panelH : 64,
-      );
+      // No stock layouts at all: a blank canvas at the reference size.
+      await _c.newLayout();
     }
+  }
+
+  /// The preset for a panel [width]x[height]: the exact size when a preset has
+  /// it, otherwise the 64x32 reference build, otherwise whatever exists.
+  StockLayout? _preferredStock(int width, int height) {
+    if (width > 0 && height > 0) {
+      for (final s in _stock) {
+        if (s.width == width && s.height == height) return s;
+      }
+    }
+    for (final s in _stock) {
+      if (s.name == 'mini') return s;
+    }
+    return _stock.isEmpty ? null : _stock.first;
+  }
+
+  /// Opens the layout the device is actually showing, or an explicitly
+  /// labeled local draft when it cannot be read.
+  ///
+  /// A mirror reachable only over Bluetooth has no layout-download command, so
+  /// there is nothing to fetch: the workspace then seeds the preset matching
+  /// its panel and says out loud that the document is a draft. Opening a clock
+  /// editor must not change what the panel shows, so nothing here is ever
+  /// sent - a preset the user picks is.
+  Future<void> _loadDeviceLayout(MirrorDevice device) async {
+    if (_loadingLayout) return;
+    setState(() => _loadingLayout = true);
+
+    var reason = '';
+    var loaded = false;
+    try {
+      final json = await device.owner.loadLayout(device);
+      if (!mounted) return;
+      await _c.loadJson(json);
+      loaded = true;
+    } catch (e) {
+      reason = e is MirrorRegistryException ? e.message : '$e';
+    }
+    if (!mounted) return;
+
+    if (!loaded) {
+      final draft = _preferredStock(device.width, device.height);
+      if (draft != null) {
+        _activeStockPath = draft.assetPath;
+        await _c.loadJson(await _repo.loadAsset(draft.assetPath));
+        if (!mounted) return;
+      } else {
+        await _c.newLayout(
+          width: device.width > 0 ? device.width : 128,
+          height: device.height > 0 ? device.height : 64,
+        );
+        if (!mounted) return;
+      }
+    }
+
+    setState(() {
+      _loadingLayout = false;
+      _draftReason = loaded ? null : reason;
+    });
+    // The device's layout is not one of the presets, so no chip is current.
+    if (loaded) _activeStockPath = null;
+  }
+
+  void _retryLayout() {
+    final device = _device;
+    if (device == null) return;
+    unawaited(_loadDeviceLayout(device));
   }
 
   @override
   void dispose() {
     _keyboardFocus.dispose();
+    // The queue is dropped before the controller: a push already on the wire
+    // finishes against the device it was captured for, but nothing reports
+    // back into a route that is gone.
+    _pusher?.dispose();
+    // Disposes the engine with it, and nothing else may: the workspace opened
+    // that engine's controller once.
     _c.dispose();
-    _connection.removeListener(_onConnectionChanged);
-    if (_ownsConnection) _connection.dispose();
+    _localConnection?.dispose();
     super.dispose();
   }
 
@@ -276,8 +296,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Unsaved changes'),
-        content: Text(
-            '"${_c.doc.name}" has changes that have not been saved.'),
+        content: Text('"${_c.doc.name}" has changes that have not been saved.'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(ctx, 'cancel'),
@@ -339,21 +358,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       );
   }
 
-  void _openMirror() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MirrorScreen(controller: _c, connection: _connection),
-      ),
-    );
-  }
-
-  void _openMirrorSimplified() {
+  /// This device's own setup and controls. The local simulator has no device
+  /// to configure, so there is no route to open.
+  void _openMirror({bool simplified = false}) {
+    final device = _device;
+    if (device == null) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => MirrorScreen(
           controller: _c,
-          connection: _connection,
-          simplified: true,
+          device: device,
+          simplified: simplified,
         ),
       ),
     );
@@ -365,13 +380,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   void _openSettings() {
+    final device = _device;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
           controller: _c,
           view: _view,
-          connection: _connection,
           onViewChanged: _setView,
+          // Bound, settings edits that device and applies orientation to it;
+          // the simulator only edits its own preview.
+          device: device,
+          connection: device?.connection,
         ),
       ),
     );
@@ -383,6 +402,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         builder: (_) => GameScreen(
           controller: _c,
           connection: _connection,
+          // A bound workspace plays on that device and never falls back to a
+          // local round; the simulator always plays locally.
+          requireDevice: _device != null,
           // The default view plays: tilt is the controller and the pads are
           // the fallback, with no mode, panel size or diagnostics to choose.
           simplified: _view == UserView.defaultView,
@@ -391,119 +413,141 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  /// The BLE link state, always visible in the app bar. Tapping it (or the
-  /// Mirror button) opens the Mirror screen for details and controls.
-  Widget _buildConnectionIndicator({required bool compact}) {
+  /// Who this workspace is editing, always visible in the app bar. Tapping a
+  /// device opens its own screen; the simulator says what it is instead of
+  /// offering a control that could reach a mirror the user did not choose.
+  Widget _buildDeviceIndicator(
+      {required bool compact, bool simplified = false}) {
+    final device = _device;
+    if (device == null) {
+      return const Tooltip(
+        message: 'Local simulator: layouts are previewed here, never sent',
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Icon(Icons.desktop_windows_outlined, size: 18),
+        ),
+      );
+    }
     return ListenableBuilder(
-      listenable: _connection,
+      listenable: device,
       builder: (context, _) {
         final theme = Theme.of(context);
-        final connection = _connection;
-        switch (connection.status) {
-          case MirrorConnectionStatus.connected:
-            if (compact) {
-              return IconButton(
-                tooltip: 'Connected to ${connection.deviceName}',
-                icon: Icon(Icons.bluetooth_connected,
-                    size: 18, color: theme.colorScheme.primary),
-                onPressed: _openMirror,
-              );
-            }
-            return Tooltip(
-              message: 'Connected to ${connection.deviceName}',
-              child: TextButton.icon(
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                onPressed: _openMirror,
-                icon: Icon(Icons.bluetooth_connected,
-                    size: 18, color: theme.colorScheme.primary),
-                label: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 120),
-                  child: Text(
-                    connection.deviceName ?? '',
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelMedium,
-                  ),
-                ),
-              ),
-            );
-          case MirrorConnectionStatus.connecting:
-            return Tooltip(
-              message: 'Connecting to ${connection.deviceName}...',
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-              ),
-            );
-          case MirrorConnectionStatus.failed:
-            return IconButton(
-              tooltip: 'Reconnect failed: ${connection.error ?? 'unknown'}',
-              icon: Icon(Icons.bluetooth, color: theme.colorScheme.error),
-              onPressed: _openMirror,
-            );
-          case MirrorConnectionStatus.disconnected:
-            return IconButton(
-              tooltip: 'Not connected to a mirror',
-              icon: const Icon(Icons.bluetooth_disabled),
-              onPressed: _openMirror,
-            );
+        final connected = device.connection.session != null;
+        final IconData icon;
+        final String transport;
+        final Color colour;
+        if (connected) {
+          icon = Icons.bluetooth_connected;
+          transport = 'Bluetooth';
+          colour = theme.colorScheme.primary;
+        } else if (device.lanReachable) {
+          icon = Icons.wifi;
+          transport = 'Wi-Fi';
+          colour = theme.colorScheme.primary;
+        } else {
+          icon = Icons.cloud_off;
+          transport = 'Offline';
+          colour = device.error == null
+              ? theme.colorScheme.outline
+              : theme.colorScheme.error;
         }
+        final tooltip = '${device.name} · $transport';
+        if (compact) {
+          return IconButton(
+            tooltip: tooltip,
+            icon: Icon(icon, size: 18, color: colour),
+            onPressed: () => _openMirror(simplified: simplified),
+          );
+        }
+        return Tooltip(
+          message: tooltip,
+          child: TextButton.icon(
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            onPressed: () => _openMirror(simplified: simplified),
+            icon: Icon(icon, size: 18, color: colour),
+            label: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: Text(
+                device.name,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium,
+              ),
+            ),
+          ),
+        );
       },
     );
   }
 
-  /// Open a stock preset, and while a mirror is connected send it there in the
-  /// same tap.
+  /// Open a stock preset, and while this workspace is bound to a device send
+  /// it there in the same tap.
   ///
   /// That is what makes the picker a live preview: the panel changes as the
   /// user clicks through the layouts, instead of after a separate trip to the
-  /// Mirror screen. Tapping a preset writes it to the mirror exactly as the
-  /// Push layout button does, so the layout it ends on is the one it keeps.
+  /// device's own screen. Tapping a preset writes it to the device exactly as
+  /// that screen's push does, so the layout it ends on is the one it keeps.
+  /// The simulator keeps every pick local.
   Future<void> _openStock(StockLayout layout) async {
     if (!await _confirmDiscard()) return;
     final json = await _repo.loadAsset(layout.assetPath);
     _activeStockPath = layout.assetPath;
 
-    final connected = _connection.session != null;
-    if (connected) {
+    final pusher = _pusher;
+    final sending = pusher != null && _pushesToDevice;
+    if (sending) {
       // The asset's own text rather than the loaded document: the panel is
       // meant to get exactly the layout that was picked, and it can be on its
       // way while this screen renders it.
-      _pusher.push(layout.name, json);
+      pusher.push(layout.name, json);
     }
 
     await _c.loadJson(json);
-    // Connected, the push reports for itself what became of the tap; a second
-    // toast for the local open would only queue behind it.
-    if (!connected) _toast('Opened ${layout.name}');
+    if (sending) return;
+    // Nothing was sent, and the user should know why: a second toast for the
+    // local open would otherwise queue behind the push's own report.
+    if (pusher == null) {
+      _toast('Opened ${layout.name}');
+    } else {
+      _toast('Opened ${layout.name} — not sent: the panel size is unknown');
+    }
   }
 
   /// Report the outcome of one preset push. A tap that a later tap replaced
   /// never reaches here: nothing was sent, so there is nothing to say.
   void _reportPush(LayoutPushOutcome outcome) {
+    final device = _device;
     final error = outcome.error;
+    if (error == null) {
+      // The device is showing this now, so it is no longer a draft - and the
+      // record's own status and preview are what changed, not this render.
+      if (mounted && _draftReason != null) {
+        setState(() => _draftReason = null);
+      }
+      if (device != null) {
+        unawaited(device.owner.refresh(device, includeFrame: true));
+      }
+    }
     _toast(error == null ? 'Pushed ${outcome.label}' : 'Not pushed: $error');
   }
 
-  /// Stock presets that match the panel the mirror reported: the live pong
-  /// while connected, otherwise the last remembered size. Only when neither
-  /// is known does every preset stay visible.
+  /// Stock presets that match the panel of the device this workspace is bound
+  /// to. The simulator has no panel to match and keeps every preset visible.
   List<StockLayout> get _visibleStock {
+    final device = _device;
     return stockLayoutsForPanel(
       _stock,
-      _connection.panelWidth,
-      _connection.panelHeight,
+      device?.width ?? 0,
+      device?.height ?? 0,
     );
   }
+
+  /// The listenables this screen redraws on: the document, and the device
+  /// record while bound (its geometry decides whether a pick is a push).
+  Listenable get _redraws =>
+      Listenable.merge(<Listenable>[_c, if (_device != null) _device!]);
 
   // -------------------------------------------------------------- keyboard
 
@@ -586,12 +630,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       onKeyEvent: _onKey,
       autofocus: true,
       child: AnimatedBuilder(
-        animation: Listenable.merge(<Listenable>[_c, _connection]),
+        animation: _redraws,
         builder: (context, _) {
           return Scaffold(
             appBar: _buildAppBar(),
             body: Column(
               children: <Widget>[
+                if (_draftReason != null)
+                  _DraftBar(
+                    reason: _draftReason!,
+                    busy: _loadingLayout,
+                    onRetry: _retryLayout,
+                  ),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) =>
@@ -611,26 +661,20 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   Widget _buildDefault() {
     return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[_c, _connection]),
+      animation: _redraws,
       builder: (context, _) {
-        final connected =
-            _connection.status == MirrorConnectionStatus.connected;
+        final device = _device;
         return Scaffold(
           appBar: AppBar(
-            title: const Text('My Mirror'),
+            title: Text(device == null ? 'Local simulator' : device.name),
             actions: <Widget>[
               IconButton(
                 tooltip: 'Games',
                 icon: const Icon(Icons.sports_esports),
                 onPressed: _openGames,
               ),
-              IconButton(
-                tooltip: connected ? 'Mirror connected' : 'Connect to mirror',
-                icon: Icon(
-                  connected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
-                ),
-                onPressed: _openMirrorSimplified,
-              ),
+              if (device != null)
+                _buildDeviceIndicator(compact: true, simplified: true),
               IconButton(
                 tooltip: 'Settings',
                 icon: const Icon(Icons.settings),
@@ -640,6 +684,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           ),
           body: Column(
             children: <Widget>[
+              if (_draftReason != null)
+                _DraftBar(
+                  reason: _draftReason!,
+                  busy: _loadingLayout,
+                  onRetry: _retryLayout,
+                ),
               Expanded(
                 flex: 3,
                 child: _CanvasArea(controller: _c, readOnly: true),
@@ -651,9 +701,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                   controller: _c,
                   stock: _visibleStock,
                   activeStockPath: _activeStockPath,
-                  connected: connected,
-                  panelWidth: _connection.panelWidth,
-                  panelHeight: _connection.panelHeight,
+                  connected: _pushesToDevice,
+                  bound: device != null,
+                  panelWidth: device?.width ?? 0,
+                  panelHeight: device?.height ?? 0,
                   onPickStock: _openStock,
                 ),
               ),
@@ -702,12 +753,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           icon: const Icon(Icons.sports_esports),
           onPressed: _openGames,
         ),
-        _buildConnectionIndicator(compact: compact),
-        IconButton(
-          tooltip: 'Mirror',
-          icon: const Icon(Icons.bluetooth_searching),
-          onPressed: _openMirror,
-        ),
+        _buildDeviceIndicator(compact: compact),
+        if (_device != null)
+          IconButton(
+            tooltip: 'Mirror',
+            icon: const Icon(Icons.bluetooth_searching),
+            onPressed: () => _openMirror(),
+          ),
         IconButton(
           tooltip: 'Default view',
           icon: const Icon(Icons.visibility),
@@ -746,10 +798,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             }
           },
           itemBuilder: (context) => <PopupMenuEntry<String>>[
-            const PopupMenuItem<String>(value: 'new', child: Text('New layout')),
+            const PopupMenuItem<String>(
+                value: 'new', child: Text('New layout')),
             const PopupMenuItem<String>(value: 'open', child: Text('Open...')),
             const PopupMenuItem<String>(value: 'save', child: Text('Save')),
-            const PopupMenuItem<String>(value: 'saveAs', child: Text('Save as...')),
+            const PopupMenuItem<String>(
+                value: 'saveAs', child: Text('Save as...')),
             if (_visibleStock.isNotEmpty) const PopupMenuDivider(),
             for (final s in _visibleStock)
               PopupMenuItem<String>(
@@ -762,7 +816,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               const PopupMenuItem<String>(value: 'redo', child: Text('Redo')),
             ],
             const PopupMenuDivider(),
-            const PopupMenuItem<String>(value: 'settings', child: Text('Settings')),
+            const PopupMenuItem<String>(
+                value: 'settings', child: Text('Settings')),
           ],
         ),
       ],
@@ -816,6 +871,54 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 }
 
+/// Says that the document on screen is not what the device is showing.
+///
+/// A mirror reachable only over Bluetooth cannot have its layout read, and a
+/// workspace that silently opened a stock preset would be claiming the panel
+/// holds a layout it has never seen. The bar names the actual reason and
+/// offers the retry that would replace the draft.
+class _DraftBar extends StatelessWidget {
+  const _DraftBar({
+    required this.reason,
+    required this.busy,
+    required this.onRetry,
+  });
+
+  final String reason;
+
+  /// True while a read is in flight, so Retry cannot be tapped twice.
+  final bool busy;
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.edit_note, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Local draft — not the layout on the mirror. $reason',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            TextButton(
+              onPressed: busy ? null : onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CanvasArea extends StatelessWidget {
   const _CanvasArea({required this.controller, this.readOnly = false});
 
@@ -857,7 +960,9 @@ class _DiagnosticsBar extends StatelessWidget {
     if (error == null && diags.isEmpty) return const SizedBox.shrink();
 
     final isError = error != null;
-    final colour = isError ? theme.colorScheme.errorContainer : theme.colorScheme.surfaceContainerHighest;
+    final colour = isError
+        ? theme.colorScheme.errorContainer
+        : theme.colorScheme.surfaceContainerHighest;
 
     return Container(
       width: double.infinity,
@@ -902,8 +1007,9 @@ class _DiagnosticsBar extends StatelessWidget {
 /// The simplified user-facing panel: pick a stock layout, then tune the few
 /// inputs a stock layout actually exposes. No selection, no geometry.
 ///
-/// A connected mirror is sent every layout the user picks, so the chips double
-/// as a live preview of the presets on the panel itself.
+/// A preset pick is sent to the device the workspace is bound to, so the chips
+/// double as a live preview of the presets on the panel itself. The local
+/// simulator has no device, and every pick stays on this screen.
 ///
 /// Rather than mirror every widget's colour and text field, it promotes a
 /// small fixed set: the background, the dominant foreground ("main") colour,
@@ -916,6 +1022,7 @@ class _SimplePanel extends StatelessWidget {
     required this.stock,
     required this.activeStockPath,
     required this.connected,
+    required this.bound,
     required this.panelWidth,
     required this.panelHeight,
     required this.onPickStock,
@@ -925,8 +1032,13 @@ class _SimplePanel extends StatelessWidget {
   final List<StockLayout> stock;
   final String? activeStockPath;
 
-  /// Whether a mirror is connected, which is what makes a pick a push.
+  /// Whether a pick is also a push, which is what needs the panel size: a
+  /// layout the firmware would refuse must not look like it went out.
   final bool connected;
+
+  /// Whether a device is bound at all, which is what an empty preset list is
+  /// explained by.
+  final bool bound;
   final int panelWidth;
   final int panelHeight;
   final ValueChanged<StockLayout> onPickStock;
@@ -950,9 +1062,11 @@ class _SimplePanel extends StatelessWidget {
             ),
           if (stock.isEmpty)
             Text(
-              panelWidth > 0
-                  ? 'No layouts match your mirror (${panelWidth}x$panelHeight).'
-                  : 'Connect to your mirror to see matching layouts.',
+              !bound
+                  ? 'No layout presets are bundled with this build.'
+                  : panelWidth > 0
+                      ? 'No layouts match your mirror (${panelWidth}x$panelHeight).'
+                      : 'Connect to your mirror to see matching layouts.',
               style: theme.textTheme.bodySmall,
             )
           else

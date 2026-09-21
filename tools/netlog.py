@@ -2,9 +2,12 @@
 """Decode the mirror's nonvolatile network/error log (netlog.bin).
 
 Usage:
-    tools/netlog.py                          # fetch http://smart-mirror.local/api/log
-    tools/netlog.py http://<host>/api/log    # fetch from a named host
-    tools/netlog.py netlog.bin               # decode a local file
+    tools/netlog.py http://smart-mirror-<id>.local/api/log   # fetch from a mirror
+    tools/netlog.py http://<host>/api/log                    # fetch from a named host
+    tools/netlog.py netlog.bin                               # decode a local file
+
+Every mirror advertises its own hostname, smart-mirror-<12 hex MAC digits>, so
+there is no single default host to fall back on: name the device (or its IP).
 
 The firmware keeps a fixed-size ring of 8-byte entries plus a 16-byte header.
 Entries carry uptime_s; absolute time is boot_epoch + uptime_s once the clock
@@ -88,7 +91,9 @@ def detail_str(evt, detail, rssi):
 
 
 def main(argv):
-    src = argv[1] if len(argv) > 1 else "http://smart-mirror.local/api/log"
+    if len(argv) < 2:
+        sys.exit(__doc__)
+    src = argv[1]
     data = read_bytes(src)
 
     if len(data) < HEADER.size:

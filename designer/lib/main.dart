@@ -1,21 +1,53 @@
 // Smart mirror layout designer.
 //
-// Renders layouts through the same C engine that runs on the ESP32, so what
-// you see here is what the panel shows, pixel for pixel.
+// Opens on the devices it has met, not on a render engine. Every tile shows
+// what its mirror is actually displaying, decoded by this app alone, so the
+// app starts on a checkout whose C core was never compiled. The engine is
+// loaded by the routes that need it (the layout workspace, the game
+// catalogue), which is where a missing library shows its fix.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'src/engine/bindings.dart';
-import 'src/engine/engine.dart';
-import 'src/ui/app.dart';
+import 'src/services/mirror_devices.dart';
+import 'src/ui/device_routes.dart';
+import 'src/ui/devices_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MirrorDesignerApp());
 }
 
-class MirrorDesignerApp extends StatelessWidget {
-  const MirrorDesignerApp({super.key});
+class MirrorDesignerApp extends StatefulWidget {
+  const MirrorDesignerApp({super.key, this.devices});
+
+  /// The registry the dashboard shows. The app owns and disposes its own; a
+  /// test injects one to drive the screens without touching prefs.
+  final MirrorDevices? devices;
+
+  @override
+  State<MirrorDesignerApp> createState() => _MirrorDesignerAppState();
+}
+
+class _MirrorDesignerAppState extends State<MirrorDesignerApp> {
+  late final MirrorDevices _devices = widget.devices ?? MirrorDevices();
+  late final bool _ownsDevices = widget.devices == null;
+
+  @override
+  void initState() {
+    super.initState();
+    // Remembered devices first, from prefs alone: no radio is opened, and no
+    // Bluetooth or permission prompt stands between the owner and the home
+    // screen. Discovery and the first status polls follow from the dashboard.
+    unawaited(_devices.load());
+  }
+
+  @override
+  void dispose() {
+    if (_ownsDevices) _devices.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,92 +61,10 @@ class MirrorDesignerApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const _Bootstrap(),
-    );
-  }
-}
-
-/// Opens the native engine before showing the workspace.
-///
-/// Loading the library is the one thing most likely to fail on a fresh
-/// checkout, so it gets an explicit screen with the fix rather than a red
-/// crash box.
-class _Bootstrap extends StatefulWidget {
-  const _Bootstrap();
-
-  @override
-  State<_Bootstrap> createState() => _BootstrapState();
-}
-
-class _BootstrapState extends State<_Bootstrap> {
-  MirrorEngine? _engine;
-  String? _failure;
-
-  @override
-  void initState() {
-    super.initState();
-    try {
-      _engine = MirrorEngine.open();
-    } on MirrorLibraryException catch (e) {
-      _failure = e.message;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final failure = _failure;
-    if (failure != null) return _EngineMissing(message: failure);
-
-    final engine = _engine;
-    if (engine == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    return WorkspaceScreen(engine: engine);
-  }
-}
-
-class _EngineMissing extends StatelessWidget {
-  const _EngineMissing({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Icon(Icons.memory_outlined,
-                    size: 48, color: theme.colorScheme.error),
-                const SizedBox(height: 16),
-                Text('The render engine did not load',
-                    style: theme.textTheme.headlineSmall),
-                const SizedBox(height: 12),
-                Text(message, style: theme.textTheme.bodyMedium),
-                const SizedBox(height: 24),
-                Text(
-                  'This app renders through the same C core as the firmware, '
-                  'so it cannot run without it.',
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                const SelectableText(
-                  'cd designer && ./setup.sh\n'
-                  'flutter run -d linux',
-                  style: TextStyle(fontFamily: 'monospace'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      // The routes under the home screen need to know when they are covered
+      // (the device page stops polling while a nested route is on top).
+      navigatorObservers: <NavigatorObserver>[appRouteObserver],
+      home: DevicesScreen(devices: _devices),
     );
   }
 }

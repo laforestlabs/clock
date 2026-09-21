@@ -3,6 +3,8 @@ idf_component_register(
         "main.c"
         "panel.cpp"
         "config.c"
+        "display_store.c"
+        "frame_snapshot.c"
         "layout_store.c"
         "model_store.c"
         "netlog.c"

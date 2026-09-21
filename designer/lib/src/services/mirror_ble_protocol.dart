@@ -7,9 +7,13 @@
 //   <data chunks>        each chunk a single ATT write within the MTU
 //   commit
 //
-// This file only knows how to turn a payload into that sequence of frames.
-// It imports no Flutter or plugin code, so it unit-tests without a device.
-// The session in mirror_ble.dart writes the frames over the air.
+// The device answers the begin write with `begin ok` or `begin error <why>`,
+// and the commit write with `commit ok[ <detail>]` or `commit error <why>`.
+// Both replies share the status stream with unsolicited game notifications.
+// BleSession waits for each matching reply before advancing the transaction.
+//
+// This file only splits a payload into wire frames. It imports no Flutter
+// or plugin code, so the chunking protocol can be checked without a device.
 
 import 'dart:convert';
 
@@ -47,3 +51,4 @@ class BlePayloadWriter {
     return out;
   }
 }
+

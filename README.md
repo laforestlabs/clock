@@ -384,11 +384,16 @@ flutter run -d linux
 ./install-shortcut.sh --desktop   # optional, adds a launcher and a Desktop shortcut
 ```
 
-See [designer/README.md](designer/README.md). The short version of how it stays
-honest: the app renders through the same `core/` C compiled for the host, so
-the preview is the panel. Selection outlines and two-way-mirror dimming are
-drawn by the view layer and never enter the engine's framebuffer, because the
-moment editor chrome lands in those pixels the preview stops being trustworthy.
+The app opens on a remembered device dashboard with actual framebuffer previews,
+including timestamped images for offline mirrors. Select a device for its clock,
+BLE games, or persisted PNG/JPEG picture display with Fit/Fill framing. Actions
+remain bound to that device. The layout designer/simulator is a separate app-menu
+destination, using the same `core/` C renderer as the panel.
+
+See [designer/README.md](designer/README.md) for workflows and
+[firmware/README.md](firmware/README.md#device-identity-pictures-and-actual-previews)
+for the display API. Editor chrome never enters the framebuffer; actual device
+snapshots already include gamma, brightness and orientation.
 
 Panel orientation is the one setting that is genuinely the device's: the
 Settings screen's **Upside down** toggle pushes `flip180` over Bluetooth and
