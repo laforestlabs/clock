@@ -393,6 +393,18 @@ class _GameScreenState extends State<GameScreen>
       goal: 'The tilt visualiser: the red dot sits where the phone points. '
           'Move it with the buttons or with tilt.',
     ),
+    'racer': _GameCopy(
+      goal: 'Tilt left and right to dodge traffic. Three crashes end the run.',
+    ),
+    'cave': _GameCopy(
+      goal: 'Tilt forward and back to guide your ship through the cave. Avoid the walls.',
+    ),
+    'maze': _GameCopy(
+      goal: 'Tilt toward a passage to move. Collect three keys and reach the exit before time runs out.',
+    ),
+    'gallery': _GameCopy(
+      goal: 'Tilt to aim and hold Shoot to hit targets. Consecutive hits earn more points.',
+    ),
   };
 
   /// The goal sentence for a game id, or null for one this build does not

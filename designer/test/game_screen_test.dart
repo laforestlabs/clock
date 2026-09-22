@@ -342,6 +342,7 @@ class _Scene {
   Future<void> pick(String id) async {
     final tile = find.byKey(ValueKey<String>('game-tile-$id'));
     await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
     await tester.tap(tile);
     await tester.pumpAndSettle();
   }
@@ -1452,6 +1453,10 @@ void main() {
               // The tilt visualiser is picked like any other game: it is how a
               // player sees what motion control is doing.
               'probe',
+              'racer',
+              'cave',
+              'maze',
+              'gallery',
             ]) {
               await scene.pick(id);
               final Finder startButton =
@@ -1557,13 +1562,8 @@ void main() {
     });
   }
 
-  // The setup view is where a round is chosen, so it is the view a phone sits
-  // on longest: the bundled games and the one action that starts one have to
-  // be on screen together, at the sizes a phone really is. The picker is a
-  // list of compact tiles and the start action is pinned under it, so neither
-  // depends on scrolling through a card per game; a phone held sideways spends
-  // its width on two panes instead of stacking them into a screen that is only
-  // 384 pixels tall.
+  // Every compact tile must be scroll-reachable while Start Game stays pinned,
+  // including on a sideways phone and with enlarged text.
   for (final (Size surface, double textScale, double inset)
       in const <(Size, double, double)>[
     (Size(360, 800), 1.5, 24),
@@ -1571,7 +1571,7 @@ void main() {
     (Size(684, 384), 1, 0),
   ]) {
     testWidgets(
-        'the picker and Start Game fit on '
+        'every picker tile is scroll-reachable with pinned Start Game on '
         '${surface.width.toInt()}x${surface.height.toInt()} at '
         '${textScale}x text', (tester) async {
       await _scene(
@@ -1588,11 +1588,19 @@ void main() {
             'breakout',
             'invaders',
             'probe',
+            'racer',
+            'cave',
+            'maze',
+            'gallery',
           ]) {
             final Finder tile = find.byKey(ValueKey<String>('game-tile-$id'));
             expect(tile, findsOneWidget, reason: '$id tile');
+            await scene.pick(id);
             expect(_onScreen(tester.getRect(tile), surface), isTrue,
-                reason: '$id is reachable without scrolling');
+                reason: '$id is reachable after scrolling');
+            expect(_onScreen(tester.getRect(start), surface), isTrue,
+                reason: 'Start Game stays pinned while selecting $id');
+            expect(tester.takeException(), isNull, reason: '$id setup overflow');
           }
 
           // Picking one selects it, states what it asks for once, and leaves

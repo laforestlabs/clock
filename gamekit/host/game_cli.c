@@ -22,6 +22,10 @@ extern const ml_game_vt ml_game_snake;
 extern const ml_game_vt ml_game_tetris;
 extern const ml_game_vt ml_game_breakout;
 extern const ml_game_vt ml_game_invaders;
+extern const ml_game_vt ml_game_racer;
+extern const ml_game_vt ml_game_cave;
+extern const ml_game_vt ml_game_maze;
+extern const ml_game_vt ml_game_gallery;
 
 static const ml_game_vt *find_game(const char *name)
 {
@@ -30,6 +34,10 @@ static const ml_game_vt *find_game(const char *name)
     if (!strcmp(name, "tetris"))   return &ml_game_tetris;
     if (!strcmp(name, "breakout")) return &ml_game_breakout;
     if (!strcmp(name, "invaders")) return &ml_game_invaders;
+    if (!strcmp(name, "racer"))    return &ml_game_racer;
+    if (!strcmp(name, "cave"))     return &ml_game_cave;
+    if (!strcmp(name, "maze"))     return &ml_game_maze;
+    if (!strcmp(name, "gallery"))  return &ml_game_gallery;
     return NULL;
 }
 
@@ -40,7 +48,7 @@ static void usage(const char *argv0)
         "\n"
         "Usage: %s <game> [options]\n"
         "\n"
-        "Games: rally, snake, tetris, breakout, invaders\n"
+        "Games: rally, snake, tetris, breakout, invaders, racer, cave, maze, gallery\n"
         "\n"
         "Options:\n"
         "  --panel WxH       Panel size (default 64x32)\n"
@@ -112,6 +120,19 @@ static const step INVADERS_DEMO[] = {
 };
 #define INVADERS_DEMO_LEN ((int)(sizeof(INVADERS_DEMO) / sizeof(INVADERS_DEMO[0])))
 
+static const step RACER_CAVE_DEMO[] = {
+    { 4, 1, 0, 1 }, { 12, 1, 0, 0 },
+    { 20, 1, 1, 1 }, { 36, 1, 1, 0 },
+};
+static const step MAZE_DEMO[] = {
+    { 4, 1, 3, 1 }, { 20, 1, 3, 0 },
+    { 24, 1, 1, 1 }, { 40, 1, 1, 0 },
+};
+static const step GALLERY_DEMO[] = {
+    { 4, 1, 3, 1 }, { 20, 1, 3, 0 },
+    { 4, 1, 4, 1 }, { 80, 1, 4, 0 },
+};
+
 static void print_ascii(const uint8_t *rgb, int w, int h)
 {
     for (int y = 0; y < h; y++) {
@@ -141,6 +162,16 @@ static void feed_demo(const ml_game_vt *g, ml_host_session *h, ml_net **ctrl,
     else if (!strcmp(g->id, "tetris"))   { demo = TETRIS_DEMO;    n = TETRIS_DEMO_LEN; }
     else if (!strcmp(g->id, "breakout")) { demo = BREAKOUT_DEMO;  n = BREAKOUT_DEMO_LEN; }
     else if (!strcmp(g->id, "invaders")) { demo = INVADERS_DEMO;  n = INVADERS_DEMO_LEN; }
+    else if (!strcmp(g->id, "racer") || !strcmp(g->id, "cave")) {
+        demo = RACER_CAVE_DEMO;
+        n = (int)(sizeof(RACER_CAVE_DEMO) / sizeof(RACER_CAVE_DEMO[0]));
+    } else if (!strcmp(g->id, "maze")) {
+        demo = MAZE_DEMO;
+        n = (int)(sizeof(MAZE_DEMO) / sizeof(MAZE_DEMO[0]));
+    } else if (!strcmp(g->id, "gallery")) {
+        demo = GALLERY_DEMO;
+        n = (int)(sizeof(GALLERY_DEMO) / sizeof(GALLERY_DEMO[0]));
+    }
     uint16_t seq = 0;
     for (int i = 0; i < n; i++) {
         if (demo[i].tick != tick) continue;

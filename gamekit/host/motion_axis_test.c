@@ -13,8 +13,10 @@
  * draws its player at - the paddle's cyan run at column 1 (rally), the white
  * run in the row above the floor (breakout), the cannon's cyan run (invaders),
  * the piece's lit cells inside the field rect (tetris), the snake's uniquely
- * bright head cell, and the red dot (probe). Nothing here reads game state:
- * what is asserted is what the panel shows.
+ * bright head cell, the red dot (probe), the cyan car's left edge (racer), the
+ * cyan ship's top row (cave), the cyan collector's cell (maze) and the cyan
+ * crosshair's centre (gallery). Nothing here reads game state: what is
+ * asserted is what the panel shows.
  *
  * Script families, per game:
  *   - neutral (0) puts the player at the centre of its travel and KEEPS it
@@ -25,7 +27,14 @@
  *     there, so manual play is untouched;
  *   - tetris walks toward the column the phone points at and stops at the
  *     wall rather than teleporting into it;
- *   - snake turns on a deliberate tilt only, and never reverses.
+ *   - snake turns on a deliberate tilt only, and never reverses;
+ *   - racer drives its car to both road ends, and gallery its crosshair to all
+ *     four corners of its travel;
+ *   - cave maps the angle over the safe band its tunnel leaves: its true ends
+ *     put the ship into the rock, which is a collision and not a position, so
+ *     the crash is asserted as a reset rather than as an end of travel;
+ *   - maze takes only a deliberate past-half tilt, one cell every four ticks,
+ *     with neutral meaning stop and the walls refusing the step.
  *
  * Every step is 50ms, which is two 25ms ticks: rate-driven button motion in
  * these assertions is 2 px per frame at 1 px/tick.
@@ -49,6 +58,23 @@
 #define SNAKE_TILT_Y    5
 #define PROBE_TILT_X    4
 #define PROBE_TILT_Y    5
+
+/* The new games' axes, again in declared code order, and the pad codes the
+ * maze script presses by name (it picks its direction at run time). */
+#define RACER_TILT_X   2
+#define CAVE_TILT_Y    2
+#define MAZE_TILT_X    4
+#define MAZE_TILT_Y    5
+#define MAZE_DOWN      1
+#define MAZE_RIGHT     3
+#define GALLERY_TILT_X 5
+#define GALLERY_TILT_Y 6
+
+/* Maze's field origin and cell size: one cell is a 2x2 block at
+ * (1 + 2x, 10 + 2y) on the authored 64x32 panel. */
+#define MAZE_FIELD_X  1
+#define MAZE_FIELD_Y  10
+#define MAZE_FIELD_PX 2
 
 /* The value that means "nobody is driving this axis" (game.h). */
 #define TILT_IDLE (-32768)
@@ -186,6 +212,81 @@ static void piece_span(ml_game_session *s, int *min_x, int *max_x)
             }
         }
     }
+}
+
+/* ---- the four new games' readers ---------------------------------------- */
+
+/* The bounding box of the cyan player pixels inside a window. Cyan is the
+ * player colour in every one of the new games and nothing else on their boards
+ * uses it: hazards and the locked exit are red, keys and targets gold, walls
+ * blue, the unlocked exit green, and the HUD and the gallery's time bar white.
+ * Returns 0 when the window holds no cyan. */
+static int cyan_box(ml_game_session *s, int x0, int y0, int x1, int y1,
+                    int *min_x, int *min_y, int *max_x, int *max_y)
+{
+    const uint8_t *rgba = ml_game_render_rgba(s);
+    int found = 0;
+    for (int y = y0; y <= y1 && y < PANEL_H; y++) {
+        for (int x = x0; x <= x1 && x < PANEL_W; x++) {
+            if (!lit(rgba, x, y, 0, 1, 1)) continue;
+            if (!found) {
+                *min_x = *max_x = x;
+                *min_y = *max_y = y;
+                found = 1;
+            } else {
+                if (x < *min_x) *min_x = x;
+                if (x > *max_x) *max_x = x;
+                if (y < *min_y) *min_y = y;
+                if (y > *max_y) *max_y = y;
+            }
+        }
+    }
+    return found;
+}
+
+/* Racer: the left column of the cyan car on its fixed rows. The white life
+ * pixels share the bottom row, so the window stops one above them. */
+static int racer_car_x(ml_game_session *s)
+{
+    int min_x = -1, min_y = -1, max_x = -1, max_y = -1;
+    if (!cyan_box(s, 0, 26, PANEL_W - 1, 30, &min_x, &min_y, &max_x, &max_y))
+        return -1;
+    return min_x;
+}
+
+/* Cave: the top row of the cyan ship, which flies at a fixed column. */
+static int cave_ship_top(ml_game_session *s)
+{
+    int min_x = -1, min_y = -1, max_x = -1, max_y = -1;
+    if (!cyan_box(s, 0, 10, PANEL_W - 1, 30, &min_x, &min_y, &max_x, &max_y))
+        return -1;
+    return min_y;
+}
+
+/* Gallery: the centre of the five-pixel cyan crosshair. The window stops above
+ * the white time bar on the last row, and targets are drawn under the hair, so
+ * nothing can hide a pixel of it. */
+static int gallery_reticle(ml_game_session *s, int *cx, int *cy)
+{
+    int min_x = -1, min_y = -1, max_x = -1, max_y = -1;
+    if (!cyan_box(s, 0, 10, PANEL_W - 1, 30, &min_x, &min_y, &max_x, &max_y))
+        return 0;
+    *cx = (min_x + max_x) / 2;
+    *cy = (min_y + max_y) / 2;
+    return 1;
+}
+
+/* Maze: the collector's cell, from the top-left pixel of its filled 2x2 cell
+ * at (1 + 2x, 10 + 2y). */
+static int maze_cell(ml_game_session *s, int *cx, int *cy)
+{
+    int min_x = -1, min_y = -1, max_x = -1, max_y = -1;
+    if (!cyan_box(s, 0, 10, PANEL_W - 1, PANEL_H - 1,
+                  &min_x, &min_y, &max_x, &max_y))
+        return 0;
+    *cx = (min_x - MAZE_FIELD_X) / MAZE_FIELD_PX;
+    *cy = (min_y - MAZE_FIELD_Y) / MAZE_FIELD_PX;
+    return 1;
 }
 
 /* ---- session helpers ---------------------------------------------------- */
@@ -498,6 +599,286 @@ static void test_probe(void)
     ml_game_close(s);
 }
 
+/* ---- racer -------------------------------------------------------------- */
+
+static void test_racer(void)
+{
+    printf("racer: the car's column is the phone's angle\n");
+    /* The car is 3 px in a road edged at 8 and 55, so its column travels
+     * 10..51: neutral is 30 and both ends stay clear of the paint. Traffic
+     * enters on tick 48, so both scripts stay inside the first 48 ticks and
+     * there is nothing on the road to sweep into. */
+    ml_game_session *s = open_game("racer", 1);
+    if (!s) return;
+
+    feed(s, RACER_TILT_X, 0, 50);
+    const int centre = racer_car_x(s);
+    check(centre == 30, "neutral centres the car");
+
+    hold(s, RACER_TILT_X, 0, 6);
+    check(racer_car_x(s) == centre, "a held angle does not drift");
+
+    feed(s, RACER_TILT_X, 32767, 50);
+    check(racer_car_x(s) == 51, "+full is the right end of the road");
+    hold(s, RACER_TILT_X, 32767, 3);
+    check(racer_car_x(s) == 51, "+full holds its place");
+
+    feed(s, RACER_TILT_X, -32767, 50);
+    check(racer_car_x(s) == 10, "-full is the left end of the road");
+
+    feed(s, RACER_TILT_X, 16384, 50);
+    check(racer_car_x(s) == 40, "half travel sits halfway to the end");
+
+    ml_game_close(s);
+
+    /* An idle axis hands the car back to the buttons, from where it stands. */
+    ml_game_session *idle = open_game("racer", 1);
+    if (!idle) return;
+    feed(idle, RACER_TILT_X, -32767, 50);
+    check(racer_car_x(idle) == 10, "-full parks the car before the idle check");
+    feed(idle, RACER_TILT_X, TILT_IDLE, 50);
+    check(racer_car_x(idle) == 10, "an idle axis holds the car");
+    hold(idle, 1, 1, 2); /* Right held: 1 px/tick, two ticks a frame */
+    check(racer_car_x(idle) == 14, "buttons still move it from there");
+    ml_game_close(idle);
+}
+
+/* ---- cave --------------------------------------------------------------- */
+
+static void test_cave(void)
+{
+    printf("cave: the ship's altitude is the phone's angle\n");
+    /* The travel is 10..29, but the tunnel at reset is open only for rows
+     * 14..26, so +-full map the ship's top straight into the rock: those two
+     * frames are a crash, which the collision fixtures own, not a position.
+     * The mapping is therefore read over the widest band the tunnel leaves -
+     * half tilt gives 24 and 15 - while the ship's fixed column still sits on
+     * its straight, unscrolled centre. */
+    ml_game_session *s = open_game("cave", 1);
+    if (!s) return;
+
+    feed(s, CAVE_TILT_Y, 0, 50);
+    const int centre = cave_ship_top(s);
+    check(centre == 19, "neutral centres the ship in the tunnel");
+
+    hold(s, CAVE_TILT_Y, 0, 5);
+    check(cave_ship_top(s) == centre, "a held angle does not drift");
+
+    feed(s, CAVE_TILT_Y, 16384, 50);
+    check(cave_ship_top(s) == 24, "half tilt toward the floor takes the low band");
+    hold(s, CAVE_TILT_Y, 16384, 3);
+    check(cave_ship_top(s) == 24, "the low band does not drift");
+
+    feed(s, CAVE_TILT_Y, -16384, 50);
+    check(cave_ship_top(s) == 15, "half tilt toward the roof takes the high band");
+
+    ml_game_close(s);
+
+    /* An idle axis hands the ship back to the buttons, from where it flies. */
+    ml_game_session *idle = open_game("cave", 1);
+    if (!idle) return;
+    feed(idle, CAVE_TILT_Y, -16384, 50);
+    check(cave_ship_top(idle) == 15, "half tilt parks the ship high");
+    feed(idle, CAVE_TILT_Y, TILT_IDLE, 50);
+    check(cave_ship_top(idle) == 15, "an idle axis holds the ship");
+    hold(idle, 1, 1, 2); /* Down held: 1 px/tick */
+    check(cave_ship_top(idle) == 19, "buttons still move it from there");
+    ml_game_close(idle);
+
+    /* The ends of the travel are a crash, and the crash puts the ship back in
+     * the middle of a straight tunnel - the panel never shows it at 10 or 29.
+     * One 25ms tick each, so each tilt asks for one sweep and costs one life;
+     * the lives and the swept collision themselves are the fixtures' business. */
+    ml_game_session *ends = open_game("cave", 1);
+    if (!ends) return;
+    feed(ends, CAVE_TILT_Y, 32767, 25);
+    check(cave_ship_top(ends) == 19, "+full is a crash, not the floor");
+    feed(ends, CAVE_TILT_Y, -32767, 25);
+    check(cave_ship_top(ends) == 19, "-full is a crash, not the roof");
+    ml_game_close(ends);
+}
+
+/* ---- gallery ------------------------------------------------------------ */
+
+static void test_gallery(void)
+{
+    printf("gallery: the crosshair is where the phone points\n");
+    /* The travel is x 1..62, y 11..29, and both axes move in one tick. Targets
+     * spawn on tick 1 and every 40 after, entering at an edge on rows 12, 18 or
+     * 24 and drifting a pixel every four ticks, so inside the first 40 ticks
+     * they are still near the edge. The horizontal ends are read along the
+     * bottom row where no target row can reach, and the five-pixel hair is
+     * drawn over the targets, so its symmetric box centre is the point asked
+     * for. */
+    ml_game_session *s = open_game("gallery", 1);
+    if (!s) return;
+
+    int cx = -1, cy = -1;
+    tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, 0, 0, 50);
+    if (!gallery_reticle(s, &cx, &cy)) {
+        check(0, "the crosshair is on screen");
+        ml_game_close(s);
+        return;
+    }
+    check(cx == 31 && cy == 20, "a level phone centres the crosshair");
+
+    for (int i = 0; i < 5; i++)
+        tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, 0, 0, 50);
+    gallery_reticle(s, &cx, &cy);
+    check(cx == 31 && cy == 20, "a held angle does not drift");
+
+    tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, 32767, 32767, 50);
+    gallery_reticle(s, &cx, &cy);
+    check(cx == 62 && cy == 29, "+full is the bottom-right corner");
+
+    tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, -32767, 32767, 50);
+    gallery_reticle(s, &cx, &cy);
+    check(cx == 1 && cy == 29, "-full on x is the bottom-left corner");
+
+    tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, 0, -32767, 50);
+    gallery_reticle(s, &cx, &cy);
+    check(cx == 31 && cy == 11, "-full on y is the top of the travel");
+
+    tilt(s, GALLERY_TILT_X, GALLERY_TILT_Y, 16384, 0, 50);
+    gallery_reticle(s, &cx, &cy);
+    check(cx == 46 && cy == 20, "half travel sits halfway to the right edge");
+
+    ml_game_close(s);
+
+    /* Idle axes hand the crosshair back to the pad, from where it is. */
+    ml_game_session *idle = open_game("gallery", 1);
+    if (!idle) return;
+    tilt(idle, GALLERY_TILT_X, GALLERY_TILT_Y, 16384, 0, 50);
+    check(gallery_reticle(idle, &cx, &cy) && cx == 46,
+          "half travel parks the crosshair before the idle check");
+    tilt(idle, GALLERY_TILT_X, GALLERY_TILT_Y, TILT_IDLE, TILT_IDLE, 50);
+    check(gallery_reticle(idle, &cx, &cy) && cx == 46,
+          "an idle axis holds the crosshair");
+    hold(idle, 3, 1, 2); /* Right held: 1 px/tick */
+    check(gallery_reticle(idle, &cx, &cy) && cx == 50,
+          "buttons still move it from there");
+    ml_game_close(idle);
+}
+
+/* ---- maze --------------------------------------------------------------- */
+
+/* One tick of a deliberate right or down tilt (the other axis idle), then read
+ * the collector's cell and count the single-cell steps it made. Returns the
+ * number of steps, or -1 if a step ever crossed more than one cell. */
+static int maze_push(ml_game_session *s, int down, int ticks, int *cx, int *cy)
+{
+    int moves = 0;
+    for (int i = 0; i < ticks; i++) {
+        if (down)
+            tilt(s, MAZE_TILT_X, MAZE_TILT_Y, TILT_IDLE, 30000, 25);
+        else
+            tilt(s, MAZE_TILT_X, MAZE_TILT_Y, 30000, TILT_IDLE, 25);
+        int px = -1, py = -1;
+        maze_cell(s, &px, &py);
+        if (px != *cx || py != *cy) {
+            const int dx = px > *cx ? px - *cx : *cx - px;
+            const int dy = py > *cy ? py - *cy : *cy - py;
+            if (dx + dy != 1) return -1;   /* tunnelled or teleported */
+            *cx = px;
+            *cy = py;
+            moves++;
+        }
+    }
+    return moves;
+}
+
+static void test_maze(void)
+{
+    printf("maze: only a deliberate tilt steps the collector\n");
+    /* Movement is one cell every MAZE_STEP_TICKS = 4 ticks, and only past half
+     * travel - the same deliberate angle snake uses. Neutral is not a heading:
+     * both axes at 0 stop the collector dead. The corner room at (1,1) has the
+     * outer wall above and to its left, so exactly one of right/down must be
+     * carved; the script finds that way out first, then asserts the cadence on
+     * the move itself. */
+    int open_dir = 0;   /* 1 = right, 2 = down */
+    int cx = 1, cy = 1;
+
+    ml_game_session *right = open_game("maze", 1);
+    if (!right) return;
+    if (maze_push(right, 0, 4, &cx, &cy) == 1) open_dir = 1;
+    ml_game_close(right);
+
+    if (!open_dir) {
+        ml_game_session *down = open_game("maze", 1);
+        if (!down) return;
+        cx = 1; cy = 1;
+        if (maze_push(down, 1, 4, &cx, &cy) == 1) open_dir = 2;
+        ml_game_close(down);
+    }
+    check(open_dir != 0, "the corner room has a way out");
+    if (!open_dir) return;
+
+    ml_game_session *s = open_game("maze", 1);
+    if (!s) return;
+
+    if (!maze_cell(s, &cx, &cy)) {
+        check(0, "the collector is on screen");
+        ml_game_close(s);
+        return;
+    }
+    check(cx == 1 && cy == 1, "the collector starts in the top-left room");
+
+    /* Neutral stops: both axes engaged at 0 ask for no direction, so the
+     * collector keeps its cell where every other game would keep moving. */
+    for (int i = 0; i < 6; i++) tilt(s, MAZE_TILT_X, MAZE_TILT_Y, 0, 0, 50);
+    maze_cell(s, &cx, &cy);
+    check(cx == 1 && cy == 1, "a still phone does not move the collector");
+
+    /* Inside the deliberate threshold is not an instruction either. */
+    for (int i = 0; i < 4; i++)
+        tilt(s, MAZE_TILT_X, MAZE_TILT_Y, 8000, 0, 50);
+    maze_cell(s, &cx, &cy);
+    check(cx == 1 && cy == 1, "a tilt inside the threshold is not a move");
+
+    /* The outer walls: the same deliberate angle into them does nothing. */
+    for (int i = 0; i < 4; i++)
+        tilt(s, MAZE_TILT_X, MAZE_TILT_Y, -30000, 0, 50);
+    maze_cell(s, &cx, &cy);
+    check(cx == 1 && cy == 1, "a tilt into the left wall leaves it there");
+    for (int i = 0; i < 4; i++)
+        tilt(s, MAZE_TILT_X, MAZE_TILT_Y, 0, -30000, 50);
+    maze_cell(s, &cx, &cy);
+    check(cx == 1 && cy == 1, "a tilt into the top wall leaves it there");
+
+    /* The deliberate tilt: exactly one cell in the four ticks of the cadence,
+     * and it stays on the grid the maze draws. */
+    cx = 1; cy = 1;
+    const int moves = maze_push(s, open_dir == 2, 4, &cx, &cy);
+    check(moves == 1, "a deliberate tilt steps one cell in four ticks");
+    if (open_dir == 1)
+        check(cx == 2 && cy == 1, "the step is one cell to the right");
+    else
+        check(cx == 1 && cy == 2, "the step is one cell down");
+
+    /* Neutral again stops it where the step left it. */
+    for (int i = 0; i < 6; i++) tilt(s, MAZE_TILT_X, MAZE_TILT_Y, 0, 0, 50);
+    maze_cell(s, &cx, &cy);
+    if (open_dir == 1)
+        check(cx == 2 && cy == 1, "neutral stops it in the new cell");
+    else
+        check(cx == 1 && cy == 2, "neutral stops it in the new cell");
+    ml_game_close(s);
+
+    /* With both axes idle the pad drives the same step, same cadence. */
+    ml_game_session *pad = open_game("maze", 1);
+    if (!pad) return;
+    for (int i = 0; i < 4; i++)
+        feed(pad, open_dir == 1 ? MAZE_RIGHT : MAZE_DOWN, 1, 25);
+    cx = -1; cy = -1;
+    maze_cell(pad, &cx, &cy);
+    if (open_dir == 1)
+        check(cx == 2 && cy == 1, "the pad steps it one cell to the right");
+    else
+        check(cx == 1 && cy == 2, "the pad steps it one cell down");
+    ml_game_close(pad);
+}
+
 int main(void)
 {
     test_axis_map();
@@ -507,6 +888,10 @@ int main(void)
     test_tetris();
     test_snake();
     test_probe();
+    test_racer();
+    test_cave();
+    test_maze();
+    test_gallery();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures) { printf("FAIL\n"); return 1; }

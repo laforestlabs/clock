@@ -13,7 +13,7 @@ panel geometry, and multiplayer architecture. The app now runs the shared native
 simulation locally or controls one player on the ESP32 over BLE. The LAN and
 multi-phone architecture described below remains design material, not a claim
 that those transports are shipped. See [Games in the app](../designer/README.md#games)
-for choosing, controlling, pausing, and replaying the five playable games.
+for choosing, controlling, pausing, and replaying the nine playable games and Probe.
 
 ## Shipped BLE session protocol
 
@@ -467,10 +467,34 @@ gamekit/
     tetris/       falling blocks: rotate and drop, on a capped field
     breakout/     a paddle, a ball and a wall of bricks, two buttons
     invaders/     a cannon vs an alien wall that shoots back
+    probe/        a two-axis tilt visualiser
+    racer/        Tilt Racer: three-life traffic avoidance
+    cave/         Cave Flyer: positional altitude through a scrolling tunnel
+    maze/         Maze Collector: three keyed mazes, deliberate tilt navigation
+    gallery/      Target Gallery: two-axis aim and held-trigger streak scoring
 ```
 
 Breakout starts with a 9-pixel-wide paddle on the 64-pixel panel. Each cleared
 level narrows it by one pixel, down to a 3-pixel minimum.
+
+The four arcade additions author a fixed 64×32 field with integer letterbox
+scaling and 25 ms ticks. Racer's `TiltX`, Cave's `TiltY`, and Gallery's two axes
+are positional; idle axes leave buttons in charge without recentering. Maze
+instead steps one cell every four ticks under deliberate dominant-axis tilt,
+and neutral stops it. Each game also works entirely with its declared buttons.
+Their snapshots include input latches and timers and fit the runtime's effective
+1020-byte payload limit.
+
+Racer awards 10 points per passed car and ends after three crashes. Cave awards
+one point per scrolled column, narrows as distance increases, and pauses scrolling
+for 80 ticks after a crash; steering still works during recovery, so holding into
+a wall can cost another life. Maze requires three keys and an exit in each of
+three 60-second rounds. Gallery lasts 60 seconds, fires every eight ticks while
+Shoot is held, and rewards consecutive hits up to 50 points each. Scores cap at
+9999; terminal boards show the score and `OVER` or `WIN`. Replay belongs to the app.
+
+Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
+and Gallery; 20 for Cave, whose default button demo ends before frame 90.
 
 ### `game-cli`
 

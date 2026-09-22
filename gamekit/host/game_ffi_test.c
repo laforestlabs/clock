@@ -75,6 +75,26 @@ static uint32_t run_game(const char *id, uint32_t seed)
         for (int t = 0; t < 5; t++) ml_game_step(s, 33);
         ml_game_input(s, 1, 2, 0);
         for (int t = 0; t < 55; t++) ml_game_step(s, 33);
+    } else if (!strcmp(id, "racer") || !strcmp(id, "cave")) {
+        ml_game_input(s, 1, 0, 1);
+        ml_game_step(s, 100);
+        ml_game_input(s, 1, 0, 0);
+        ml_game_input(s, 1, 2, 8192);
+        for (int t = 0; t < 20; t++) ml_game_step(s, 25);
+        ml_game_input(s, 1, 2, -32768);
+        ml_game_input(s, 1, 1, 1);
+        ml_game_step(s, 100);
+        ml_game_input(s, 1, 1, 0);
+    } else if (!strcmp(id, "maze") || !strcmp(id, "gallery") ||
+               !strcmp(id, "probe")) {
+        int gallery = !strcmp(id, "gallery");
+        ml_game_input(s, 1, 3, 1);
+        ml_game_step(s, 100);
+        ml_game_input(s, 1, 3, 0);
+        ml_game_input(s, 1, gallery ? 5 : 4, 16384);
+        ml_game_input(s, 1, gallery ? 6 : 5, 0);
+        if (gallery) ml_game_input(s, 1, 4, 1);
+        for (int t = 0; t < 86; t++) ml_game_step(s, 25);
     } else {
         for (int t = 0; t < 90; t++) ml_game_step(s, 33);
     }
@@ -131,7 +151,10 @@ int main(void)
     /* Every single-player game: run the identical seed and input stream into
      * two sessions and require the same frame hash, the framework's
      * determinism promise exercised through the same FFI calls Dart makes. */
-    static const char *GAMES[] = { "snake", "tetris", "breakout", "invaders" };
+    static const char *GAMES[] = {
+        "snake", "tetris", "breakout", "invaders", "probe",
+        "racer", "cave", "maze", "gallery"
+    };
     for (size_t i = 0; i < sizeof(GAMES) / sizeof(GAMES[0]); i++) {
         uint32_t a = run_game(GAMES[i], 7);
         uint32_t b = run_game(GAMES[i], 7);

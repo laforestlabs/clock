@@ -31,6 +31,10 @@ extern const ml_game_vt ml_game_tetris;
 extern const ml_game_vt ml_game_breakout;
 extern const ml_game_vt ml_game_invaders;
 extern const ml_game_vt ml_game_probe;
+extern const ml_game_vt ml_game_racer;
+extern const ml_game_vt ml_game_cave;
+extern const ml_game_vt ml_game_maze;
+extern const ml_game_vt ml_game_gallery;
 static const game_entry k_games[] = {
     { "rally",    "Rally",    &ml_game_rally },
     { "snake",    "Snake",    &ml_game_snake },
@@ -38,6 +42,10 @@ static const game_entry k_games[] = {
     { "breakout", "Breakout", &ml_game_breakout },
     { "invaders", "Invaders", &ml_game_invaders },
     { "probe",    "Probe",    &ml_game_probe },
+    { "racer",    "Tilt Racer", &ml_game_racer },
+    { "cave",     "Cave Flyer", &ml_game_cave },
+    { "maze",     "Maze Collector", &ml_game_maze },
+    { "gallery",  "Target Gallery", &ml_game_gallery },
 };
 #define GAME_COUNT ((int)(sizeof(k_games) / sizeof(k_games[0])))
 

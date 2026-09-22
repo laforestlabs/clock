@@ -270,8 +270,10 @@ there. Developer mode in Settings adds the choice between tilt and the pads, and
 the panel size, display settings, tick count and latency that the default view
 leaves out.
 
-Choose Rally, Snake, Tetris, Breakout, Invaders, or **Probe**, read its goal
-and controls, then press **Start Game**. This screen has one player; Rally is
+Choose Rally, Snake, Tetris, Breakout, Invaders, **Probe**, **Tilt Racer**,
+**Cave Flyer**, **Maze Collector**, or **Target Gallery**, read its goal and
+controls, then press **Start Game**. The ten compact tiles scroll while Start
+Game stays pinned. This screen has one player; Rally is
 solo against the computer. Probe is the tilt visualiser rather than a round: a
 red dot that sits where the phone points, which is how you see what motion
 control is doing - and how you check the sign of a tilt - before a round depends
@@ -285,6 +287,7 @@ on it. It is never picked for you: Start uses a game played for score.
 | Tetris Soft drop / Down / S | Hold to fall faster |
 | Invaders Shoot / Space | One shot per press; a bullet in the air never blocks the next |
 | Invaders in motion mode | Tap anywhere in the play area to shoot; the Shoot pad works too |
+| Gallery Shoot / Space | Hold to fire every eight ticks; consecutive hits build a score multiplier |
 | Space at setup or after a round | Start / Play again; holding Space never restarts |
 | P / Escape | Pause or Resume |
 
@@ -305,11 +308,12 @@ Controls remain at least 48 logical pixels; setup and paused content scroll.
 An undersized play area pauses and asks for more space rather than clipping pads.
 
 **Motion controls** are offered in the local preview and on a mirror. The phone
-establishes neutral from 20 samples taken while it is still, before the round
-starts: hold it still, and that angle becomes the middle of the round's travel.
-Moving during the hold does not advance it, so the count reads 4/20 rather than
-completing over a wrong middle; a hold that never settles says "Could not
-calibrate: hold the phone still" and motion mode stays selected for another try.
+establishes neutral by averaging 20 samples (about 0.4 seconds) before the round
+starts. Hold it comfortably: ordinary hand wobble is allowed, and the average
+angle becomes the middle of the round's travel. A larger grip change or shake
+restarts that short window at the new orientation instead of leaving calibration
+stuck on the first samples. Sustained shaking still times out without starting
+the game; motion mode stays selected for another try.
 Cancel or Manual controls leaves setup usable. A sensor error, or two seconds
 without samples, prevents starting in motion mode. While paused, switch
 Manual/Motion or Recalibrate, then explicitly Resume. An ordinary pause retains
@@ -327,6 +331,13 @@ tilt. Invaders in motion mode takes its Shoot from the whole play area: a tap on
 the board is a shot, and the Shoot pad is one of the places to find it. The pads
 and keys are unchanged when Manual is selected, and switching modes mid-round
 continues from wherever the player is.
+
+Tilt Racer follows horizontal tilt to dodge traffic; Cave Flyer follows vertical
+tilt without gravity, with three crashes ending either run. Full Cave tilt reaches
+the walls: modest angles keep the ship in the opening. Target Gallery follows
+both axes while Shoot remains a separate held action. Maze Collector uses
+deliberate tilt to choose a passage, stops at neutral, and gives each of its three
+key-collecting rounds 60 seconds. All four retain pad and keyboard fallback.
 
 The angle is fused from the accelerometer **and the gyroscope**, so moving the
 phone without tilting it no longer steers: the accelerometer alone reads the

@@ -41,7 +41,9 @@ TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_inpu
             $(BUILD)/breakout_progression_test $(BUILD)/motion_axis_test \
             $(BUILD)/rally_wall_test $(BUILD)/breakout_bounce_test \
             $(BUILD)/invaders_rounds_test $(BUILD)/snake_pace_test \
-            $(BUILD)/tetris_preview_test
+            $(BUILD)/tetris_preview_test \
+            $(BUILD)/racer_behavior_test $(BUILD)/cave_behavior_test \
+            $(BUILD)/maze_behavior_test $(BUILD)/gallery_behavior_test
 
 .PHONY: all clean cli core check
 
@@ -112,6 +114,10 @@ $(BUILD)/snake_pace_test: host/snake_pace_test.c $(FIXTURE_DEPS)
 	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
 
 $(BUILD)/tetris_preview_test: host/tetris_preview_test.c $(FIXTURE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
+
+$(BUILD)/racer_behavior_test $(BUILD)/cave_behavior_test $(BUILD)/maze_behavior_test $(BUILD)/gallery_behavior_test: $(BUILD)/%_test: host/%_test.c $(FIXTURE_DEPS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(LINK_INPUTS) $(LDLIBS) -o $@
 

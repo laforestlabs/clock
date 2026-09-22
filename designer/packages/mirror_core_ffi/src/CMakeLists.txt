@@ -100,6 +100,10 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_GAMEKIT}/examples/breakout/game_breakout.c"
     "${MIRROR_GAMEKIT}/examples/invaders/game_invaders.c"
     "${MIRROR_GAMEKIT}/examples/probe/game_probe.c"
+    "${MIRROR_GAMEKIT}/examples/racer/game_racer.c"
+    "${MIRROR_GAMEKIT}/examples/cave/game_cave.c"
+    "${MIRROR_GAMEKIT}/examples/maze/game_maze.c"
+    "${MIRROR_GAMEKIT}/examples/gallery/game_gallery.c"
     "${MIRROR_GAMEKIT}/ffi/game_ffi.c"
 )
 
