@@ -2,7 +2,7 @@
  * game_registry.c - the games compiled into this firmware build.
  * Same order as gamekit/ffi/game_ffi.c so the phone's "game list" matches
  * the app's simulation picker: rally, snake, tetris, breakout, invaders,
- * probe, racer, cave, maze, gallery.
+ * probe, racer, cave, maze, gallery, jumpman.
  */
 #include <string.h>
 
@@ -18,6 +18,7 @@ extern const ml_game_vt ml_game_racer;
 extern const ml_game_vt ml_game_cave;
 extern const ml_game_vt ml_game_maze;
 extern const ml_game_vt ml_game_gallery;
+extern const ml_game_vt ml_game_jumpman;
 static const ml_game_vt *const k_games[] = {
     &ml_game_rally,
     &ml_game_snake,
@@ -29,6 +30,7 @@ static const ml_game_vt *const k_games[] = {
     &ml_game_cave,
     &ml_game_maze,
     &ml_game_gallery,
+    &ml_game_jumpman,
 };
 
 int ml_fw_game_count(void)

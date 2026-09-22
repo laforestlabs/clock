@@ -9,7 +9,7 @@
 #   Host     compiles it via Makefile.host (game-cli and the tests), which
 #            globs src/*.c and examples/*/*.c and never sees this file.
 #
-# The firmware compiles the runtime, all ten example games, and the small
+# The firmware compiles the runtime, all eleven example games, and the small
 # firmware registry (fw/) that maps game ids to vtables.
 if(ESP_PLATFORM)
     idf_component_register(
@@ -27,6 +27,7 @@ if(ESP_PLATFORM)
             examples/cave/game_cave.c
             examples/maze/game_maze.c
             examples/gallery/game_gallery.c
+            examples/jumpman/game_jumpman.c
             fw/game_registry.c
         INCLUDE_DIRS "include" "fw"
         REQUIRES mirror_core

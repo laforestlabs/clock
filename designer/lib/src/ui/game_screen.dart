@@ -405,6 +405,10 @@ class _GameScreenState extends State<GameScreen>
     'gallery': _GameCopy(
       goal: 'Tilt to aim and hold Shoot to hit targets. Consecutive hits earn more points.',
     ),
+    'jumpman': _GameCopy(
+      goal: 'Run right, jump the gaps and land on the blobs to squash them. '
+          'Reach the flag on each of the three courses.',
+    ),
   };
 
   /// The goal sentence for a game id, or null for one this build does not
@@ -419,6 +423,7 @@ class _GameScreenState extends State<GameScreen>
     'Left': 'Left / A',
     'Right': 'Right / D',
     'Shoot': 'Space',
+    'Jump': 'Space',
   };
 
   int _sizeIndex = 0;
@@ -3290,15 +3295,17 @@ class _GameScreenState extends State<GameScreen>
       return KeyEventResult.handled;
     }
 
-    // Space fires the round's Shoot control while it is live, and starts or
-    // replays a round only when nothing is on screen. Space never restarts a
-    // round that is being played, and its key repeat is not a new press.
+    // Space fires the round's one action control while it is live - Shoot where
+    // the game declares one, otherwise Jump - and starts or replays a round
+    // only when nothing is on screen. Space never restarts a round that is
+    // being played, and its key repeat is not a new press.
     if (event.logicalKey == LogicalKeyboardKey.space) {
       const key = _KeySource(LogicalKeyboardKey.space);
-      final shoot = _controlIndexForLabel('Shoot');
-      if (shoot != null && _phase == _PlayPhase.playing) {
-        if (down) _pressControl(shoot, key);
-        if (up) _releaseControl(shoot, key);
+      final action = _controlIndexForLabel('Shoot') ??
+          _controlIndexForLabel('Jump');
+      if (action != null && _phase == _PlayPhase.playing) {
+        if (down) _pressControl(action, key);
+        if (up) _releaseControl(action, key);
       } else if (down &&
           (_phase == _PlayPhase.idle || _phase == _PlayPhase.over)) {
         _startFromSpace();

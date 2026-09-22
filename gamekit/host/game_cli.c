@@ -26,6 +26,7 @@ extern const ml_game_vt ml_game_racer;
 extern const ml_game_vt ml_game_cave;
 extern const ml_game_vt ml_game_maze;
 extern const ml_game_vt ml_game_gallery;
+extern const ml_game_vt ml_game_jumpman;
 
 static const ml_game_vt *find_game(const char *name)
 {
@@ -38,6 +39,7 @@ static const ml_game_vt *find_game(const char *name)
     if (!strcmp(name, "cave"))     return &ml_game_cave;
     if (!strcmp(name, "maze"))     return &ml_game_maze;
     if (!strcmp(name, "gallery"))  return &ml_game_gallery;
+    if (!strcmp(name, "jumpman"))  return &ml_game_jumpman;
     return NULL;
 }
 
@@ -48,7 +50,8 @@ static void usage(const char *argv0)
         "\n"
         "Usage: %s <game> [options]\n"
         "\n"
-        "Games: rally, snake, tetris, breakout, invaders, racer, cave, maze, gallery\n"
+        "Games: rally, snake, tetris, breakout, invaders, racer, cave, maze, gallery,\n"
+        "       jumpman\n"
         "\n"
         "Options:\n"
         "  --panel WxH       Panel size (default 64x32)\n"
@@ -133,6 +136,25 @@ static const step GALLERY_DEMO[] = {
     { 4, 1, 4, 1 }, { 80, 1, 4, 0 },
 };
 
+/* Jumpman demo: hold Right and jump every twenty ticks, held for eight, which
+ * is what it takes to clear a block rather than clip its corner. Ten of those
+ * jumps run the whole first course at seed 1 without losing a life and reach
+ * the flag, so a capture shows the course, a jump and a stomp rather than a
+ * player wedged against a block. Codes: 0 Left, 1 Right, 2 Jump. */
+static const step JUMPMAN_DEMO[] = {
+    { 0,  1, 1, 1 },
+    { 2, 1, 2, 1 }, { 10, 1, 2, 0 },
+    { 22, 1, 2, 1 }, { 30, 1, 2, 0 },
+    { 42, 1, 2, 1 }, { 50, 1, 2, 0 },
+    { 62, 1, 2, 1 }, { 70, 1, 2, 0 },
+    { 82, 1, 2, 1 }, { 90, 1, 2, 0 },
+    { 102, 1, 2, 1 }, { 110, 1, 2, 0 },
+    { 122, 1, 2, 1 }, { 130, 1, 2, 0 },
+    { 142, 1, 2, 1 }, { 150, 1, 2, 0 },
+    { 162, 1, 2, 1 }, { 170, 1, 2, 0 },
+    { 182, 1, 2, 1 }, { 190, 1, 2, 0 },
+};
+
 static void print_ascii(const uint8_t *rgb, int w, int h)
 {
     for (int y = 0; y < h; y++) {
@@ -171,6 +193,9 @@ static void feed_demo(const ml_game_vt *g, ml_host_session *h, ml_net **ctrl,
     } else if (!strcmp(g->id, "gallery")) {
         demo = GALLERY_DEMO;
         n = (int)(sizeof(GALLERY_DEMO) / sizeof(GALLERY_DEMO[0]));
+    } else if (!strcmp(g->id, "jumpman")) {
+        demo = JUMPMAN_DEMO;
+        n = (int)(sizeof(JUMPMAN_DEMO) / sizeof(JUMPMAN_DEMO[0]));
     }
     uint16_t seq = 0;
     for (int i = 0; i < n; i++) {

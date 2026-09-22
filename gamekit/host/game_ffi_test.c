@@ -85,6 +85,14 @@ static uint32_t run_game(const char *id, uint32_t seed)
         ml_game_input(s, 1, 1, 1);
         ml_game_step(s, 100);
         ml_game_input(s, 1, 1, 0);
+    } else if (!strcmp(id, "jumpman")) {
+        /* Run right and jump: the two things the game is. */
+        ml_game_input(s, 1, 1, 1);
+        for (int t = 0; t < 20; t++) ml_game_step(s, 25);
+        ml_game_input(s, 1, 2, 1);
+        for (int t = 0; t < 14; t++) ml_game_step(s, 25);
+        ml_game_input(s, 1, 2, 0);
+        for (int t = 0; t < 56; t++) ml_game_step(s, 25);
     } else if (!strcmp(id, "maze") || !strcmp(id, "gallery") ||
                !strcmp(id, "probe")) {
         int gallery = !strcmp(id, "gallery");
@@ -153,7 +161,7 @@ int main(void)
      * determinism promise exercised through the same FFI calls Dart makes. */
     static const char *GAMES[] = {
         "snake", "tetris", "breakout", "invaders", "probe",
-        "racer", "cave", "maze", "gallery"
+        "racer", "cave", "maze", "gallery", "jumpman"
     };
     for (size_t i = 0; i < sizeof(GAMES) / sizeof(GAMES[0]); i++) {
         uint32_t a = run_game(GAMES[i], 7);

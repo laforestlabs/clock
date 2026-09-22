@@ -35,6 +35,7 @@ extern const ml_game_vt ml_game_racer;
 extern const ml_game_vt ml_game_cave;
 extern const ml_game_vt ml_game_maze;
 extern const ml_game_vt ml_game_gallery;
+extern const ml_game_vt ml_game_jumpman;
 static const game_entry k_games[] = {
     { "rally",    "Rally",    &ml_game_rally },
     { "snake",    "Snake",    &ml_game_snake },
@@ -46,6 +47,7 @@ static const game_entry k_games[] = {
     { "cave",     "Cave Flyer", &ml_game_cave },
     { "maze",     "Maze Collector", &ml_game_maze },
     { "gallery",  "Target Gallery", &ml_game_gallery },
+    { "jumpman",  "Jumpman", &ml_game_jumpman },
 };
 #define GAME_COUNT ((int)(sizeof(k_games) / sizeof(k_games[0])))
 

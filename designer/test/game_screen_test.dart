@@ -858,6 +858,57 @@ void main() {
   });
 
   testWidgets(
+      'Space jumps while a round with a Jump control is playing, and does '
+      'nothing in a round with neither', (tester) async {
+    late Uint8List quiet;
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      await scene.start();
+      await scene.advance(2);
+      quiet = scene.pixels();
+    });
+
+    late Uint8List jumped;
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      await scene.start();
+      await scene.advance(2);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      await scene.advance(2);
+      jumped = scene.pixels();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    });
+
+    // Jumpman declares Jump rather than Shoot, so Space is the jump: the
+    // player leaves the ground and the drawn frame changes.
+    expect(jumped, isNot(orderedEquals(quiet)));
+
+    late Uint8List snakeSpace;
+    await _scene(tester, (scene) async {
+      await scene.pick('snake');
+      await scene.start();
+      await scene.advance(8);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      await scene.advance(4);
+      snakeSpace = scene.pixels();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+    });
+
+    // Snake declares neither action, so Space is not an input to it. The two
+    // frames differ in general (the snake keeps moving), so the check is that
+    // Space did not add a jump to what the round was already doing: the same
+    // script without the key matches.
+    late Uint8List snakePlain;
+    await _scene(tester, (scene) async {
+      await scene.pick('snake');
+      await scene.start();
+      await scene.advance(12);
+      snakePlain = scene.pixels();
+    });
+    expect(snakeSpace, orderedEquals(snakePlain));
+  });
+
+  testWidgets(
       'a Rotate press and release between ticks is exactly one rotation',
       (tester) async {
     final none = await _tetris(tester, presses: 0);
@@ -1457,6 +1508,7 @@ void main() {
               'cave',
               'maze',
               'gallery',
+              'jumpman',
             ]) {
               await scene.pick(id);
               final Finder startButton =
@@ -1592,6 +1644,7 @@ void main() {
             'cave',
             'maze',
             'gallery',
+            'jumpman',
           ]) {
             final Finder tile = find.byKey(ValueKey<String>('game-tile-$id'));
             expect(tile, findsOneWidget, reason: '$id tile');

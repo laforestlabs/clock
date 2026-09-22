@@ -271,9 +271,9 @@ the panel size, display settings, tick count and latency that the default view
 leaves out.
 
 Choose Rally, Snake, Tetris, Breakout, Invaders, **Probe**, **Tilt Racer**,
-**Cave Flyer**, **Maze Collector**, or **Target Gallery**, read its goal and
-controls, then press **Start Game**. The ten compact tiles scroll while Start
-Game stays pinned. This screen has one player; Rally is
+**Cave Flyer**, **Maze Collector**, **Target Gallery**, or **Jumpman**, read its
+goal and controls, then press **Start Game**. The eleven compact tiles scroll
+while Start Game stays pinned. This screen has one player; Rally is
 solo against the computer. Probe is the tilt visualiser rather than a round: a
 red dot that sits where the phone points, which is how you see what motion
 control is doing - and how you check the sign of a tilt - before a round depends
@@ -283,10 +283,12 @@ on it. It is never picked for you: Start uses a game played for score.
 |---|---|
 | Direction pad / arrows / WASD | Declared movement controls; opposite directions cancel |
 | Tilt (motion mode) | Position within the round's travel; a held angle holds the player |
+| Jumpman TiltX (motion mode) | A direction rather than a position: a deliberate tilt runs, a level phone stands still |
 | Tetris Rotate / Up / W | One rotation per press, not per repeated held packet |
 | Tetris Soft drop / Down / S | Hold to fall faster |
 | Invaders Shoot / Space | One shot per press; a bullet in the air never blocks the next |
 | Invaders in motion mode | Tap anywhere in the play area to shoot; the Shoot pad works too |
+| Jumpman Jump / Space | One jump per press, and holding it jumps higher than releasing it early |
 | Gallery Shoot / Space | Hold to fire every eight ticks; consecutive hits build a score multiplier |
 | Space at setup or after a round | Start / Play again; holding Space never restarts |
 | P / Escape | Pause or Resume |
@@ -337,7 +339,10 @@ tilt without gravity, with three crashes ending either run. Full Cave tilt reach
 the walls: modest angles keep the ship in the opening. Target Gallery follows
 both axes while Shoot remains a separate held action. Maze Collector uses
 deliberate tilt to choose a passage, stops at neutral, and gives each of its three
-key-collecting rounds 60 seconds. All four retain pad and keyboard fallback.
+key-collecting rounds 60 seconds. Jumpman runs on the tilt the same way - a
+deliberate angle runs right or left, a level phone stands still - and keeps Jump
+on the button and on Space, because a held angle cannot ask for a jump. All five
+retain pad and keyboard fallback.
 
 The angle is fused from the accelerometer **and the gyroscope**, so moving the
 phone without tilting it no longer steers: the accelerometer alone reads the

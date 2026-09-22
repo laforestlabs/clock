@@ -13,7 +13,7 @@ panel geometry, and multiplayer architecture. The app now runs the shared native
 simulation locally or controls one player on the ESP32 over BLE. The LAN and
 multi-phone architecture described below remains design material, not a claim
 that those transports are shipped. See [Games in the app](../designer/README.md#games)
-for choosing, controlling, pausing, and replaying the nine playable games and Probe.
+for choosing, controlling, pausing, and replaying the ten playable games and Probe.
 
 ## Shipped BLE session protocol
 
@@ -472,29 +472,43 @@ gamekit/
     cave/         Cave Flyer: positional altitude through a scrolling tunnel
     maze/         Maze Collector: three keyed mazes, deliberate tilt navigation
     gallery/      Target Gallery: two-axis aim and held-trigger streak scoring
+    jumpman/      Jumpman: a three-course run-and-jump platformer
 ```
 
 Breakout starts with a 9-pixel-wide paddle on the 64-pixel panel. Each cleared
 level narrows it by one pixel, down to a 3-pixel minimum.
 
-The four arcade additions author a fixed 64×32 field with integer letterbox
+The five arcade additions author a fixed 64×32 field with integer letterbox
 scaling and 25 ms ticks. Racer's `TiltX`, Cave's `TiltY`, and Gallery's two axes
 are positional; idle axes leave buttons in charge without recentering. Maze
 instead steps one cell every four ticks under deliberate dominant-axis tilt,
-and neutral stops it. Each game also works entirely with its declared buttons.
-Their snapshots include input latches and timers and fit the runtime's effective
-1020-byte payload limit.
+and neutral stops it. Jumpman reads its `TiltX` the same way, as a direction with
+a quarter-travel dead zone: a deliberate angle runs that way, a level phone
+stands still, and the jump stays a button, because a held angle cannot express
+one. Each game also works entirely with its declared buttons. Their snapshots
+include input latches and timers and fit the runtime's effective 1020-byte
+payload limit.
 
 Racer awards 10 points per passed car and ends after three crashes. Cave awards
 one point per scrolled column, narrows as distance increases, and pauses scrolling
 for 80 ticks after a crash; steering still works during recovery, so holding into
 a wall can cost another life. Maze requires three keys and an exit in each of
 three 60-second rounds. Gallery lasts 60 seconds, fires every eight ticks while
-Shoot is held, and rewards consecutive hits up to 50 points each. Scores cap at
+Shoot is held, and rewards consecutive hits up to 50 points each. Jumpman runs
+three 160-column courses through a 64-column window, one point of nothing per
+step: a coin pays 100, a blob landed on pays 200, and the flag pays 500 and
+starts the next course, so the third flag is the win. A pit or a blob met side-on
+costs one of three lives and puts the player back at the start of the course it
+happened on, with the blocks already bumped and the coins already taken exactly
+as they were left; the third death ends the run. Its opening ten columns, and
+the first eighteen after them, hold nothing that can end a life, so a course
+never begins with a jump the player had no time to see. Scores cap at
 9999; terminal boards show the score and `OVER` or `WIN`. Replay belongs to the app.
 
 Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
-and Gallery; 20 for Cave, whose default button demo ends before frame 90.
+Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90.
+Jumpman's demo holds Right and jumps every twenty ticks, which is the cadence
+that runs the whole first course without losing a life.
 
 ### `game-cli`
 

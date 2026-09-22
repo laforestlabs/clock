@@ -14,9 +14,10 @@
  * run in the row above the floor (breakout), the cannon's cyan run (invaders),
  * the piece's lit cells inside the field rect (tetris), the snake's uniquely
  * bright head cell, the red dot (probe), the cyan car's left edge (racer), the
- * cyan ship's top row (cave), the cyan collector's cell (maze) and the cyan
- * crosshair's centre (gallery). Nothing here reads game state: what is
- * asserted is what the panel shows.
+ * cyan ship's top row (cave), the cyan collector's cell (maze), the cyan
+ * crosshair's centre (gallery) and the red cap of the platformer's player
+ * (jumpman). Nothing here reads game state: what is asserted is what the panel
+ * shows.
  *
  * Script families, per game:
  *   - neutral (0) puts the player at the centre of its travel and KEEPS it
@@ -34,7 +35,9 @@
  *     put the ship into the rock, which is a collision and not a position, so
  *     the crash is asserted as a reset rather than as an end of travel;
  *   - maze takes only a deliberate past-half tilt, one cell every four ticks,
- *     with neutral meaning stop and the walls refusing the step.
+ *     with neutral meaning stop and the walls refusing the step;
+ *   - jumpman takes a direction rather than a position: a deliberate tilt runs
+ *     and keeps running until the phone levels, and a level phone stands still.
  *
  * Every step is 50ms, which is two 25ms ticks: rate-driven button motion in
  * these assertions is 2 px per frame at 1 px/tick.
@@ -69,6 +72,11 @@
 #define MAZE_RIGHT     3
 #define GALLERY_TILT_X 5
 #define GALLERY_TILT_Y 6
+#define JUMPMAN_TILT_X 3
+
+/* Jumpman's dead zone: a quarter of the travel, so a resting hand is not a
+ * direction. Anything under this runs nowhere. */
+#define JUMPMAN_DEAD_ZONE 4000
 
 /* Maze's field origin and cell size: one cell is a 2x2 block at
  * (1 + 2x, 10 + 2y) on the authored 64x32 panel. */
@@ -698,6 +706,71 @@ static void test_cave(void)
     ml_game_close(ends);
 }
 
+/* ---- jumpman ------------------------------------------------------------ */
+
+/* The leftmost column of the player on the panel. The cap is red, and the
+ * boots that share it are in the same columns, so the scan lands on the same
+ * edge either way. The course's flag is red too, but it stands at the end of a
+ * 160-column course and the camera never gets near it inside 30 columns. */
+static int jumpman_player_x(ml_game_session *s)
+{
+    const uint8_t *rgba = ml_game_render_rgba(s);
+    for (int x = 0; x < 50; x++)
+        for (int y = 10; y < PANEL_H; y++)
+            if (lit(rgba, x, y, 1, 0, 0)) return x;
+    return -1;
+}
+
+static void test_jumpman(void)
+{
+    printf("jumpman: a deliberate tilt runs, a level phone stands still\n");
+    /* Every step here is kept inside the first 30 columns, because the camera
+     * follows the player once it is past the middle of the window: what is
+     * read is the column on the panel, which stops moving with the player at
+     * that point. The opening of a course holds nothing that can end a life,
+     * so nothing here dies while the running contract is being read. */
+    ml_game_session *s = open_game("jumpman", 1);
+    if (!s) return;
+
+    feed(s, JUMPMAN_TILT_X, 0, 50);
+    const int start = jumpman_player_x(s);
+    check(start == 3, "a level phone leaves the player at the start of the course");
+
+    hold(s, JUMPMAN_TILT_X, 0, 4);
+    check(jumpman_player_x(s) == start, "and a held level phone does not drift");
+
+    /* The opposite of the positional games: here the angle is a direction, so
+     * a held angle keeps running rather than holding a position. */
+    feed(s, JUMPMAN_TILT_X, 32767, 50);
+    check(jumpman_player_x(s) > start, "+full tilt runs right");
+    hold(s, JUMPMAN_TILT_X, 32767, 2);
+    const int running = jumpman_player_x(s);
+    check(running > start, "and a held angle keeps running");
+
+    feed(s, JUMPMAN_TILT_X, -32767, 50);
+    const int back = jumpman_player_x(s);
+    check(back < running, "-full tilt runs back the other way");
+    hold(s, JUMPMAN_TILT_X, -32767, 2);
+    check(jumpman_player_x(s) < back, "and keeps running that way");
+
+    /* Inside the dead zone there is no direction at all: a resting hand cannot
+     * shiver the player into a run. */
+    feed(s, JUMPMAN_TILT_X, JUMPMAN_DEAD_ZONE, 50);
+    const int resting = jumpman_player_x(s);
+    hold(s, JUMPMAN_TILT_X, JUMPMAN_DEAD_ZONE, 3);
+    check(jumpman_player_x(s) == resting, "a tilt inside the dead zone never runs");
+
+    /* An idle axis hands the run back to the buttons, from where the player
+     * is - and the jump is a button whatever the phone is doing, because a
+     * held angle cannot ask for one. */
+    feed(s, JUMPMAN_TILT_X, TILT_IDLE, 1);
+    check(jumpman_player_x(s) == resting, "an idle axis holds the player");
+    hold(s, 1, 1, 2); /* Right held: 1.125 px/tick, two ticks a frame */
+    check(jumpman_player_x(s) > resting, "buttons still run from there");
+
+    ml_game_close(s);
+}
+
 /* ---- gallery ------------------------------------------------------------ */
 
 static void test_gallery(void)
@@ -892,6 +965,7 @@ int main(void)
     test_cave();
     test_maze();
     test_gallery();
+    test_jumpman();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures) { printf("FAIL\n"); return 1; }
