@@ -14,7 +14,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#define FLASH_WRITER_STACK_WORDS 4096 /* 16 KB */
+#define FLASH_WRITER_STACK_WORDS 8192 /* 32 KB: OTA erase/write call depth */
 typedef struct {
     void (*fn)(void *ctx);
     void *ctx;
@@ -24,6 +24,7 @@ static flash_write_job_t s_job;
 static SemaphoreHandle_t s_mutex; /* serializes callers */
 static SemaphoreHandle_t s_ready; /* caller -> writer: a job is available */
 static SemaphoreHandle_t s_done;  /* writer -> caller: the job finished */
+static bool s_async_pending;
 static StackType_t s_stack[FLASH_WRITER_STACK_WORDS];
 static StaticTask_t s_tcb;
 
@@ -73,16 +74,31 @@ static esp_err_t flash_write_acquire(void (*fn)(void *ctx), void *ctx)
 
 esp_err_t flash_write_submit(void (*fn)(void *ctx), void *ctx)
 {
-    return flash_write_acquire(fn, ctx);
+    if (s_mutex == NULL || s_ready == NULL || s_done == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE) {
+        ESP_LOGW("flash_write", "async submit while writer is busy");
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_job.fn = fn;
+    s_job.ctx = ctx;
+    s_async_pending = true;
+    xSemaphoreGive(s_ready);
+    return ESP_OK;
 }
 
 esp_err_t flash_write_run(void (*fn)(void *ctx), void *ctx)
 {
     const esp_err_t err = flash_write_acquire(fn, ctx);
     if (err != ESP_OK) return err;
-    /* An async job leaves its "done" credit behind: without draining it here
-     * the wait below would return before this job had run. */
-    xSemaphoreTake(s_done, 0);
+    /* A completed async job leaves one done credit. The serialization token
+     * can only be acquired after that worker has finished, so consume exactly
+     * that credit before waiting for this synchronous job. */
+    if (s_async_pending) {
+        xSemaphoreTake(s_done, portMAX_DELAY);
+        s_async_pending = false;
+    }
     xSemaphoreTake(s_done, portMAX_DELAY);
     return ESP_OK;
 }

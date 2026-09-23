@@ -20,7 +20,7 @@
 #include "flash_write.h"
 #include "netlog.h"
 
-#define OTA_RING_BYTES 32768
+#define OTA_RING_BYTES 8192
 #define OTA_WRITE_CHUNK 4096
 #define OTA_RECEIVE_TICK_MS 250
 #define OTA_STARVE_MS 5000
@@ -204,7 +204,7 @@ esp_err_t ota_session_begin(size_t total, size_t offset)
 
     ota_session_abort_locked();
     if (s_ring_storage != NULL) heap_caps_free(s_ring_storage);
-    s_ring_storage = heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_SPIRAM);
+    s_ring_storage = heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_INTERNAL);
     if (s_ring_storage == NULL) {
         xSemaphoreGive(s_lock);
         return ESP_ERR_NO_MEM;
@@ -230,7 +230,6 @@ esp_err_t ota_session_begin(size_t total, size_t offset)
         xSemaphoreGive(s_lock);
         return ESP_ERR_INVALID_STATE;
     }
-    netlog_record(NETLOG_EVT_OTA_BEGIN, 0, 0);
     ESP_LOGI(TAG, "update started, %u bytes", (unsigned)total);
     xSemaphoreGive(s_lock);
     return ESP_OK;
@@ -240,10 +239,14 @@ esp_err_t ota_session_append(const uint8_t *data, size_t len)
 {
     if (data == NULL || len == 0) return ESP_ERR_INVALID_ARG;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_total == 0 || !s_worker_running) {
+    if (s_total == 0) {
         xSemaphoreGive(s_lock);
         return ESP_ERR_INVALID_STATE;
     }
+    /* The writer may still be inside esp_ota_begin (partition erase) or may
+     * have just yielded its completion credit. The ring remains valid for the
+     * session, so accept bytes while it starts; backpressure is provided by
+     * xStreamBufferSend below. */
     StreamBufferHandle_t ring = s_ring;
     xSemaphoreGive(s_lock);
     const size_t sent = xStreamBufferSend(ring, data, len,
