@@ -11,7 +11,10 @@ hollow dot. The first render orders the tiles by how recently each mirror
 answered, most recent first, and that order is fixed: a later poll never
 reshuffles a grid the owner is tapping. Add devices through LAN discovery, a
 manual host and port, or an explicit nearby Bluetooth scan. Android holds a
-multicast lock only during discovery.
+multicast lock only during discovery. A tile is labelled with the mirror's own
+name — learned over Wi-Fi or Bluetooth, never the address it was added at or the
+mDNS name it was discovered under — and a mirror that has not reported a name
+yet is listed as unnamed until one of its transports does.
 
 Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions

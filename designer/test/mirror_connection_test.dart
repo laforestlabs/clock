@@ -263,6 +263,19 @@ void main() {
       expect(conn.status, MirrorConnectionStatus.connected);
       expect(conn.deviceId, 'AA:BB');
     });
+
+    test('a reconnect never names the link after its remote id', () async {
+      // A remote id is an address. The registry persists everything a link
+      // reports as the mirror's name, so inventing one here would put an
+      // address on the tile of a mirror that never said what it is called.
+      final conn = _Connection(deviceId: 'AA:BB');
+
+      await conn.reconnect();
+
+      expect(conn.status, MirrorConnectionStatus.connected);
+      expect(conn.deviceId, 'AA:BB');
+      expect(conn.deviceName, isNull);
+    });
   });
 
   group('late links', () {

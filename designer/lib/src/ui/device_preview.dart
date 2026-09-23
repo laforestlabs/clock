@@ -345,7 +345,7 @@ String relativeTime(DateTime at, {DateTime? now}) {
 /// The whole tile as one sentence, for a screen reader: name, mode,
 /// connectivity and whether the preview is remembered.
 String deviceTileLabel(MirrorDevice device, {DateTime? now}) {
-  final parts = <String>[device.name, deviceModeLabel(device)];
+  final parts = <String>[device.displayName, deviceModeLabel(device)];
   parts.add(deviceStatusText(device));
   final frameAt = device.frameAt;
   if (devicePreviewIsStale(device) && frameAt != null) {

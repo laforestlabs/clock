@@ -33,32 +33,30 @@ const MethodChannel _multicastChannel = MethodChannel(
 
 /// A mirror found on the LAN.
 class LanDevice {
-  LanDevice(this.name, this.ip, this.port);
+  LanDevice(this.ip, this.port);
 
-  /// The device one answered SRV/A pair describes.
+  /// The address one answered SRV/A pair describes.
   ///
-  /// The name is the SRV target — the mirror's hostname on the LAN
-  /// (`smart-mirror-e072a1f66570.local`), one per board and the same string
-  /// the manual address field accepts. The PTR name is deliberately not used:
-  /// it is the service *instance* FQDN, and a board whose firmware predates
-  /// the identity fields calls itself "Smart Mirror", so its tile would be
-  /// named `Smart Mirror._smartmirror._tcp.local` rather than a device. A
-  /// record with no target leaves the name empty; the registry then lists the
-  /// address.
+  /// Where the mirror is, not what it is called. The advertisement carries two
+  /// strings a tile could be labelled with — the SRV target
+  /// (`smart-mirror-e072a1f66570.local`) and the service instance FQDN
+  /// (`Smart Mirror._smartmirror._tcp.local`) — and neither is a name: both are
+  /// hardware-derived discovery keys, unchanged by an owner rename, and a
+  /// dashboard that shows one is showing the mirror's address, not the mirror.
+  /// The registry therefore takes no name from here; a discovered record is
+  /// named by the mirror itself (`/api/status` reports the friendly name
+  /// before the tile is ever announced).
   factory LanDevice.fromRecords(
     SrvResourceRecord service,
     IPAddressResourceRecord address,
   ) =>
-      LanDevice(service.target, address.address.address, service.port);
+      LanDevice(address.address.address, service.port);
 
-  /// What the mirror is listed under until its own status names it: the SRV
-  /// target, or empty when the advertisement carried no hostname.
-  final String name;
   final String ip;
   final int port;
 
   @override
-  String toString() => '$name ($ip:$port)';
+  String toString() => '$ip:$port';
 }
 
 /// Browse for mirrors for at most [timeout] in total.

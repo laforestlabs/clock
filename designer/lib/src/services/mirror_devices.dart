@@ -28,6 +28,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'mirror_ble.dart';
+import 'mirror_config.dart';
 import 'mirror_connection.dart';
 import 'mirror_display.dart';
 import 'mirror_discovery.dart';
@@ -198,8 +199,22 @@ class MirrorDevice extends ChangeNotifier {
   String? get id => _id;
 
   /// The owner's name for the mirror: the firmware's friendly name once a
-  /// transport reports it, otherwise what discovery or setup supplied.
+  /// transport reports it, empty until one does. Never the address the record
+  /// was added or discovered at: that is where the mirror is, not what it is
+  /// called.
   String get name => _name;
+
+  /// The label a screen shows for this mirror.
+  ///
+  /// A record no transport has named yet has no name to show. What an older
+  /// build wrote instead — the address it answers on, or the mDNS name it was
+  /// discovered under — was not a name either, so the tile says the mirror is
+  /// unnamed rather than labelling a mirror with its address. The label gives
+  /// way as soon as the mirror reports what it calls itself.
+  String get displayName => _name.isEmpty ? unnamedLabel : _name;
+
+  /// What a tile shows for a record whose mirror has not named itself yet.
+  static const String unnamedLabel = 'Unnamed mirror';
 
   /// The BLE remote id this record is bound to over Bluetooth, null for a
   /// LAN-only record that has not been paired yet.
@@ -500,7 +515,7 @@ class MirrorDevices extends ChangeNotifier {
     final device = _create(
       key: 'ble:$remoteId',
       bleId: remoteId,
-      name: (name == null || name.isEmpty) ? remoteId : name,
+      name: name ?? '',
       width: math.max(0, width),
       height: math.max(0, height),
     );
@@ -551,6 +566,24 @@ class MirrorDevices extends ChangeNotifier {
     return (devices: devices, warning: warning);
   }
 
+  /// A stored name as an older build may have written it.
+  ///
+  /// Records from before the registry waited for a name listed their mirror
+  /// under whatever discovery or manual entry had: an IPv4 address
+  /// (`192.168.4.1`), an mDNS hostname (`smart-mirror-e072a1f66570.local`) or
+  /// the service instance FQDN (`Smart Mirror._smartmirror._tcp.local`). None
+  /// of those is a name — each is a place or a discovery key, and the firmware
+  /// never reports one — so they are dropped and the record stays unnamed
+  /// until the mirror names itself. A wrong guess costs nothing: the friendly
+  /// name is re-read from the device on the next contact.
+  String _migratedName(String? stored) {
+    final name = stored?.trim() ?? '';
+    if (name.isEmpty) return '';
+    if (_ipv4Pattern.hasMatch(name)) return '';
+    if (name.toLowerCase().endsWith('.local')) return '';
+    return name;
+  }
+
   MirrorDevice? _recordFromJson(Map<String, dynamic> json) {
     final key = json['key'];
     if (key is! String || key.isEmpty) return null;
@@ -565,7 +598,7 @@ class MirrorDevices extends ChangeNotifier {
     return _create(
       key: key,
       id: text(json['id']),
-      name: text(json['name']) ?? host ?? bleId!,
+      name: _migratedName(text(json['name'])),
       bleId: bleId,
       host: host,
       port: port is int && port > 0 ? port : 80,
@@ -910,7 +943,9 @@ class MirrorDevices extends ChangeNotifier {
     if (_byKey(key) != null) return;
     final device = _create(
       key: key,
-      name: found.name.isEmpty ? found.ip : found.name,
+      // The advertisement names a service, not a device: the record starts
+      // unnamed and gets its name from the status this run already read.
+      name: '',
       host: found.ip,
       port: port,
     );
@@ -918,6 +953,11 @@ class MirrorDevices extends ChangeNotifier {
     device._lanEndpoint = '${found.ip}:$port';
     _devices.add(device);
     device._startListening();
+    // The status just came back from this address, so it is a working one.
+    // Saying so before the identity check matters: a merge moves this record
+    // onto the address that answered, and a record that already had a dead
+    // one (the setup address a mirror was added under, say) must not keep it.
+    _markLanSuccess(device);
     await _applyStatus(device, status);
     await _persist();
     _noteChanged(device, structural: true);
@@ -929,6 +969,8 @@ class MirrorDevices extends ChangeNotifier {
   ///
   /// An address the user typed is kept even when it does not answer: an
   /// offline tile the user can retry is more useful than a silent rejection.
+  /// It is not the device's name: the tile is unnamed until the mirror
+  /// answers and reports one.
   Future<MirrorDevice> addLan(String host, int port) async {
     _checkAlive();
     final trimmed = host.trim();
@@ -943,7 +985,7 @@ class MirrorDevices extends ChangeNotifier {
       return existing._mergedInto ?? existing;
     }
     final device =
-        _create(key: key, name: trimmed, host: trimmed, port: wanted);
+        _create(key: key, name: '', host: trimmed, port: wanted);
     _devices.add(device);
     device._startListening();
     _noteChanged(device, structural: true);
@@ -972,7 +1014,9 @@ class MirrorDevices extends ChangeNotifier {
       device = _create(
         key: 'ble:$remoteId',
         bleId: remoteId,
-        name: entry.name.isEmpty ? remoteId : entry.name,
+        // The advertised name is the mirror's own ("Dashing Dolphin"), so it
+        // is a name; the remote id is an address and is not one.
+        name: entry.name,
       );
       _devices.add(device);
       device._startListening();
@@ -1159,8 +1203,10 @@ class MirrorDevices extends ChangeNotifier {
     device._touch();
   }
 
-  /// Folds a `/api/status` body into the record: identity first (it can merge
-  /// two records into one), then the display, geometry and name.
+  /// Folds a `/api/status` body into the record: the name first (an identity
+  /// match folds this record into an older one, and only what is on the record
+  /// when that happens travels with it), then the identity, the display and
+  /// the geometry.
   Future<void> _applyStatus(MirrorDevice device, MirrorStatus status) async {
     var structural = false;
     if (device._id != null && status.id != device._id) {
@@ -1169,6 +1215,11 @@ class MirrorDevices extends ChangeNotifier {
       return;
     }
     device._status = status;
+
+    if (status.name != null && status.name != device._name) {
+      device._name = status.name!;
+      structural = true;
+    }
 
     final id = status.id;
     if (id != null && device._id == null) {
@@ -1196,10 +1247,6 @@ class MirrorDevices extends ChangeNotifier {
     }
     if (status.flip180 != null && status.flip180 != device._flip180) {
       device._flip180 = status.flip180!;
-      structural = true;
-    }
-    if (status.name != null && status.name != device._name) {
-      device._name = status.name!;
       structural = true;
     }
     // Note: a routine status read does not mark the endpoint as verified for
@@ -1485,7 +1532,7 @@ class MirrorDevices extends ChangeNotifier {
     final owner = deviceForBleId(remoteId);
     if (owner != null && owner.key != device.key) {
       throw MirrorRegistryException(
-        'That Bluetooth device is already paired with ${owner.name}.',
+        'That Bluetooth device is already paired with ${owner.displayName}.',
       );
     }
     final connection = _connectionFactory(
@@ -1524,6 +1571,10 @@ class MirrorDevices extends ChangeNotifier {
     if (device._id == null) await _adoptIdentity(device, info.id);
     if (device._removed) return;
     _applyInfo(device, info);
+    // The scan read the mirror's own advertised name; a record that has none
+    // takes it, so a mirror added over Bluetooth is named without waiting for
+    // a Wi-Fi link it may never have.
+    if (device._name.isEmpty) device._name = entry.name.trim();
     device._error = null;
     await _persist();
     _noteChanged(device, structural: true);
@@ -1578,6 +1629,15 @@ class MirrorDevices extends ChangeNotifier {
       }
       _applyInfo(device, info);
     }
+    // The `device` reply carries identity and display only — the firmware
+    // keeps the friendly name in `config` to stay inside its status buffer —
+    // so a record that still has no name asks for it. Otherwise a mirror
+    // reached only over Bluetooth could never be listed as anything but
+    // unnamed.
+    if (device._name.isEmpty) {
+      device._name = await _nameOverBle(session);
+      if (attempt != device._bleAttempt || device._removed) return null;
+    }
     device._error = null;
     device._lastSeen = _now();
     await _persist();
@@ -1592,6 +1652,30 @@ class MirrorDevices extends ChangeNotifier {
       // A candidate link that will not close is still dropped.
     }
     connection.dispose();
+  }
+
+  /// The mirror's own name, asked for over Bluetooth, or empty when it will
+  /// not say.
+  ///
+  /// `get config` is where the friendly name lives on the Bluetooth side; the
+  /// `device` reply carries identity and display only. Best-effort: firmware
+  /// that does not answer `get config`, or a link that drops mid-reply, leaves
+  /// the record as it was rather than inventing a name for it.
+  Future<String> _nameOverBle(BleSession session) async {
+    String? raw;
+    try {
+      raw = await session.getConfigRaw();
+    } catch (_) {
+      return '';
+    }
+    if (raw == null || !raw.startsWith('config ')) return '';
+    try {
+      final decoded = jsonDecode(raw.substring('config '.length));
+      if (decoded is! Map<String, dynamic>) return '';
+      return MirrorConfig.fromJson(decoded)?.name?.trim() ?? '';
+    } on FormatException {
+      return '';
+    }
   }
 
   void _applyInfo(MirrorDevice device, MirrorDeviceInfo info) {
@@ -1893,3 +1977,7 @@ class _RefreshGate {
     _waiting.removeFirst().complete();
   }
 }
+
+/// An address a placeholder name may have been: dotted quad, with the port a
+/// manual add would have kept.
+final RegExp _ipv4Pattern = RegExp(r'^\d{1,3}(\.\d{1,3}){3}(:\d+)?$');

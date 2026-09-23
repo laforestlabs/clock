@@ -97,6 +97,20 @@ class _Session extends Fake implements BleSession {
   final List<String> layouts = <String>[];
   bool closed = false;
 
+  /// What `get config` answers with, as the mirror's own name; null is
+  /// firmware that does not answer the command at all.
+  String? configName;
+  Object? configError;
+
+  @override
+  Future<String?> getConfigRaw() async {
+    final failure = configError;
+    if (failure != null) throw failure;
+    final name = configName;
+    if (name == null) return null;
+    return 'config {"name":"$name","timezone":"UTC0"}';
+  }
+
   @override
   Future<MirrorDeviceInfo?> getDeviceInfo() async {
     final failure = infoError;
@@ -150,6 +164,10 @@ class _Connection extends MirrorConnection {
   Object? connectError;
   final List<String> connects = <String>[];
 
+  /// The name the mirror answers `get config` with, on every link it opens:
+  /// it is stored on the device, so it survives a reconnect.
+  String? configName;
+
   /// The pong the link reports once a session is up; null means nothing has
   /// answered yet, which is what the rest of this file's cases assume.
   BlePong? pongOverride;
@@ -183,7 +201,9 @@ class _Connection extends MirrorConnection {
     connects.add(id);
     final failure = connectError;
     if (failure != null) throw failure;
-    live = _Session(firmwareId: firmwareId)..displayApi = displayApi;
+    live = _Session(firmwareId: firmwareId)
+      ..displayApi = displayApi
+      ..configName = configName;
     notifyListeners();
   }
 
@@ -776,8 +796,8 @@ void main() {
     final fixture = _Fixture();
     await fixture.registry.load();
     fixture.advertised.addAll(<LanDevice>[
-      LanDevice('smart-mirror-aaaa00000001.local', '10.0.0.1', 80),
-      LanDevice('smart-mirror-bbbb00000002.local', '10.0.0.2', 80),
+      LanDevice('10.0.0.1', 80),
+      LanDevice('10.0.0.2', 80),
     ]);
     fixture.lanAt('10.0.0.1:80').statusBody =
         () => mirrorStatus(id: 'aaaa00000001', name: 'Kitchen');
@@ -803,11 +823,11 @@ void main() {
     fixture.registry.dispose();
   });
 
-  test('a mirror too old to report a name keeps its advertised hostname',
+  test('a mirror that reports no name is not named after its address',
       () async {
     final fixture = _Fixture();
     await fixture.registry.load();
-    fixture.advertised.add(LanDevice('smart-mirror.local', '10.0.0.9', 80));
+    fixture.advertised.add(LanDevice('10.0.0.9', 80));
     // Firmware from before the identity fields: /api/status describes a panel
     // but carries no id and no name.
     fixture.lanAt('10.0.0.9:80').statusBody = () => mirrorStatus();
@@ -815,10 +835,131 @@ void main() {
     await fixture.registry.refreshDiscovery();
 
     final device = fixture.registry.devices.single;
-    expect(device.name, 'smart-mirror.local',
-        reason:
-            'the name discovery found stands until the mirror names itself');
     expect(device.endpoint, '10.0.0.9:80');
+    expect(device.name, isEmpty,
+        reason: 'a device that has not said what it is called has no name');
+    expect(device.displayName, MirrorDevice.unnamedLabel,
+        reason: 'a tile must not label a mirror with the address it answers '
+            'on, nor with the mDNS name it was discovered under');
+    fixture.registry.dispose();
+  });
+
+  test('the name a mirror reports replaces a placeholder an older build saved',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          <String, Object?>{
+            'key': 'lan:127.0.0.1:80',
+            'name': '192.168.4.1',
+            'host': '127.0.0.1',
+            'port': 80,
+          },
+          <String, Object?>{
+            'key': 'ble:REMOTE-2',
+            'ble_id': 'REMOTE-2',
+            'name': 'Smart Mirror._smartmirror._tcp.local',
+          },
+        ],
+      }),
+    });
+    final fixture = _Fixture();
+    await fixture.registry.load();
+
+    // Records written before the registry waited for a name listed a mirror
+    // under an address or an mDNS key. Neither is a name, so neither survives
+    // the launch: the tiles say the mirrors are unnamed until one names itself.
+    for (final device in fixture.registry.devices) {
+      expect(device.name, isEmpty, reason: device.key);
+      expect(device.displayName, MirrorDevice.unnamedLabel, reason: device.key);
+    }
+
+    fixture.lanAt('127.0.0.1:80').statusBody =
+        () => mirrorStatus(id: 'aaaa00000001', name: 'Twirling Elephant');
+    await fixture.registry.refresh(fixture.registry.devices.first);
+
+    expect(fixture.registry.devices.first.name, 'Twirling Elephant',
+        reason: 'the mirror names itself on the next contact');
+    fixture.registry.dispose();
+  });
+
+  test('pairing names a record from the mirror’s own advertisement', () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    // Firmware that answers a status without a name: nothing to list the
+    // record under until the mirror says what it is called.
+    fixture.lanAt('10.0.0.1:80').statusBody =
+        () => mirrorStatus(id: 'aaaa00000001');
+    final device = await fixture.registry.addLan('10.0.0.1', 80);
+    expect(device.name, isEmpty);
+
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    await fixture.registry
+        .attachBle(device, fixture.entry('REMOTE-1', name: 'Dashing Dolphin'));
+
+    expect(device.name, 'Dashing Dolphin',
+        reason: 'the advertised name is the mirror’s own, not an address');
+    expect(device.displayName, 'Dashing Dolphin');
+    fixture.registry.dispose();
+  });
+
+  test('a Bluetooth link names a record its advertisement left unnamed',
+      () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    final device =
+        await fixture.registry.addBle(fixture.entry('REMOTE-1', name: ''));
+
+    expect(device.name, isEmpty, reason: 'the advertisement carried no name');
+    expect(device.displayName, MirrorDevice.unnamedLabel);
+
+    // The name lives in the mirror's config, not in the `device` reply, so a
+    // record reached only over Bluetooth asks for it on the next connect.
+    fixture.radio.created.last.configName = 'Twirling Elephant';
+    await fixture.registry.connect(device);
+
+    expect(device.name, 'Twirling Elephant',
+        reason: 'the mirror named itself over Bluetooth');
+    fixture.registry.dispose();
+  });
+
+  test('discovery names and rehomes a record that knew the mirror already',
+      () async {
+    // The record was made when the mirror was in setup mode, at the address
+    // its access point answers on: an address nothing reaches now, and no
+    // name, because that firmware never reported one.
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          <String, Object?>{
+            'key': 'lan:192.168.4.1:80',
+            'id': 'aaaa00000001',
+            'ble_id': 'REMOTE-1',
+            'name': '192.168.4.1',
+            'host': '192.168.4.1',
+            'port': 80,
+          },
+        ],
+      }),
+    });
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.advertised.add(LanDevice('10.0.0.9', 80));
+    fixture.lanAt('10.0.0.9:80').statusBody =
+        () => mirrorStatus(id: 'aaaa00000001', name: 'Twirling Elephant');
+
+    await fixture.registry.refreshDiscovery();
+
+    final device = fixture.registry.devices.single;
+    expect(device.key, 'lan:192.168.4.1:80',
+        reason: 'the record that already knew the hardware is the one kept');
+    expect(device.endpoint, '10.0.0.9:80',
+        reason: 'the merge moves the record onto the address that answered');
+    expect(device.name, 'Twirling Elephant',
+        reason: 'the name travels with the merge, or the tile stays unnamed');
     fixture.registry.dispose();
   });
 

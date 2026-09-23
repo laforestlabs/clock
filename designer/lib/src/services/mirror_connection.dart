@@ -212,8 +212,11 @@ class MirrorConnection extends ChangeNotifier {
     // A short timeout: at launch the mirror may not be in range, and a
     // 35-second hang on the way into the app is worse than a quick failure
     // the user can retry.
+    //
+    // No name is passed when the link was never told one: a remote id is an
+    // address, and a listener that adopted it would label the mirror with it.
     await connectDevice(
-        id: id, name: _deviceName ?? id, timeout: const Duration(seconds: 10));
+        id: id, name: _deviceName ?? '', timeout: const Duration(seconds: 10));
   }
 
   /// Adopt [name] as the display name after a setup rename. Transport only:
@@ -250,7 +253,9 @@ class MirrorConnection extends ChangeNotifier {
 
     final attempt = ++_attempt;
     _status = MirrorConnectionStatus.connecting;
-    _deviceName = name;
+    // Empty means the link has no name to report, not that the device is
+    // called "".
+    _deviceName = _nonEmpty(name);
     _error = null;
     notifyListeners();
 

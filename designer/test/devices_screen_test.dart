@@ -1045,6 +1045,26 @@ void main() {
         reason: 'the added device opens its own page');
   });
 
+  testWidgets('a device that never answers is not listed under its address',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await tester.runAsync(() => dashboard.registry.load());
+    // Nothing answers at that address: the tile has no name to show and must
+    // not make one out of the address the owner typed.
+    dashboard.lanAt('127.0.0.1:8080').statusError =
+        MirrorApiException('could not reach 127.0.0.1');
+    await tester.runAsync(
+        () => dashboard.registry.addLan('127.0.0.1', 8080));
+
+    await pumpHome(tester, dashboard.registry);
+
+    expect(find.text(MirrorDevice.unnamedLabel), findsOneWidget);
+    expect(find.textContaining('127.0.0.1'), findsNothing,
+        reason: 'an address is where a mirror is, not what it is called');
+    expect(find.text('Offline'), findsOneWidget);
+  });
+
   testWidgets('a failed discovery is retryable, not a dead end',
       (tester) async {
     final dashboard = _Dashboard()
@@ -1071,10 +1091,10 @@ void main() {
   testWidgets('LAN discovery adds only mirrors that answer', (tester) async {
     final dashboard = _Dashboard()
       ..advertised.addAll(<LanDevice>[
-        LanDevice('smart-mirror-aaaa00000001.local', '127.0.0.1', 8080),
+        LanDevice('127.0.0.1', 8080),
         // Advertises the same service but is not a mirror: multicast announces
         // a service, not a device.
-        LanDevice('smart-mirror-cccc00000002.local', '127.0.0.1', 8081),
+        LanDevice('127.0.0.1', 8081),
       ]);
     addTearDown(dashboard.registry.dispose);
     await loadRegistry(tester, dashboard.registry);

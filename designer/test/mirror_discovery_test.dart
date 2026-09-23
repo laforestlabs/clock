@@ -169,7 +169,7 @@ void main() {
     expect(calls, ['acquireMulticastLock', 'releaseMulticastLock']);
   });
 
-  group('a discovered mirror is named by its host', () {
+  group('a discovered mirror is an address, not a name', () {
     SrvResourceRecord service(String target, {int port = 80}) =>
         SrvResourceRecord(
           'Smart Mirror._smartmirror._tcp.local',
@@ -184,29 +184,20 @@ void main() {
         IPAddressResourceRecord('smart-mirror.local', 0,
             address: InternetAddress(ip));
 
-    test('the SRV target is the name, never the service instance', () {
-      // The PTR name for this advertisement is
-      // `Smart Mirror._smartmirror._tcp.local`: a service instance FQDN, which
-      // is what a tile must not be labelled with.
+    test('the advertisement names a service, so no name is taken from it', () {
+      // It carries two strings a tile could be labelled with — the SRV target
+      // (`smart-mirror-e072a1f66570.local`) and the service instance FQDN
+      // (`Smart Mirror._smartmirror._tcp.local`) — and neither is the mirror's
+      // name: both are discovery keys, hardware-derived and unchanged by an
+      // owner rename.
       final device = LanDevice.fromRecords(
-        service('smart-mirror-e072a1f66570.local'),
+        service('smart-mirror-e072a1f66570.local', port: 8080),
         deviceAddress('192.168.0.173'),
       );
 
-      expect(device.name, 'smart-mirror-e072a1f66570.local');
       expect(device.ip, '192.168.0.173');
-    });
-
-    test('firmware that predates the identity fields keeps its hostname', () {
-      // The pre-identity firmware calls itself "Smart Mirror" on every board,
-      // so the instance name identifies nothing; the host it advertises does.
-      final device = LanDevice.fromRecords(
-        service('smart-mirror.local'),
-        deviceAddress('192.168.0.137'),
-      );
-
-      expect(device.name, 'smart-mirror.local');
-      expect(device.name, isNot(contains('._tcp.local')));
+      expect(device.port, 8080);
+      expect(device.toString(), '192.168.0.173:8080');
     });
   });
 }

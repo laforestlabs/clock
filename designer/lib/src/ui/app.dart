@@ -451,7 +451,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
               ? theme.colorScheme.outline
               : theme.colorScheme.error;
         }
-        final tooltip = '${device.name} · $transport';
+        final tooltip = '${device.displayName} · $transport';
         if (compact) {
           return IconButton(
             tooltip: tooltip,
@@ -471,7 +471,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             label: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 120),
               child: Text(
-                device.name,
+                device.displayName,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelMedium,
               ),
@@ -666,7 +666,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         final device = _device;
         return Scaffold(
           appBar: AppBar(
-            title: Text(device == null ? 'Local simulator' : device.name),
+            title: Text(device == null ? 'Local simulator' : device.displayName),
             actions: <Widget>[
               IconButton(
                 tooltip: 'Games',

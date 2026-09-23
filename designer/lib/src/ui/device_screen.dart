@@ -349,7 +349,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       await widget.devices.refresh(_device, includeFrame: true);
       if (!mounted) return;
       if (_device.connection.session == null && !_device.lanReachable) {
-        _toast('Still no answer from ${_device.name}.');
+        _toast('Still no answer from ${_device.displayName}.');
       }
     } catch (e) {
       if (mounted) _toast(describeRegistryError(e));
@@ -365,7 +365,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
     if (!mounted || paired == null) return;
     if (!await _followMerge()) return;
-    _toast('${_device.name} paired over Bluetooth');
+    _toast('${_device.displayName} paired over Bluetooth');
   }
 
   void _openClockEditor() {
@@ -507,7 +507,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           icon: const Icon(Icons.arrow_back),
           onPressed: () => unawaited(Navigator.maybePop(context)),
         ),
-        title: Text(_device.name, overflow: TextOverflow.ellipsis),
+        title: Text(_device.displayName, overflow: TextOverflow.ellipsis),
         actions: <Widget>[
           IconButton(
             tooltip: 'Device settings',
@@ -595,7 +595,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     final preview = DevicePreview(
       device: device,
       height: previewHeight,
-      semanticLabel: '${device.name} display',
+      semanticLabel: '${device.displayName} display',
     );
     final detailAlign =
         wide ? CrossAxisAlignment.start : CrossAxisAlignment.center;

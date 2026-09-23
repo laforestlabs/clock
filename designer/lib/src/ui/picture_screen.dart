@@ -444,7 +444,7 @@ class _PictureScreenState extends State<PictureScreen> {
       if (!mounted) return;
       setState(() {
         _sending = false;
-        _notice = pictureOutcomeMessage(device.name, result);
+        _notice = pictureOutcomeMessage(device.displayName, result);
       });
     } on Object catch (e) {
       if (!mounted) return;
@@ -660,7 +660,7 @@ class _PictureScreenState extends State<PictureScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(device.name, style: theme.textTheme.titleMedium),
+        Text(device.displayName, style: theme.textTheme.titleMedium),
         const SizedBox(height: 2),
         Text(size, style: theme.textTheme.bodyMedium),
       ],
@@ -686,7 +686,7 @@ class _PictureScreenState extends State<PictureScreen> {
         DevicePreview(
           device: device,
           height: 64,
-          semanticLabel: 'The display of ${device.name}',
+          semanticLabel: 'The display of ${device.displayName}',
         ),
       ],
     );
@@ -805,8 +805,8 @@ class _PictureScreenState extends State<PictureScreen> {
     final canSend = _canSend(device);
     final hasPrepared = _prepared != null;
     final label = _error != null && hasPrepared
-        ? 'Retry display on ${device.name}'
-        : 'Display on ${device.name}';
+        ? 'Retry display on ${device.displayName}'
+        : 'Display on ${device.displayName}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[

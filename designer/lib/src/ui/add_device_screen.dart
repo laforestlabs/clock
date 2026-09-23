@@ -201,7 +201,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
         children: <Widget>[
           if (pairing != null) ...<Widget>[
             Text(
-              'Pair ${pairing.name} with Bluetooth',
+              'Pair ${pairing.displayName} with Bluetooth',
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),

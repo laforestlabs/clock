@@ -160,12 +160,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (!_canFlip) {
       return 'Rotates the mirror\'s display 180 degrees, for a panel '
-          'mounted upside down. Connect ${device.name} over Bluetooth to '
+          'mounted upside down. Connect ${device.displayName} over Bluetooth to '
           'change it: an orientation the panel has not acknowledged is not '
           'saved.';
     }
     return 'Rotates the mirror\'s display 180 degrees, for a panel '
-        'mounted upside down. Sent to ${device.name} over Bluetooth and '
+        'mounted upside down. Sent to ${device.displayName} over Bluetooth and '
         'saved on that device.';
   }
 

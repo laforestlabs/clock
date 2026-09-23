@@ -135,7 +135,8 @@ Future<String?> pushFirmwareOverBleWithProgress(
     for (var attempt = 1;; attempt++) {
       final session = device.connection.session;
       if (session == null) {
-        throw BlePushException('the Bluetooth link to ${device.name} is down');
+        throw BlePushException(
+            'the Bluetooth link to ${device.displayName} is down');
       }
       try {
         await session.pushFirmware(bytes,

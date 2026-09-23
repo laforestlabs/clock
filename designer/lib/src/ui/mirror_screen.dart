@@ -412,7 +412,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
     setState(() => _bleBusy = true);
     try {
       await _devices.sendLayout(_device, _c.exportJson());
-      if (mounted) _toast('Layout sent to ${_device.name}');
+      if (mounted) _toast('Layout sent to ${_device.displayName}');
     } catch (e) {
       _handleError(e, 'push layout');
     } finally {
@@ -551,7 +551,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   Future<void> _factoryResetBle() async {
     final session = _connection.session;
     if (session == null) return;
-    final confirmed = await _confirmFactoryReset(_device.name);
+    final confirmed = await _confirmFactoryReset(_device.displayName);
     if (!confirmed) return;
     if (!mounted) return;
     setState(() => _bleBusy = true);
@@ -651,7 +651,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_device.name)),
+      appBar: AppBar(title: Text(_device.displayName)),
       // The Bluetooth section is a view over this device's own connection and
       // the record's status, so a state change (connect, disconnect, dropped
       // link, a fresh poll) rebuilds it even when it happened while this
@@ -694,7 +694,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 12),
-          Text('Connecting to ${_device.name}...'),
+          Text('Connecting to ${_device.displayName}...'),
         ],
       );
     }
@@ -706,7 +706,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
     if (_connectProblem != null) {
       message = _connectProblem!;
     } else if (connection.status == MirrorConnectionStatus.failed) {
-      message = 'Could not connect to ${_device.name}: '
+      message = 'Could not connect to ${_device.displayName}: '
           '${connection.error ?? 'unknown error'}';
     } else if (_device.bleId == null) {
       message = 'This device has no Bluetooth address yet. Pair it from Add '
@@ -752,7 +752,7 @@ class _MirrorScreenState extends State<MirrorScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Connected to ${_device.name}'),
+        Text('Connected to ${_device.displayName}'),
         if (!widget.simplified && pong != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
