@@ -297,6 +297,14 @@ DisplayMode? _shownMode(MirrorDevice device) =>
 bool deviceCapabilityKnown(MirrorDevice device) =>
     device.status != null || device.connection.session != null;
 
+/// Whether a live path to the mirror exists right now.
+///
+/// Wi-Fi and Bluetooth are independent, so either one is enough. A connect in
+/// flight is not a connection yet. This is the single answer the tile's
+/// highlight and its status line both rest on, so the two can never disagree.
+bool deviceIsOnline(MirrorDevice device) =>
+    device.lanReachable || device.bleConnected;
+
 /// The concise connectivity line for a tile.
 ///
 /// Wi-Fi and Bluetooth are independent paths: a phone can hold a Bluetooth
@@ -309,7 +317,7 @@ String deviceStatusText(MirrorDevice device) {
     if (device.lanReachable) 'Wi-Fi',
     if (device.bleConnected) 'Bluetooth',
   ];
-  if (parts.isEmpty) return 'Offline';
+  if (!deviceIsOnline(device)) return 'Offline';
   if (deviceCapabilityKnown(device) && !device.supportsDisplay) {
     parts.add('Preview needs firmware update');
   } else if (!device.lanReachable) {

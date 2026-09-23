@@ -1,5 +1,9 @@
 // The dashboard: every mirror this app has met, one tile each.
 //
+// A tile says at a glance whether the mirror behind it is answering, and the
+// grid's order is decided once — at first render, by how recently each mirror
+// answered — so nothing ever moves a tile under the owner's finger.
+//
 // This is the app's home and it deliberately does not load the native render
 // engine: it shows what the devices are actually displaying, which means tiles
 // keep working on a checkout whose C core was never built. Selecting a tile
@@ -54,6 +58,13 @@ class _DevicesScreenState extends State<DevicesScreen>
   final Map<String, GlobalKey> _tileKeys = <String, GlobalKey>{};
 
   Size _screen = Size.zero;
+
+  /// The order tiles are laid out in, fixed the first time the grid is built.
+  /// Keys rather than records: a merged device gives its slot up to the record
+  /// that absorbed it.
+  final List<String> _tileOrder = <String>[];
+  final Set<String> _tileOrderKeys = <String>{};
+  bool _orderFixed = false;
 
   @override
   void initState() {
@@ -211,6 +222,56 @@ class _DevicesScreenState extends State<DevicesScreen>
     await _openDevice(device);
   }
 
+  // --------------------------------------------------------------- ordering
+
+  /// The devices in their fixed tile order.
+  ///
+  /// The first grid this screen builds is sorted by how recently each mirror
+  /// answered — most recent first, so a launch puts the mirrors the owner has
+  /// just been using at the top. That is the only sort that ever happens:
+  /// every later poll moves only `lastSeen`, and a grid whose tiles reshuffle
+  /// under a finger mid-tap or mid-scroll is worse than one left in a slightly
+  /// stale order. A record that appears afterwards takes the next free slot;
+  /// one that leaves gives its slot up.
+  List<MirrorDevice> _inTileOrder(List<MirrorDevice> devices) {
+    final live = <String, MirrorDevice>{
+      for (final device in devices) device.key: device,
+    };
+    _tileOrder.removeWhere((key) => !live.containsKey(key));
+    _tileOrderKeys.removeWhere((key) => !live.containsKey(key));
+    if (!_orderFixed && devices.isNotEmpty) {
+      _orderFixed = true;
+      final sorted = devices.asMap().entries.toList()
+        ..sort((a, b) {
+          final recency = _byRecency(a.value, b.value);
+          // Ties keep the restored order, which is the order the records were
+          // loaded in: the one sort may as well be predictable.
+          return recency != 0 ? recency : a.key.compareTo(b.key);
+        });
+      _tileOrder
+        ..clear()
+        ..addAll(sorted.map((entry) => entry.value.key));
+      _tileOrderKeys
+        ..clear()
+        ..addAll(_tileOrder);
+    }
+    for (final device in devices) {
+      if (_tileOrderKeys.add(device.key)) _tileOrder.add(device.key);
+    }
+    return <MirrorDevice>[for (final key in _tileOrder) live[key]!];
+  }
+
+  /// Most recently reached first. A device that has never answered goes last:
+  /// it has no recency to sort by, and the tail is where an unknown device the
+  /// owner has not met yet belongs.
+  static int _byRecency(MirrorDevice a, MirrorDevice b) {
+    final at = a.lastSeen;
+    final bt = b.lastSeen;
+    if (at == null) return bt == null ? 0 : 1;
+    if (bt == null) return -1;
+    return bt.compareTo(at);
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -274,7 +335,7 @@ class _DevicesScreenState extends State<DevicesScreen>
               ? const Center(child: CircularProgressIndicator())
               : devices.devices.isEmpty
                   ? _empty(context)
-                  : _grid(context, devices.devices),
+                  : _grid(context, _inTileOrder(devices.devices)),
         ),
       ],
     );
@@ -351,13 +412,15 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 }
 
-/// One device, as a tile: its actual panel, its name, its mode and how it can
-/// be reached.
+/// One device, as a tile: its actual panel, its name, its mode and whether it
+/// is answering right now.
 ///
-/// The tile packs itself to the width the grid gave it rather than assuming
-/// one shape: a wide tile puts the text beside the panel, which is height
-/// saved on every tile of a phone's single column, while the narrow tiles of a
-/// dense desktop grid keep the panel on top.
+/// A mirror that answers on either transport is highlighted — a slight tint
+/// over the card, a hairline, and a filled presence dot — so connected and
+/// absent are one glance apart. The tile packs itself to the width the grid
+/// gave it rather than assuming one shape: a wide tile puts the text beside
+/// the panel, which is height saved on every tile of a phone's single column,
+/// while the narrow tiles of a dense desktop grid keep the panel on top.
 class _DeviceTile extends StatelessWidget {
   const _DeviceTile({
     super.key,
@@ -379,6 +442,8 @@ class _DeviceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final online = deviceIsOnline(device);
     final frameAt = device.frameAt;
     final stale = devicePreviewIsStale(device);
     return Semantics(
@@ -391,6 +456,23 @@ class _DeviceTile extends StatelessWidget {
       child: ExcludeSemantics(
         child: Card(
           clipBehavior: Clip.antiAlias,
+          // A mirror that answers is highlighted, one that does not keeps the
+          // plain card. The tint is deliberately slight — the panel the tile
+          // is showing stays the brightest thing on it — and the hairline
+          // holds the highlight together on a theme where the tint alone is
+          // nearly invisible.
+          color: online
+              ? Color.alphaBlend(
+                  scheme.primary.withValues(alpha: 0.10),
+                  theme.cardTheme.color ?? scheme.surfaceContainerLow,
+                )
+              : null,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: online
+                ? BorderSide(color: scheme.primary.withValues(alpha: 0.5))
+                : BorderSide.none,
+          ),
           child: InkWell(
             onTap: onOpen,
             child: Padding(
@@ -414,9 +496,36 @@ class _DeviceTile extends StatelessWidget {
                         style: theme.textTheme.labelMedium,
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        deviceStatusText(device),
-                        style: theme.textTheme.bodySmall,
+                      // Presence as shape as well as colour: filled for a
+                      // mirror that answers, hollow for one that does not, so
+                      // the tile does not rest on hue alone.
+                      Row(
+                        children: <Widget>[
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: online ? scheme.primary : null,
+                              border: Border.all(
+                                color:
+                                    online ? scheme.primary : scheme.outline,
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              deviceStatusText(device),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: online
+                                    ? scheme.onSurface
+                                    : scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       if (device.uploading)
                         Text(

@@ -5,8 +5,13 @@ Device dashboard, layout designer and pixel-exact simulator for desktop and phon
 The app opens on **Devices**, without loading the native simulator or connecting
 every remembered Bluetooth device. Tiles show actual framebuffer snapshots from
 each mirror. Offline devices remain selectable, with a timestamped last-known
-preview. Add devices through LAN discovery, a manual host and port, or an explicit
-nearby Bluetooth scan. Android holds a multicast lock only during discovery.
+preview. A mirror that is answering now is highlighted — a tint over the card,
+a hairline and a filled status dot — while an absent one stays plain with a
+hollow dot. The first render orders the tiles by how recently each mirror
+answered, most recent first, and that order is fixed: a later poll never
+reshuffles a grid the owner is tapping. Add devices through LAN discovery, a
+manual host and port, or an explicit nearby Bluetooth scan. Android holds a
+multicast lock only during discovery.
 
 Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions

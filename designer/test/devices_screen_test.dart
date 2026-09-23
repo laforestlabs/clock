@@ -70,6 +70,27 @@ MirrorStatus _status({
       displayApi: displayApi,
     );
 
+/// One record as the registry persists it, for a launch whose screen has a
+/// history to order before it ever builds.
+Map<String, Object?> _saved({
+  required String key,
+  required String id,
+  required String name,
+  required int port,
+  DateTime? lastSeen,
+}) =>
+    <String, Object?>{
+      'key': key,
+      'id': id,
+      'name': name,
+      'host': '127.0.0.1',
+      'port': port,
+      'width': 64,
+      'height': 32,
+      'flip180': false,
+      'last_seen': lastSeen?.toUtc().toIso8601String(),
+    };
+
 MirrorFrame _frame({int sequence = 7}) => MirrorFrame(
       width: 64,
       height: 32,
@@ -885,6 +906,118 @@ void main() {
         reason: 'a stale preview is not an offline device');
     expect(find.textContaining('Last seen'), findsOneWidget,
         reason: 'the tile dates the picture it is still showing');
+  });
+
+  testWidgets('a mirror that answers is highlighted, an absent one is not',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    late final MirrorDevice attic;
+    await tester.runAsync(() async {
+      await _addDevice(
+        dashboard,
+        host: '127.0.0.1',
+        port: 8080,
+        name: 'Hall mirror',
+      );
+      attic = await _addDevice(
+        dashboard,
+        host: '127.0.0.1',
+        port: 8081,
+        id: 'bbbb00000002',
+        name: 'Attic mirror',
+      );
+      dashboard.lanAt('127.0.0.1:8081').statusError =
+          MirrorApiException('could not reach 127.0.0.1');
+      await dashboard.registry.refresh(attic);
+    });
+    expect(attic.lanReachable, isFalse);
+
+    await pumpHome(tester, dashboard.registry, size: const Size(360, 800));
+
+    Card tileOf(String name) => tester.widget<Card>(
+          find.ancestor(of: find.text(name), matching: find.byType(Card)).first,
+        );
+    final connected = tileOf('Hall mirror');
+    final offline = tileOf('Attic mirror');
+    expect(connected.color, isNotNull,
+        reason: 'the answering mirror tints its tile');
+    expect(offline.color, isNull,
+        reason: 'the absent one keeps the plain card');
+    expect(find.text('Wi-Fi'), findsOneWidget);
+    expect(find.text('Offline'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // The owner opens the app to the mirrors they were just using, so the first
+  // render orders the tiles by how recently each answered. That is the only
+  // sort: a poll that later makes another device the most recent must not move
+  // the tile the owner is about to tap.
+  testWidgets('tiles are ordered by recency once, and never reshuffled',
+      (tester) async {
+    final at = DateTime.utc(2026, 9, 21, 11, 59);
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          _saved(
+            key: 'lan:127.0.0.1:8080',
+            id: 'aaaa00000001',
+            name: 'Stale mirror',
+            port: 8080,
+            lastSeen: at.subtract(const Duration(hours: 3)),
+          ),
+          _saved(
+            key: 'lan:127.0.0.1:8081',
+            id: 'bbbb00000002',
+            name: 'Fresh mirror',
+            port: 8081,
+            lastSeen: at.subtract(const Duration(minutes: 1)),
+          ),
+          _saved(
+            key: 'lan:127.0.0.1:8082',
+            id: 'cccc00000003',
+            name: 'Never met',
+            port: 8082,
+          ),
+        ],
+      }),
+    });
+
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await tester.runAsync(() => dashboard.registry.load());
+    dashboard.lanAt('127.0.0.1:8080').statusError =
+        MirrorApiException('could not reach 127.0.0.1');
+    dashboard.lanAt('127.0.0.1:8081').statusBody =
+        () => _status(id: 'bbbb00000002', name: 'Fresh mirror');
+    dashboard.lanAt('127.0.0.1:8082').statusError =
+        MirrorApiException('could not reach 127.0.0.1');
+
+    await pumpHome(tester, dashboard.registry, size: const Size(360, 800));
+
+    double rowOf(String name) => tester.getTopLeft(find.text(name)).dy;
+    expect(rowOf('Fresh mirror'), lessThan(rowOf('Stale mirror')),
+        reason: 'the most recently reached device is first');
+    expect(rowOf('Stale mirror'), lessThan(rowOf('Never met')),
+        reason: 'a device that has never answered goes last');
+
+    // The never-met device now answers, so it is the most recently reached
+    // one. The grid must not act on that: the order was decided once.
+    dashboard.lanAt('127.0.0.1:8082').statusError = null;
+    dashboard.lanAt('127.0.0.1:8082').statusBody =
+        () => _status(id: 'cccc00000003', name: 'Never met');
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(seconds: 5));
+
+    expect(dashboard.registry.devices.last.lastSeen, isNotNull,
+        reason: 'the record really became the most recently reached one');
+    expect(rowOf('Fresh mirror'), lessThan(rowOf('Stale mirror')),
+        reason: 'the tiles did not move when the recency changed');
+    expect(rowOf('Stale mirror'), lessThan(rowOf('Never met')),
+        reason: 'the new contact did not jump to the top');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('no devices yet offers Add device and a manual address',
