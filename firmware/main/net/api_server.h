@@ -17,6 +17,13 @@ extern "C" {
  */
 esp_err_t api_server_init(void);
 
+/*
+ * Publish the friendly name again after a rename, so a mirror discovered on
+ * the LAN is listed under the name it goes by now. No-op when mDNS never came
+ * up; the commit that renames the device calls this.
+ */
+void api_server_mdns_refresh_name(void);
+
 #ifdef __cplusplus
 }
 #endif

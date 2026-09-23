@@ -943,9 +943,10 @@ class MirrorDevices extends ChangeNotifier {
     if (_byKey(key) != null) return;
     final device = _create(
       key: key,
-      // The advertisement names a service, not a device: the record starts
-      // unnamed and gets its name from the status this run already read.
-      name: '',
+      // The advertisement's name is the mirror's own, so a discovered record
+      // is never briefly unnamed; the status this run already read confirms it
+      // and can still correct it.
+      name: found.name,
       host: found.ip,
       port: port,
     );
@@ -959,8 +960,36 @@ class MirrorDevices extends ChangeNotifier {
     // one (the setup address a mirror was added under, say) must not keep it.
     _markLanSuccess(device);
     await _applyStatus(device, status);
+    if (found.bleAddress.isNotEmpty) {
+      await _adoptBleAlias(device, found.bleAddress);
+    }
     await _persist();
     _noteChanged(device, structural: true);
+  }
+
+  /// Takes the Bluetooth address a mirror advertises as its own, and folds in
+  /// the record a scan made for that hardware.
+  ///
+  /// The mirror is the only party that can say which Bluetooth address is
+  /// behind its Wi-Fi identity — the two MACs are related, but MAC arithmetic
+  /// is not identity here — and it says so in its mDNS TXT record. Two records
+  /// that both already carry a confirmed identity, and disagree, are left
+  /// alone: an advertisement that contradicts a device's own status is far
+  /// more likely to be another mirror than proof that two mirrors are one.
+  Future<void> _adoptBleAlias(MirrorDevice device, String address) async {
+    if (device._removed || device._bleId == address) return;
+    final twin = deviceForBleId(address);
+    if (twin == null || twin.key == device.key) {
+      // A record that was paired already keeps the alias it was paired with;
+      // the mirror reports the same address either way.
+      device._bleId ??= address;
+      return;
+    }
+    if (twin._id != null && device._id != null && twin._id != device._id) {
+      return;
+    }
+    final keep = _preferred(twin, device);
+    await _merge(keep, identical(keep, twin) ? device : twin);
   }
 
   // --------------------------------------------------------------- add/remove

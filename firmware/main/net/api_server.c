@@ -18,6 +18,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "frame_snapshot.h"
@@ -43,7 +44,31 @@ static const char *TAG = "api";
 static httpd_handle_t s_httpd = NULL;
 static esp_timer_handle_t s_retry;
 
+/* Whether mDNS came up: the TXT record can only be changed on a live server. */
+static bool s_mdns_up;
+
+/* The Bluetooth address this board advertises under,
+ * "AA:BB:CC:DD:EE:FF". Empty when it could not be read; the only thing that
+ * costs is the app's automatic Wi-Fi/Bluetooth pairing. */
+static char s_ble_address[18];
+
 static void api_server_start(void);
+
+/* Reads the eFuse Bluetooth address, the public address the NimBLE
+ * controller advertises under (its address type comes from
+ * ble_hs_id_infer_auto(0, ...), which prefers the public one). Uppercase and
+ * colon-separated, the exact string Android reports as a scanned device's
+ * remote id, which is what the app stores as a mirror's Bluetooth alias. */
+static void read_ble_address(char *out, size_t outsz)
+{
+    uint8_t mac[6] = { 0 };
+    if (esp_read_mac(mac, ESP_MAC_BT) != ESP_OK) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(out, outsz, "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 static void json_escape(char *out, size_t outsz, const char *in)
 {
@@ -758,7 +783,16 @@ esp_err_t api_server_init(void)
      * hardware identity: two mirrors on one LAN must not fight over one
      * hostname or one service instance, and an owner rename must not change
      * how the device is discovered. The service type and port are unchanged,
-     * so existing discovery keeps working. */
+     * so existing discovery keeps working.
+     *
+     * The TXT record is the part the app reads to know which mirror answered,
+     * before it asks: "id" is the hardware identity /api/status reports,
+     * "name" the friendly name the owner sees, and "ble" the address this
+     * board advertises under. The last one is what tells the app that a
+     * mirror it discovered on the LAN and a mirror a Bluetooth scan found are
+     * one device, so the two records fold instead of becoming two tiles. The
+     * writer of the record sits outside the 31-byte advertising limit, so
+     * unlike the Bluetooth side there is no reason to leave the name out. */
     if (mdns_init() != ESP_OK) {
         ESP_LOGE(TAG, "mDNS init failed, discovery by name unavailable");
         return ESP_OK;   /* the API itself still works by IP */
@@ -772,8 +806,31 @@ esp_err_t api_server_init(void)
         mdns_instance_name_set(instance) != ESP_OK) {
         ESP_LOGW(TAG, "mDNS names for %s rejected, discovery may be ambiguous", id);
     }
-    mdns_service_add(NULL, "_smartmirror", "_tcp", 80, NULL, 0);
-    ESP_LOGI(TAG, "mDNS: %s.local (%s)", hostname, instance);
+
+    read_ble_address(s_ble_address, sizeof(s_ble_address));
+    const mdns_txt_item_t txt[] = {
+        { .key = "id",   .value = id },
+        { .key = "name", .value = mirror_config_device_name() },
+        { .key = "ble",  .value = s_ble_address },
+    };
+    const size_t items = s_ble_address[0] == '\0' ? 2 : 3;
+    if (mdns_service_add(NULL, "_smartmirror", "_tcp", 80,
+                         (mdns_txt_item_t *)txt, items) != ESP_OK) {
+        ESP_LOGW(TAG, "mDNS service add failed, discovery by service unavailable");
+    }
+    s_mdns_up = true;
+    ESP_LOGI(TAG, "mDNS: %s.local (%s), ble %s", hostname, instance,
+             s_ble_address[0] == '\0' ? "unknown" : s_ble_address);
 
     return ESP_OK;
+}
+
+void api_server_mdns_refresh_name(void)
+{
+    if (!s_mdns_up) return;
+    const esp_err_t err = mdns_service_txt_item_set(
+        "_smartmirror", "_tcp", "name", mirror_config_device_name());
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mDNS rename not published: %s", esp_err_to_name(err));
+    }
 }

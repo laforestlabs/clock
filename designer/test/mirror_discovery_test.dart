@@ -193,11 +193,63 @@ void main() {
       final device = LanDevice.fromRecords(
         service('smart-mirror-e072a1f66570.local', port: 8080),
         deviceAddress('192.168.0.173'),
+        const <String, String>{},
       );
 
       expect(device.ip, '192.168.0.173');
       expect(device.port, 8080);
+      expect(device.name, isEmpty);
+      expect(device.bleAddress, isEmpty);
       expect(device.toString(), '192.168.0.173:8080');
+    });
+
+    test('the friendly name and the Bluetooth address come from the TXT',
+        () {
+      // What the mirror says about itself, rather than what the address it
+      // advertises under happens to spell. The Bluetooth address is what lets
+      // the registry join this mirror to the record a scan made for it.
+      final device = LanDevice.fromRecords(
+        service('smart-mirror-3030f9183654.local'),
+        deviceAddress('192.168.0.137'),
+        <String, String>{
+          'id': '3030f9183654',
+          'name': 'Twirling Elephant',
+          'ble': '30:30:F9:18:36:56',
+        },
+      );
+
+      expect(device.name, 'Twirling Elephant');
+      expect(device.bleAddress, '30:30:F9:18:36:56');
+    });
+  });
+
+  group('TXT parsing', () {
+    test('reads the record as the client hands it over', () {
+      // `TxtResourceRecord.text` is the character-strings the package joined
+      // with newlines: `id=...\nname=...\nble=...\n`. A package that ever
+      // changes that shape must fail here rather than quietly leave every
+      // discovered mirror unnamed and unpaired.
+      final txt = parseTxtRecord('id=3030f9183654\nname=Twirling Elephant\n'
+          'ble=30:30:F9:18:36:56\n');
+
+      expect(txt['id'], '3030f9183654');
+      expect(txt['name'], 'Twirling Elephant');
+      expect(txt['ble'], '30:30:F9:18:36:56');
+    });
+
+    test('skips what is not a pair, and keeps the rest', () {
+      // A record without the identity items, a keyless line and a truncated
+      // one: the parts that do parse still work.
+      final txt = parseTxtRecord('name=Hall mirror\nflag\n=orphan\n');
+
+      expect(txt, <String, String>{'name': 'Hall mirror'});
+    });
+
+    test('a value keeps its own equals signs and spaces', () {
+      final txt = parseTxtRecord('note=a=b\nname=Hall mirror\n');
+
+      expect(txt['note'], 'a=b');
+      expect(txt['name'], 'Hall mirror');
     });
   });
 }

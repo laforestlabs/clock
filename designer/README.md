@@ -14,12 +14,16 @@ manual host and port, or an explicit nearby Bluetooth scan. Android holds a
 multicast lock only during discovery. A tile is labelled with the mirror's own
 name — learned over Wi-Fi or Bluetooth, never the address it was added at or the
 mDNS name it was discovered under — and a mirror that has not reported a name
-yet is listed as unnamed until one of its transports does.
+yet is listed as unnamed until one of its transports does. A mirror that
+advertises the Bluetooth address it answers on (firmware 0.2.49 and later) is
+recognised as the same device as a record a Bluetooth scan made for it, so the
+two fold into one tile instead of standing side by side.
 
 Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions
 stay bound to that device; equal names do not merge identities. Legacy firmware
-without a stable identity keeps separate LAN/Bluetooth records.
+without a stable identity keeps separate LAN/Bluetooth records until one of its
+transports confirms the identity.
 The device page keeps mode actions visible in compact cards; the info buttons
 expand explanations without hiding connection or capability warnings. Landscape
 and desktop windows place the preview beside its status and the modes in a row.

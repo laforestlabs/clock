@@ -53,6 +53,7 @@
 #include "host/util/util.h"
 #include "layout_store.h"
 #include "mirror/mirror.h"
+#include "net/api_server.h"
 #include "net/ota.h"
 #include "net/provision.h"
 #include "net/wifi.h"
@@ -572,6 +573,12 @@ static void commit_task(void *arg)
                 heap_caps_free((void *)job.buf);
                 continue;
             }
+            /* The commit may have renamed the mirror. The advertisement picks
+             * the new name up on its next restart (see advertise()); the mDNS
+             * TXT record is not rebuilt by anything, so it is refreshed here
+             * or a discovered device keeps its previous name for the rest of
+             * the boot. */
+            api_server_mdns_refresh_name();
             send_status("commit ok");
         }
 

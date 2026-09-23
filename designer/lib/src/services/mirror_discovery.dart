@@ -19,6 +19,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart'
     show MethodChannel, MissingPluginException, PlatformException;
 import 'package:multicast_dns/multicast_dns.dart';
@@ -33,27 +34,40 @@ const MethodChannel _multicastChannel = MethodChannel(
 
 /// A mirror found on the LAN.
 class LanDevice {
-  LanDevice(this.ip, this.port);
+  LanDevice(this.ip, this.port, {this.name = '', this.bleAddress = ''});
 
-  /// The address one answered SRV/A pair describes.
+  /// The device one answered SRV/A/TXT set describes.
   ///
-  /// Where the mirror is, not what it is called. The advertisement carries two
-  /// strings a tile could be labelled with — the SRV target
-  /// (`smart-mirror-e072a1f66570.local`) and the service instance FQDN
-  /// (`Smart Mirror._smartmirror._tcp.local`) — and neither is a name: both are
-  /// hardware-derived discovery keys, unchanged by an owner rename, and a
-  /// dashboard that shows one is showing the mirror's address, not the mirror.
-  /// The registry therefore takes no name from here; a discovered record is
-  /// named by the mirror itself (`/api/status` reports the friendly name
-  /// before the tile is ever announced).
+  /// The address is where the mirror is. What it calls itself, and the
+  /// Bluetooth address it answers on, come from the service's TXT record: the
+  /// advertisement's own names are hardware-derived discovery keys (the SRV
+  /// target, the instance FQDN) and are not carried here at all.
   factory LanDevice.fromRecords(
     SrvResourceRecord service,
     IPAddressResourceRecord address,
+    Map<String, String> txt,
   ) =>
-      LanDevice(address.address.address, service.port);
+      LanDevice(address.address.address, service.port,
+          name: txt['name'] ?? '', bleAddress: txt['ble'] ?? '');
 
   final String ip;
   final int port;
+
+  /// The mirror's own friendly name, empty for firmware that predates the TXT
+  /// record. A name, not a key: it is what the owner sees on the device and
+  /// what a rename changes.
+  final String name;
+
+  /// The Bluetooth address this mirror advertises under, empty when it does
+  /// not say.
+  ///
+  /// This is the one thing that can join a mirror found on the LAN to the
+  /// record a Bluetooth scan made for the same hardware: identity is reported
+  /// per transport, and a Bluetooth record that has not confirmed an identity
+  /// carries nothing else in common with it. The claim is the mirror's own,
+  /// and it is checked the first time the link is used (a session that reports
+  /// another mirror's identity is dropped).
+  final String bleAddress;
 
   @override
   String toString() => '$ip:$port';
@@ -146,7 +160,11 @@ Stream<LanDevice> browseMdns({
         continue; // no A answer; skip
       }
 
-      yield LanDevice.fromRecords(srv, a);
+      yield LanDevice.fromRecords(
+        srv,
+        a,
+        await _txtOf(client, ptr.domainName, timeout - elapsed.elapsed),
+      );
     }
   } finally {
     client?.stop();
@@ -154,6 +172,48 @@ Stream<LanDevice> browseMdns({
       socket.close();
     }
     await _setMulticastLock(false);
+  }
+}
+
+/// The key/value pairs of one TXT record.
+///
+/// Its own function because this is the part that would break silently:
+/// `TxtResourceRecord.text` is the record's character-strings joined with
+/// newlines (`name=Hall mirror\nble=E0:72:A1:F6:65:72\n`), which is this
+/// package's shape rather than the wire format's. A line without an `=`, or
+/// with an empty key, is not a pair and is skipped.
+@visibleForTesting
+Map<String, String> parseTxtRecord(String text) {
+  final txt = <String, String>{};
+  for (final line in text.split('\n')) {
+    final at = line.indexOf('=');
+    if (at <= 0) continue;
+    txt[line.substring(0, at)] = line.substring(at + 1);
+  }
+  return txt;
+}
+
+/// The TXT record of one advertisement, as key/value pairs.
+///
+/// A mirror whose firmware predates the record answers none, and a lookup that
+/// does not come back in time is not a discovery failure either: the address
+/// is what makes the mirror reachable, and it is already in hand.
+Future<Map<String, String>> _txtOf(
+  MDnsClient client,
+  String instance,
+  Duration timeout,
+) async {
+  try {
+    final record = await client
+        .lookup<TxtResourceRecord>(
+          ResourceRecordQuery.text(instance),
+          timeout: timeout,
+        )
+        .first
+        .timeout(timeout);
+    return parseTxtRecord(record.text);
+  } catch (_) {
+    return <String, String>{};
   }
 }
 

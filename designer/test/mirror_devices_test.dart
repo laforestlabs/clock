@@ -963,6 +963,79 @@ void main() {
     fixture.registry.dispose();
   });
 
+  test('a mirror says which Bluetooth record is its own, and the two fold',
+      () async {
+    // The Bluetooth record a scan made, before its identity was confirmed: no
+    // firmware id, so nothing else in the registry can match it to the mirror
+    // discovered later on the LAN — except the mirror saying which Bluetooth
+    // address is behind its Wi-Fi identity.
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          <String, Object?>{
+            'key': 'ble:30:30:F9:18:36:56',
+            'ble_id': '30:30:F9:18:36:56',
+            'name': 'Twirling Elephant',
+            'width': 64,
+            'height': 32,
+          },
+        ],
+      }),
+    });
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.advertised.add(LanDevice('10.0.0.9', 80,
+        name: 'Twirling Elephant', bleAddress: '30:30:F9:18:36:56'));
+    fixture.lanAt('10.0.0.9:80').statusBody =
+        () => mirrorStatus(id: '3030f9183654', name: 'Twirling Elephant');
+
+    await fixture.registry.refreshDiscovery();
+
+    final device = fixture.registry.devices.single;
+    expect(device.key, 'ble:30:30:F9:18:36:56',
+        reason: 'the earlier record carries the identity now');
+    expect(device.id, '3030f9183654');
+    expect(device.endpoint, '10.0.0.9:80',
+        reason: 'the record moves onto the address the mirror answered on');
+    expect(device.name, 'Twirling Elephant');
+    fixture.registry.dispose();
+  });
+
+  test('an advertisement does not fuse two mirrors that both have an identity',
+      () async {
+    // Every advertisement is unauthenticated. A mirror claiming a Bluetooth
+    // address another record already owns, while both carry a confirmed
+    // identity of their own, is a contradiction: a duplicate tile is cheaper
+    // than one record standing for two mirrors.
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          <String, Object?>{
+            'key': 'ble:30:30:F9:18:36:56',
+            'id': 'aaaaaaaaaaaa',
+            'ble_id': '30:30:F9:18:36:56',
+            'name': 'Hall mirror',
+          },
+        ],
+      }),
+    });
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.advertised.add(LanDevice('10.0.0.9', 80,
+        name: 'Kitchen mirror', bleAddress: '30:30:F9:18:36:56'));
+    fixture.lanAt('10.0.0.9:80').statusBody =
+        () => mirrorStatus(id: 'bbbbbbbbbbbb', name: 'Kitchen mirror');
+
+    await fixture.registry.refreshDiscovery();
+
+    expect(fixture.registry.devices, hasLength(2));
+    expect(fixture.registry.devices.map((d) => d.name),
+        containsAll(<String>['Hall mirror', 'Kitchen mirror']));
+    fixture.registry.dispose();
+  });
+
   test('loading a remembered device connects nothing', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       MirrorDevices.storeKey: jsonEncode(<String, Object>{

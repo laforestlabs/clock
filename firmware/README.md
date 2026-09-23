@@ -306,7 +306,13 @@ feature needs space rather than RAM, it is there.
 saved `base_mode`, `picture_ready`, and `flip180`. BLE `get device` reports the
 same identity and display state without changing `ping` or `get config`.
 mDNS advertises `_smartmirror._tcp` at `smart-mirror-<id>.local`, with instance
-`Smart Mirror <id>`; renaming does not change identity.
+`Smart Mirror <id>`; renaming does not change identity. The advertisement also
+carries a TXT record — `id` (the same identity as `/api/status`), `name` (the
+friendly name, republished on a rename) and `ble` (the address the board
+advertises under) — which is what lets the app name a discovered mirror and
+recognise that a mirror it found on the LAN is one it has already paired with
+over Bluetooth. The hostname and instance stay hardware-derived for the reason
+above.
 
 Clock and picture are persistent base displays. A BLE game temporarily overrides
 them, including while paused, and Stop/disconnect restores the saved base.
