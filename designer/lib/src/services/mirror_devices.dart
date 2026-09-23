@@ -1521,11 +1521,9 @@ class MirrorDevices extends ChangeNotifier {
     await _closeQuietly(connection);
     _require(device);
     device._bleId = remoteId;
-    if (info != null) {
-      if (device._id == null) await _adoptIdentity(device, info.id);
-      if (device._removed) return;
-      _applyInfo(device, info);
-    }
+    if (device._id == null) await _adoptIdentity(device, info.id);
+    if (device._removed) return;
+    _applyInfo(device, info);
     device._error = null;
     await _persist();
     _noteChanged(device, structural: true);

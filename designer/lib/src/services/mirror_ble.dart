@@ -630,6 +630,17 @@ class BleSession {
     return commit;
   }
 
+  /// Bytes that may be in flight ahead of what the mirror has committed.
+  ///
+  /// Half the mirror's 8 KiB receive ring: the writes below are
+  /// unacknowledged, so nothing else bounds how far the phone can run ahead,
+  /// and overrunning the ring would drop chunks and corrupt the image.
+  static const int _firmwareWindow = 4096;
+
+  /// Consecutive [getOtaStatus]-style polls with no newly committed byte
+  /// before the stream is treated as stalled rather than merely behind.
+  static const int _firmwareStallPolls = 60;
+
   Future<void> _pushFirmwareTransfer(
     Uint8List bytes, {
     required int offset,
@@ -640,13 +651,41 @@ class BleSession {
         timeout: const Duration(seconds: 30),
         accepts: (line) => line.startsWith('begin '));
     if (begin != 'begin ok') throw BlePushException(_beginReason(begin));
-    for (var sent = offset; sent < bytes.length; sent += _chunkSize) {
-      final end =
-          sent + _chunkSize < bytes.length ? sent + _chunkSize : bytes.length;
-      await _serialized(
-          () => _data.write(Uint8List.sublistView(bytes, sent, end)));
-      onProgress?.call(end, bytes.length);
+
+    // Unacknowledged writes with read-back pacing. A with-response write waits
+    // for the mirror to answer, and the mirror's flash writes freeze its cache
+    // while they run, so that answer costs several connection intervals: ~3
+    // minutes for a 1.3 MB image. Without a response the stream is limited only
+    // by the link, and asking the mirror how much it has committed keeps the
+    // phone from outrunning the ring.
+    final total = bytes.length;
+    var sent = offset;
+    var committed = offset;
+    var stalled = 0;
+    while (sent < total) {
+      if (sent >= committed + _firmwareWindow) {
+        final status = await _sendAndWait('get ota',
+            accepts: (line) => line.startsWith('ota '));
+        final written = BleOtaStatus.parse(status)?.written;
+        if (written == null) {
+          throw BlePushException('the mirror stopped reporting its update');
+        }
+        if (written > committed) {
+          committed = written;
+          stalled = 0;
+        } else if (++stalled > _firmwareStallPolls) {
+          throw BlePushException('the mirror stopped accepting the image');
+        }
+        continue;
+      }
+      final limit = sent + _chunkSize < total ? sent + _chunkSize : total;
+      await _serialized(() => _data.write(
+          Uint8List.sublistView(bytes, sent, limit),
+          withoutResponse: true));
+      sent = limit;
+      onProgress?.call(sent, total);
     }
+
     final commit = await _sendAndWait('commit',
         timeout: const Duration(seconds: 60),
         accepts: (line) => line == 'ota ok' || line.startsWith('ota error '));

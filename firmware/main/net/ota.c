@@ -190,6 +190,11 @@ esp_err_t ota_session_begin(size_t total, size_t offset)
         }
         esp_timer_stop(s_expire);
         if (!s_worker_running) {
+            /* The stalled worker left its "done" credit and its result behind.
+             * Drain that credit before submitting the resumed job: otherwise
+             * finish() would collect the stale credit and report the old
+             * stall as a rejection while the resumed stream is still running. */
+            xSemaphoreTake(s_finished, 0);
             const esp_err_t err = ota_submit_locked();
             if (err != ESP_OK) {
                 xSemaphoreGive(s_lock);

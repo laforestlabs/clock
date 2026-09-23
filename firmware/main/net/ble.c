@@ -408,16 +408,14 @@ static void cmd_commit(void)
         send_status("commit error no transfer");
         return;
     }
-    if (s_xfer.received != s_xfer.declared) {
-        transfer_clear_locked();
-        unlock();
-        send_status("commit error length mismatch");
-        return;
-    }
     if (s_xfer.kind == TRANSFER_FIRMWARE) {
         unlock();
         const esp_err_t err = ota_session_finish();
         if (err != ESP_OK) {
+            /* ota_session_finish aborted the session, so the slot has to be
+             * released here as well: otherwise the next begin is answered
+             * "busy" and the phone cannot retry the image at all. */
+            transfer_reset();
             send_status("ota error %s", err == ESP_ERR_INVALID_STATE
                                             ? "incomplete" : "rejected");
             return;
@@ -427,6 +425,12 @@ static void cmd_commit(void)
         send_status("ota ok");
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
+        return;
+    }
+    if (s_xfer.received != s_xfer.declared) {
+        transfer_clear_locked();
+        unlock();
+        send_status("commit error length mismatch");
         return;
     }
     const transfer_kind_t kind = s_xfer.kind;
@@ -973,7 +977,11 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 .uuid = &s_chr_data.u,
                 .access_cb = data_write_cb,
-                .flags = BLE_GATT_CHR_F_WRITE,
+                /* Both forms: the staged pushes need the acknowledgement, while
+                 * the OTA stream cannot afford one round trip per chunk (the
+                 * mirror's flash writes freeze its cache, so a with-response
+                 * write waits several connection intervals). */
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
             },
             {
                 .uuid = &s_chr_game_in.u,
