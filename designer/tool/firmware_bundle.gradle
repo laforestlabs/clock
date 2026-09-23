@@ -12,7 +12,7 @@
 // If any of those changed since the staged image was produced, the script
 // rebuilds with ESP-IDF and restages the copy; if nothing changed, the task
 // is up-to-date and costs nothing. There is no longer a manual "run
-// build_ota.sh before the APK" step to forget.
+// build before the APK, because the bundle task stages it automatically.
 //
 // A machine without ESP-IDF cannot honour the guarantee, so it fails loudly
 // with instructions. For a deliberate one-off that ships the last staged

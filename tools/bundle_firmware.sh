@@ -7,7 +7,7 @@
 # Android build by designer/setup.sh) runs this script before Flutter packs
 # assets into the APK, so the bundled image is always the one the firmware
 # sources describe. Run it by hand only when you want to stage the image
-# without doing an app build; tools/build_ota.sh also calls it.
+# without doing an app build.
 #
 # Cheap when nothing changed: the gradle task only invokes this after hashing
 # everything the image consumes (firmware/, core/, gamekit/, fonts/, the

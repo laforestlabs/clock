@@ -51,7 +51,7 @@ class BundledFirmware {
   /// App image version, exactly what the device reports after the OTA.
   final String version;
 
-  /// The raw app partition image to upload to POST /api/ota.
+  /// The raw app partition image to send over Bluetooth.
   final Uint8List bytes;
 }
 

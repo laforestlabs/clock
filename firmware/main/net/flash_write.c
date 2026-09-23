@@ -4,8 +4,8 @@
  *
  * The stack is static so it lives in internal DRAM at link time and is not
  * subject to the fragmented internal heap, which has only ~15KB free at
- * runtime. Callers are serialized by a mutex, so the one job slot and the
- * binary "done" semaphore stay unambiguous.
+ * runtime. Callers are serialized by a mutex; jobs may be synchronous or
+ * asynchronous.
  */
 #include "flash_write.h"
 
@@ -35,6 +35,7 @@ static void flash_writer_task(void *arg)
         xSemaphoreTake(s_ready, portMAX_DELAY);
         s_job.fn(s_job.ctx);
         xSemaphoreGive(s_done);
+        xSemaphoreGive(s_mutex);
     }
 }
 
@@ -56,19 +57,32 @@ void flash_write_init(void)
     }
 }
 
-esp_err_t flash_write_run(void (*fn)(void *ctx), void *ctx)
+static esp_err_t flash_write_acquire(void (*fn)(void *ctx), void *ctx)
 {
     if (s_mutex == NULL || s_ready == NULL || s_done == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     s_job.fn = fn;
     s_job.ctx = ctx;
     xSemaphoreGive(s_ready);
+    return ESP_OK;
+}
+
+esp_err_t flash_write_submit(void (*fn)(void *ctx), void *ctx)
+{
+    return flash_write_acquire(fn, ctx);
+}
+
+esp_err_t flash_write_run(void (*fn)(void *ctx), void *ctx)
+{
+    const esp_err_t err = flash_write_acquire(fn, ctx);
+    if (err != ESP_OK) return err;
+    /* An async job leaves its "done" credit behind: without draining it here
+     * the wait below would return before this job had run. */
+    xSemaphoreTake(s_done, 0);
     xSemaphoreTake(s_done, portMAX_DELAY);
-    xSemaphoreGive(s_mutex);
     return ESP_OK;
 }

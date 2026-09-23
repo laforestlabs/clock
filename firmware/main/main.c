@@ -272,6 +272,9 @@ void app_main(void)
     /* The flash-writer task, before netlog and before panel_init takes the
      * big DMA block. Its stack is static (BSS), so this costs no heap. */
     flash_write_init();
+    /* The OTA session's ring, mutexes and expiry timer. After the flash
+     * writer, whose task it submits jobs to, and before any update can start. */
+    ESP_ERROR_CHECK(ota_init());
 
     /*
      * Panel first, deliberately. It needs the largest contiguous block of

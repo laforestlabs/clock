@@ -155,4 +155,11 @@ void main() {
       expect(device.cmd('commit'), 'commit error no transfer');
     });
   });
+  group('beginCommand', () {
+    test('supports firmware and resume offset', () {
+      expect(beginCommand('firmware', 1338096), 'begin firmware 1338096');
+      expect(beginCommand('firmware', 1338096, offset: 524288),
+          'begin firmware 1338096 524288');
+    });
+  });
 }

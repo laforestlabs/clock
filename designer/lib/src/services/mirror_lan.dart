@@ -1,13 +1,6 @@
 // The mirror's LAN API client (dart:io only, no HTTP package).
 //
-// The firmware serves these endpoints on the station interface:
-//   GET  /api/status   device state
-//   GET  /api/layout   the current layout as JSON
-//   PUT  /api/layout   push a new layout
-//   POST /api/ota      upload a firmware image (the app partition .bin)
-//   GET  /api/frame    one composited panel frame (MRF1 plus RGB888)
-//   PUT  /api/mode     save the base display (clock or picture)
-//   POST /api/image    upload the one picture the mirror shows
+// The firmware serves status, layout, WiFi and picture-display endpoints.
 //
 // The layout bytes are the designer's exportJson() output: the exact JSON
 // the preview renders. The display endpoints' payloads are defined in
@@ -138,13 +131,8 @@ class MirrorLan {
   final String ip;
 
   static const Duration _timeout = Duration(seconds: 8);
-  // Flash writes take ~10-30s for a 1.3MB image; the 8s request timeout would
-  // abort a legitimate OTA mid-write (the mirror answers only after it has
-  // written and validated the whole image).
-  static const Duration _otaTimeout = Duration(seconds: 120);
-  // A picture upload ends with a SPIFFS write, a re-read and an NVS commit on
-  // the device, so the 8s read deadline would abort a legitimate upload. This
-  // bounds the whole exchange — connect, body, commit, reply — not each read.
+  // Picture uploads include a SPIFFS write and a re-read, so allow the whole
+  // exchange more time than the ordinary request timeout.
   static const Duration _uploadTimeout = Duration(seconds: 30);
   // A display result document is a few dozen bytes. The bound is not the
   // document's size; it keeps a server that answers with the wrong body from
@@ -460,50 +448,5 @@ class MirrorLan {
       }
       return DisplayResult.fromJson(_jsonObject('picture', body));
     });
-  }
-
-  /// Upload a firmware image from a file to POST /api/ota (the "choose file"
-  /// fallback). Delegates to [uploadFirmwareBytes].
-  Future<void> uploadFirmware(
-    File file, {
-    void Function(int sent, int total)? onProgress,
-  }) async {
-    await uploadFirmwareBytes(await file.readAsBytes(), onProgress: onProgress);
-  }
-
-  /// Upload raw firmware bytes to POST /api/ota, streaming in 64KB chunks.
-  /// [onProgress] is called with (sent, total) after each chunk. Throws
-  /// [MirrorApiException] on any non-200 response.
-  Future<void> uploadFirmwareBytes(
-    Uint8List bytes, {
-    void Function(int sent, int total)? onProgress,
-  }) async {
-    final client = await _newClient();
-    try {
-      final req = await client.postUrl(_uri('/api/ota')).timeout(_timeout);
-      req.headers.contentType = ContentType('application', 'octet-stream');
-      req.contentLength = bytes.length;
-
-      const chunkSize = 64 * 1024;
-      for (var sent = 0; sent < bytes.length; sent += chunkSize) {
-        final end =
-            sent + chunkSize < bytes.length ? sent + chunkSize : bytes.length;
-        req.add(Uint8List.sublistView(bytes, sent, end));
-        onProgress?.call(end, bytes.length);
-      }
-
-      final resp = await req.close().timeout(_otaTimeout);
-      final body = await resp.transform(utf8.decoder).join().timeout(_timeout);
-      if (resp.statusCode != 200) {
-        throw MirrorApiException(
-          'update failed: HTTP ${resp.statusCode} $body',
-          statusCode: resp.statusCode,
-        );
-      }
-    } on SocketException catch (e) {
-      throw MirrorApiException('could not reach $ip: ${e.message}');
-    } finally {
-      client.close(force: true);
-    }
   }
 }

@@ -1,22 +1,8 @@
 /*
  * api_server.c - the mirror's LAN API (station interface, port 80).
  *
- * Endpoints: GET /api/status, GET|PUT /api/layout, POST /api/ota, plus the
- * display contract: GET /api/frame, PUT /api/mode, POST /api/image. The
- * layout transport is the core's own JSON, so the designer can push the exact
- * bytes its preview renders and read back the same layout; the display
- * endpoints let the app upload one panel-sized picture and read back what the
- * panel is actually showing.
- *
- * Lifecycle: the server starts on IP_EVENT_STA_GOT_IP and stops on
- * WIFI_EVENT_STA_DISCONNECTED. That keeps port 80 from colliding with the
- * provisioning portal's own httpd, which only runs while the station is
- * down. There is a brief overlap after a first-time join (the portal lingers
- * for a few seconds so the phone sees its confirmation page); a short retry
- * timer covers it.
- *
- * Security: plain HTTP, no authentication, same trust model as the open
- * setup portal and a home WPA2 network.
+ * Endpoints: GET /api/status, GET|PUT /api/layout, plus the display contract:
+ * GET /api/frame, PUT /api/mode, POST /api/image.
  */
 #include "api_server.h"
 
@@ -39,7 +25,6 @@
 #include "layout_store.h"
 #include "mdns.h"
 #include "mirror/mirror.h"
-#include "net/ota.h"
 #include "netlog.h"
 #include "net/wifi.h"
 #include "panel.h"
@@ -303,10 +288,6 @@ static esp_err_t handle_put_layout(httpd_req_t *req)
     return ret;
 }
 
-static esp_err_t handle_post_ota(httpd_req_t *req)
-{
-    return ota_handle_upload(req);
-}
 
 /*
  * ---------------------------------------------------- display endpoints
@@ -653,7 +634,7 @@ static const char *method_name(httpd_method_t method)
  * configured explicitly in api_server_start: httpd's default table is smaller
  * and a registration that does not fit fails at runtime.
  */
-enum { URI_HANDLER_COUNT = 8 };
+enum { URI_HANDLER_COUNT = 7 };
 
 static void register_handlers(void)
 {
@@ -665,9 +646,6 @@ static void register_handlers(void)
     };
     static const httpd_uri_t put_layout = {
         .uri = "/api/layout", .method = HTTP_PUT, .handler = handle_put_layout,
-    };
-    static const httpd_uri_t post_ota = {
-        .uri = "/api/ota", .method = HTTP_POST, .handler = handle_post_ota,
     };
     static const httpd_uri_t get_log = {
         .uri = "/api/log", .method = HTTP_GET, .handler = handle_get_log,
@@ -681,9 +659,8 @@ static void register_handlers(void)
     static const httpd_uri_t get_frame = {
         .uri = "/api/frame", .method = HTTP_GET, .handler = handle_get_frame,
     };
-
     static const httpd_uri_t *const handlers[] = {
-        &get_status, &get_layout, &put_layout, &post_ota, &get_log,
+        &get_status, &get_layout, &put_layout, &get_log,
         &put_mode, &post_image, &get_frame,
     };
     _Static_assert(sizeof(handlers) / sizeof(handlers[0]) == URI_HANDLER_COUNT,

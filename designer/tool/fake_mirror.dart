@@ -231,16 +231,6 @@ Future<void> main(List<String> args) async {
           req.response.write('{"ok":true,"diag":[]}');
           break;
 
-        case 'POST /api/ota':
-          var count = 0;
-          await for (final chunk in req) {
-            count += chunk.length;
-          }
-          stdout.writeln('received firmware, $count bytes');
-          req.response.headers.contentType = ContentType('application', 'json');
-          req.response.write('{"ok":true}');
-          break;
-
         default:
           req.response.statusCode = 404;
           req.response.write('not found');

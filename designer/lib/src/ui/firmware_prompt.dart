@@ -11,7 +11,10 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
+import '../services/bundled_firmware.dart';
 import '../services/firmware_update.dart';
+import '../services/mirror_ble.dart';
+import '../services/mirror_devices.dart';
 import '../services/mirror_lan.dart';
 
 /// Ask whether to update a mirror running [deviceVersion] to [bundledVersion],
@@ -19,10 +22,16 @@ import '../services/mirror_lan.dart';
 ///
 /// The panel goes dark while the mirror reboots, so that is said here rather
 /// than met as a surprise.
+///
+/// [blockedReason] is the app's own reason it cannot send the image — no
+/// address for this mirror. The offer still reports the gap, because the owner
+/// should know an update exists, but the update action is disabled instead of
+/// being offered and then refused after the tap.
 Future<bool> confirmFirmwareUpdate(
   BuildContext context, {
   required String deviceVersion,
   required String bundledVersion,
+  String? blockedReason,
 }) async {
   final answer = await showDialog<bool>(
     context: context,
@@ -31,8 +40,9 @@ Future<bool> confirmFirmwareUpdate(
       content: Text(
         'This mirror is running v$deviceVersion. This app includes '
         'v$bundledVersion.\n\n'
-        'The image is sent over WiFi and the mirror restarts when it is '
-        'installed, so the panel goes dark for a few seconds.',
+        'The image is sent over Bluetooth and the mirror restarts when it is '
+        'installed, so the panel goes dark for a few seconds.'
+        '${blockedReason == null ? '' : '\n\n$blockedReason'}',
       ),
       actions: <Widget>[
         TextButton(
@@ -40,7 +50,9 @@ Future<bool> confirmFirmwareUpdate(
           child: const Text('Not now'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
+          onPressed: blockedReason == null
+              ? () => Navigator.of(context).pop(true)
+              : null,
           child: Text('Update to v$bundledVersion'),
         ),
       ],
@@ -55,8 +67,16 @@ Future<bool> confirmFirmwareUpdate(
 /// Everything that follows sends megabytes over WiFi, and Bluetooth and WiFi
 /// are separate paths, so a mirror that looks connected over Bluetooth can
 /// still be unreachable at its WiFi address.
-Future<bool> ensureMirrorReachable(BuildContext context, String ip) async {
-  final lan = MirrorLan(ip);
+///
+/// [lanFactory] is the transport this app sends through, so the probe and the
+/// upload that follows it cannot end up talking to the address by different
+/// means (and a test answers the probe instead of the network).
+Future<bool> ensureMirrorReachable(
+  BuildContext context,
+  String ip, {
+  MirrorLan Function(String ip)? lanFactory,
+}) async {
+  final lan = (lanFactory ?? MirrorLan.new)(ip);
   while (context.mounted) {
     if (await lan.reachable()) return true;
     if (!context.mounted) return false;
@@ -93,18 +113,16 @@ Future<bool> ensureMirrorReachable(BuildContext context, String ip) async {
   return false;
 }
 
-/// Upload [bytes] to the mirror at [ip] behind a progress dialog and wait for
-/// it to answer again after its reboot.
-///
-/// Returns the mirror's status once it is back, or null when it did not return
-/// before [rebootTimeout]. Throws on an upload failure. The dialog is closed
-/// either way.
-Future<MirrorStatus?> pushFirmwareWithProgress(
+/// Install [bytes] over Bluetooth, retrying a dropped link by resuming the
+/// mirror's retained OTA session.
+Future<String?> pushFirmwareOverBleWithProgress(
   BuildContext context, {
-  required String ip,
+  required MirrorDevices devices,
+  required MirrorDevice device,
   required Uint8List bytes,
   required String label,
-  Duration rebootTimeout = const Duration(seconds: 60),
+  Duration rebootTimeout = const Duration(seconds: 90),
+  int attempts = 3,
 }) async {
   final progress = ValueNotifier<double>(0);
   unawaited(showDialog<void>(
@@ -112,18 +130,55 @@ Future<MirrorStatus?> pushFirmwareWithProgress(
     barrierDismissible: false,
     builder: (_) => FirmwareUploadDialog(progress: progress, fileName: label),
   ));
+  final expected = firmwareVersionFromImage(bytes);
   try {
-    return await uploadFirmwareAndWait(
-      ip,
-      bytes,
-      onProgress: (sent, total) =>
-          progress.value = total > 0 ? sent / total : 0,
-      rebootTimeout: rebootTimeout,
-    );
+    for (var attempt = 1;; attempt++) {
+      final session = device.connection.session;
+      if (session == null) {
+        throw BlePushException('the Bluetooth link to ${device.name} is down');
+      }
+      try {
+        await session.pushFirmware(bytes,
+            offset: firmwareResumeOffset(
+                await session.getOtaStatus(), bytes.length),
+            onProgress: (sent, total) =>
+                progress.value = total > 0 ? sent / total : 0);
+        break;
+      } catch (e) {
+        if (attempt >= attempts) rethrow;
+        final back = await _awaitVersionAfterReboot(
+            devices, device, rebootTimeout,
+            expected: expected);
+        if (back != null && back == expected) return back;
+        await devices.connect(device);
+      }
+    }
+    return _awaitVersionAfterReboot(devices, device, rebootTimeout,
+        expected: expected);
   } finally {
-    if (context.mounted) Navigator.of(context).pop(); // close the dialog
+    if (context.mounted) Navigator.of(context).pop();
     progress.dispose();
   }
+}
+
+Future<String?> _awaitVersionAfterReboot(
+    MirrorDevices devices, MirrorDevice device, Duration timeout,
+    {required String? expected}) async {
+  final before = device.connection.session;
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final session = device.connection.session;
+    if (session == null || identical(session, before)) {
+      try {
+        if (session == null) await devices.connect(device);
+      } catch (_) {}
+    } else {
+      final version = device.connection.pong?.version;
+      if (version != null) return version;
+    }
+    await Future<void>.delayed(const Duration(seconds: 2));
+  }
+  return null;
 }
 
 /// Upload progress dialog; dismissed by whoever opened it.

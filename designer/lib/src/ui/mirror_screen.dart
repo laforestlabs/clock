@@ -7,21 +7,17 @@
 // different mirror. Finding and adding devices happens on the dashboard (Add
 // device); this screen never scans or lists other devices.
 //
-// Missing BLE on a desktop is tolerated: the Bluetooth section says so and
-// points at the network section, which keeps firmware updates and status
-// working.
+// Missing BLE on a desktop is tolerated: the Bluetooth section says so, and
+// the network section still shows the mirror's status and preview.
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controller.dart';
 import '../services/bundled_firmware.dart';
@@ -30,7 +26,6 @@ import '../services/mirror_ble.dart';
 import '../services/mirror_config.dart';
 import '../services/mirror_connection.dart';
 import '../services/mirror_devices.dart';
-import '../services/mirror_lan.dart';
 import '../services/mirror_location.dart';
 import '../services/mirror_wifi.dart';
 import '../services/mirror_wifi_status.dart';
@@ -482,198 +477,36 @@ class _MirrorScreenState extends State<MirrorScreen> {
   /// source, no source dialog.
   Future<void> _updateFirmwareLatest() async {
     final bundled = _bundled ?? await loadBundledFirmware();
-    if (!mounted) return;
-    if (bundled == null) {
-      _toast('No firmware bundled with this app');
+    if (!mounted || bundled == null) return;
+    if (!_device.canUpdateFirmware) {
+      _toast(MirrorDevice.needsBluetooth);
       return;
     }
-    final endpoint = _device.endpoint;
-    if (endpoint == null) {
-      _toast(_noAddress);
-      return;
-    }
-    if (!await ensureMirrorReachable(context, endpoint)) return;
-    if (!await _confirmEndpoint(endpoint)) return;
-    await _uploadAndWait(
-        endpoint, bundled.bytes, 'bundled v${bundled.version}');
+    await _uploadAndWait(bundled.bytes, 'bundled v${bundled.version}');
   }
 
-  /// Shared OTA flow: prefer the firmware bundled with this app, offering a
-  /// file or a URL as fallbacks. Upload the chosen bytes over the LAN API,
-  /// then poll until the mirror answers again after its reboot. Probes the
-  /// LAN first: everything that follows sends megabytes over WiFi, and there
-  /// is no point picking a source for an address this phone cannot reach.
-  ///
-  /// The endpoint is captured before the first await and rechecked after the
-  /// last one: a source dialog, a file picker or a download can all be open
-  /// while the address is handed to a different mirror, and a firmware image
-  /// must never land on hardware the owner did not choose.
-  Future<void> _updateFirmware() async {
-    final endpoint = _device.endpoint;
-    if (endpoint == null) {
-      _toast(_noAddress);
-      return;
-    }
-    if (!await ensureMirrorReachable(context, endpoint)) return;
-    final bundled = await loadBundledFirmware();
-    if (!mounted) return;
-
-    final source = await showDialog<_FirmwareSource>(
-      context: context,
-      builder: (_) => _FirmwareSourceDialog(
-        bundledVersion: bundled?.version,
-        deviceVersion:
-            _device.status?.version ?? _connection.pong?.version ?? '',
-      ),
-    );
-    if (source == null || !mounted) return;
-
-    final Uint8List bytes;
-    final String fileName;
-    if (source.kind == _FirmwareSourceKind.bundled) {
-      bytes = bundled!.bytes;
-      fileName = 'bundled v${bundled.version}';
-    } else if (source.kind == _FirmwareSourceKind.file) {
-      const typeGroup =
-          XTypeGroup(label: 'firmware', extensions: <String>['bin']);
-      final picked =
-          await openFile(acceptedTypeGroups: const <XTypeGroup>[typeGroup]);
-      if (picked == null || !mounted) return;
-      bytes = await File(picked.path).readAsBytes();
-      fileName = picked.name;
-    } else {
-      if (!mounted) return;
-      unawaited(showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const _DownloadingDialog(),
-      ));
-      try {
-        bytes = await _downloadFirmwareBytes(source.url!);
-      } catch (e) {
-        if (mounted) Navigator.of(context).pop(); // close the download dialog
-        if (mounted) _handleError(e, 'download');
-        return;
-      }
-      if (mounted) Navigator.of(context).pop(); // close the download dialog
-      fileName = 'ota.bin';
-    }
-
-    if (!await _confirmEndpoint(endpoint)) return;
-    await _uploadAndWait(endpoint, bytes, fileName);
-  }
-
-  /// Rechecks, immediately before the bytes go out, that [endpoint] is still
-  /// this record's address and still answers as this device. The record's
-  /// firmware id is the comparison: an address that now reports a different
-  /// one belongs to another mirror, and a mismatch is never written to.
-  Future<bool> _confirmEndpoint(String endpoint) async {
-    if (!mounted) return false;
-    if (_device.removed) {
-      _toast('Not sent: this device is no longer in the list.');
-      return false;
-    }
-    if (_device.endpoint != endpoint) {
-      _toast('Not sent: this device\'s address changed. Refresh and try '
-          'again.');
-      return false;
-    }
-    final expected = _device.id;
-    if (expected == null) return true; // firmware without an identity to check
-    final MirrorStatus status;
+  Future<void> _uploadAndWait(Uint8List bytes, String fileName) async {
+    setState(() {
+      _otaBusy = true;
+      _bleBusy = true;
+    });
     try {
-      status = await MirrorLan(endpoint).status();
-    } catch (e) {
-      _handleError(e, 'update');
-      return false;
-    }
-    if (!mounted) return false;
-    // Exactly this device's identity, and nothing less: a status with no id
-    // (firmware that predates it) or a different one means the address is not
-    // answering as the mirror this record describes, and an image is never
-    // written to it.
-    if (status.id != expected) {
-      _toast('Not sent: $endpoint is not answering as ${_device.name} any '
-          'more.');
-      return false;
-    }
-    return true;
-  }
-
-  /// Shown when an upload has no address to send to.
-  static const String _noAddress =
-      'This device has no Wi-Fi address yet; a firmware upload needs it. '
-      'Connect it to the network, or add its address from Add device.';
-
-  /// Stream [bytes] to this device's OTA endpoint, wait until it answers
-  /// after the reboot, then toast the result. The transport is shared with
-  /// the workspace's update prompt (ui/firmware_prompt.dart).
-  Future<void> _uploadAndWait(
-      String endpoint, Uint8List bytes, String fileName) async {
-    setState(() => _otaBusy = true);
-    try {
-      final newStatus = await pushFirmwareWithProgress(context,
-          ip: endpoint, bytes: bytes, label: fileName);
+      final version = await pushFirmwareOverBleWithProgress(context,
+          devices: _devices, device: _device, bytes: bytes, label: fileName);
       if (!mounted) return;
-      if (newStatus != null) {
-        // The mirror rebooted, so the BLE link died with it. Reconnect this
-        // device only, now that it is advertising the new image.
-        await _reconnectQuietly();
-      }
-      _toast(newStatus == null
+      _toast(version == null
           ? 'Update uploaded; the mirror is rebooting'
-          : 'Updated to ${newStatus.version}');
+          : 'Updated to $version');
       if (mounted) await _refreshDevice();
     } catch (e) {
       if (mounted) _handleError(e, 'update');
     } finally {
-      if (mounted) setState(() => _otaBusy = false);
-    }
-  }
-
-  /// Best-effort reconnect of this device's link after an OTA. Never touches
-  /// another device, and never surfaces a failure: the mirror may simply not
-  /// be advertising yet.
-  Future<void> _reconnectQuietly() async {
-    if (_device.bleId == null) return;
-    try {
-      await _devices.connect(_device);
-    } catch (_) {
-      // The device is still coming back; the Connect button is there for it.
-    }
-  }
-
-  /// Download a firmware image from [url] and sanity-check it (non-empty,
-  /// fits a 4 MB OTA partition). Throws [MirrorApiException] on transport or
-  /// size problems.
-  Future<Uint8List> _downloadFirmwareBytes(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null || uri.host.isEmpty) {
-      throw MirrorApiException('enter a full http:// URL');
-    }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
-      final req = await client.getUrl(uri).timeout(const Duration(seconds: 10));
-      final resp = await req.close().timeout(const Duration(seconds: 30));
-      if (resp.statusCode != 200) {
-        throw MirrorApiException('download failed: HTTP ${resp.statusCode}');
+      if (mounted) {
+        setState(() {
+          _otaBusy = false;
+          _bleBusy = false;
+        });
       }
-      final builder = BytesBuilder(copy: false);
-      await resp.forEach(builder.add);
-      final bytes = builder.takeBytes();
-      if (bytes.isEmpty) {
-        throw MirrorApiException('the downloaded image is empty');
-      }
-      if (bytes.length > 4 * 1024 * 1024) {
-        throw MirrorApiException(
-            'the downloaded image is too large (max 4 MB)');
-      }
-      return bytes;
-    } on SocketException catch (e) {
-      throw MirrorApiException('could not reach $url: ${e.message}');
-    } finally {
-      client.close(force: true);
     }
   }
 
@@ -938,17 +771,16 @@ class _MirrorScreenState extends State<MirrorScreen> {
               icon: const Icon(Icons.send, size: 18),
               label: const Text('Push layout'),
             ),
-            if (widget.simplified)
-              OutlinedButton.icon(
-                onPressed: (_bleBusy || _otaBusy || _bundled == null)
-                    ? null
-                    : _updateFirmwareLatest,
-                icon: const Icon(Icons.system_update, size: 18),
-                label: Text(_bundled == null
-                    ? 'Update unavailable'
-                    : 'Update to latest (v${_bundled!.version})'),
-              )
-            else ...<Widget>[
+            OutlinedButton.icon(
+              onPressed: (_bleBusy || _otaBusy || _bundled == null)
+                  ? null
+                  : _updateFirmwareLatest,
+              icon: const Icon(Icons.system_update, size: 18),
+              label: Text(_bundled == null
+                  ? 'Update unavailable'
+                  : 'Update to latest (v${_bundled!.version})'),
+            ),
+            if (!widget.simplified) ...<Widget>[
               OutlinedButton.icon(
                 onPressed: _bleBusy ? null : _configure,
                 icon: const Icon(Icons.tune, size: 18),
@@ -959,9 +791,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
                 icon: const Icon(Icons.restart_alt, size: 18),
                 label: const Text('Reboot'),
               ),
-              // The only destructive entry in the cluster, and the one
-              // that cannot be walked back: painted in the theme error
-              // red so it can never be mistaken for the Reboot beside it.
               FilledButton.icon(
                 onPressed: _bleBusy ? null : _factoryResetBle,
                 style: FilledButton.styleFrom(
@@ -1115,15 +944,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('Refresh'),
             ),
-            Tooltip(
-              message: 'Uploads over WiFi, so the phone and mirror must be '
-                  'on the same network',
-              child: OutlinedButton.icon(
-                onPressed: _otaBusy ? null : _updateFirmware,
-                icon: const Icon(Icons.system_update, size: 18),
-                label: const Text('Update firmware'),
-              ),
-            ),
           ],
         ),
       ],
@@ -1131,12 +951,6 @@ class _MirrorScreenState extends State<MirrorScreen> {
   }
 }
 
-// ------------------------------------------------------------ dialog
-
-/// Guided WiFi setup: scan, pick a network (or type one manually), and enter
-/// a password. Returns the chosen [WifiConfig], or null when cancelled. The
-/// caller pushes the credentials and awaits the connect outcome. The scan and
-/// pick form itself lives in [WifiSetupForm], shared with the setup wizard.
 class _WifiSetupDialog extends StatefulWidget {
   const _WifiSetupDialog({required this.session});
 
@@ -1433,174 +1247,6 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
           child: const Text('Save'),
         ),
       ],
-    );
-  }
-}
-
-/// How the user chose to provide the image: the firmware bundled with this
-/// app, a local file, or a URL to download.
-enum _FirmwareSourceKind { bundled, file, download }
-
-class _FirmwareSource {
-  const _FirmwareSource.bundled()
-      : kind = _FirmwareSourceKind.bundled,
-        url = null;
-  const _FirmwareSource.chooseFile()
-      : kind = _FirmwareSourceKind.file,
-        url = null;
-  const _FirmwareSource.download(this.url)
-      : kind = _FirmwareSourceKind.download;
-
-  final _FirmwareSourceKind kind;
-  final String? url;
-}
-
-/// Source selection for an update. The bundled firmware is the normal path:
-/// update the app, then install what it ships. File and URL stay available as
-/// fallbacks for a specific image.
-class _FirmwareSourceDialog extends StatelessWidget {
-  const _FirmwareSourceDialog({
-    required this.bundledVersion,
-    required this.deviceVersion,
-  });
-
-  final String? bundledVersion;
-  final String deviceVersion;
-
-  @override
-  Widget build(BuildContext context) {
-    final bundled = bundledVersion;
-    final String body;
-    if (bundled == null) {
-      body = 'No firmware is bundled with this build. Choose an image to '
-          'upload.';
-    } else if (deviceVersion.isEmpty) {
-      body = 'Install the firmware bundled with this app (v$bundled).';
-    } else if (deviceVersion == bundled) {
-      body = 'The mirror is already on v$bundled, the version bundled with '
-          'this app. Reinstall it, or choose another image.';
-    } else {
-      body = 'Install the bundled firmware v$bundled '
-          '(the mirror is on v$deviceVersion).';
-    }
-
-    return AlertDialog(
-      title: const Text('Update firmware'),
-      content: Text(body),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(const _FirmwareSource.chooseFile()),
-          child: const Text('Choose file...'),
-        ),
-        TextButton(
-          onPressed: () async {
-            final url = await showDialog<String>(
-              context: context,
-              builder: (_) => const _DownloadUrlDialog(),
-            );
-            if (url != null && context.mounted) {
-              Navigator.of(context).pop(_FirmwareSource.download(url));
-            }
-          },
-          child: const Text('From URL...'),
-        ),
-        if (bundled != null)
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(context).pop(const _FirmwareSource.bundled()),
-            child: Text(deviceVersion == bundled
-                ? 'Reinstall v$bundled'
-                : 'Install v$bundled'),
-          ),
-      ],
-    );
-  }
-}
-
-/// URL prompt for the download source; remembers the last value so a
-/// repeated OTA is one paste less.
-class _DownloadUrlDialog extends StatefulWidget {
-  const _DownloadUrlDialog();
-
-  @override
-  State<_DownloadUrlDialog> createState() => _DownloadUrlDialogState();
-}
-
-class _DownloadUrlDialogState extends State<_DownloadUrlDialog> {
-  static const String _prefsKey = 'ota_download_url';
-  late final TextEditingController _url;
-
-  @override
-  void initState() {
-    super.initState();
-    _url = TextEditingController();
-    _prefill();
-  }
-
-  Future<void> _prefill() async {
-    final prefs = await SharedPreferences.getInstance();
-    final last = prefs.getString(_prefsKey);
-    if (last != null && last.isNotEmpty && mounted) {
-      setState(() => _url.text = last);
-    }
-  }
-
-  @override
-  void dispose() {
-    _url.dispose();
-    super.dispose();
-  }
-
-  Future<void> _ok() async {
-    final url = _url.text.trim();
-    if (url.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, url);
-    if (mounted) Navigator.of(context).pop(url);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Download firmware'),
-      content: TextField(
-        controller: _url,
-        autofocus: true,
-        keyboardType: TextInputType.url,
-        decoration: const InputDecoration(
-          hintText: 'http://192.168.1.20:8000/smart_mirror-0.2.0.bin',
-        ),
-        onSubmitted: (_) => _ok(),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _ok,
-          child: const Text('Download'),
-        ),
-      ],
-    );
-  }
-}
-
-/// Shown while a URL download runs; closed by the caller.
-class _DownloadingDialog extends StatelessWidget {
-  const _DownloadingDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    return const AlertDialog(
-      content: Row(
-        children: <Widget>[
-          CircularProgressIndicator(),
-          SizedBox(width: 16),
-          Text('Downloading firmware...'),
-        ],
-      ),
     );
   }
 }

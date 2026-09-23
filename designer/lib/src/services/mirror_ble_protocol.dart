@@ -1,14 +1,11 @@
 // The BLE push protocol, in pure Dart.
 //
-// The firmware (firmware/main/net/ble.c) speaks a small ASCII protocol on a
-// command characteristic, with payload bytes on a data characteristic:
-//
-//   begin <kind> <len>   kind in {layout, config}, 1 <= len <= 32768
-//   <data chunks>        each chunk a single ATT write within the MTU
+//   begin <kind> <len> [<offset>]  kind includes firmware for OTA resume
+//   <data chunks>                  each chunk is one ATT write
 //   commit
 //
-// The device answers the begin write with `begin ok` or `begin error <why>`,
-// and the commit write with `commit ok[ <detail>]` or `commit error <why>`.
+// The device answers begin and commit on the shared status stream; unsolicited
+// game notifications are filtered by BleSession.
 // Both replies share the status stream with unsolicited game notifications.
 // BleSession waits for each matching reply before advancing the transaction.
 //
@@ -28,8 +25,11 @@ class BleFrame {
   final List<int> bytes;
 }
 
-/// Splits a payload into the wire frames: one `begin` command, data chunks
-/// of at most [chunkSize] bytes, one `commit` command.
+/// The `begin` command line for a payload of [length] bytes.
+String beginCommand(String kind, int length, {int offset = 0}) =>
+    offset == 0 ? 'begin $kind $length' : 'begin $kind $length $offset';
+
+/// Splits a payload into wire frames.
 class BlePayloadWriter {
   BlePayloadWriter({this.chunkSize = 500});
 
@@ -37,18 +37,16 @@ class BlePayloadWriter {
 
   List<BleFrame> frames(String kind, List<int> payload) {
     final out = <BleFrame>[
-      BleFrame(BleFrameKind.cmd, ascii.encode('begin $kind ${payload.length}')),
+      BleFrame(
+          BleFrameKind.cmd, ascii.encode(beginCommand(kind, payload.length)))
     ];
-
     for (var offset = 0; offset < payload.length; offset += chunkSize) {
       final end = (offset + chunkSize < payload.length)
           ? offset + chunkSize
           : payload.length;
       out.add(BleFrame(BleFrameKind.data, payload.sublist(offset, end)));
     }
-
     out.add(BleFrame(BleFrameKind.cmd, ascii.encode('commit')));
     return out;
   }
 }
-

@@ -242,6 +242,19 @@ void main() {
       expect(find.text(label), findsOneWidget, reason: label);
     }
   });
+
+  testWidgets('the firmware update button follows the Bluetooth link',
+      (tester) async {
+    final rig = _Rig();
+    addTearDown(rig.dispose);
+    final device = await rig.pair('REMOTE-A');
+    final controller = _controller(<bool>[]);
+    addTearDown(controller.dispose);
+    await tester
+        .pumpWidget(_mirrorScreen(controller, device, simplified: true));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Update to latest'), findsOneWidget);
+  });
 }
 
 Widget _screen(DesignerController controller, MirrorDevice device) =>
@@ -255,8 +268,15 @@ Widget _screen(DesignerController controller, MirrorDevice device) =>
       ),
     );
 
-Widget _mirrorScreen(DesignerController controller, MirrorDevice device) =>
-    MaterialApp(home: MirrorScreen(controller: controller, device: device));
+Widget _mirrorScreen(DesignerController controller, MirrorDevice device,
+        {bool simplified = false}) =>
+    MaterialApp(
+      home: MirrorScreen(
+        controller: controller,
+        device: device,
+        simplified: simplified,
+      ),
+    );
 
 /// A controller that needs no native library: settings only reads and writes
 /// the preview's orientation, and records what it persists.
@@ -360,6 +380,14 @@ class _FakeConnection extends MirrorConnection {
 
   final _Radio radio;
   _FakeSession? live;
+
+  /// The pong the live link reports. A case sets it to model a mirror that has
+  /// told the phone where it is on the network; null is a link that has not
+  /// answered, or firmware that reports no address yet.
+  BlePong? pongOverride;
+
+  @override
+  BlePong? get pong => live == null ? null : pongOverride;
 
   @override
   BleSession? get session => live;

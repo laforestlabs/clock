@@ -1,168 +1,298 @@
 /*
- * ota.c - firmware update over the LAN API (POST /api/ota).
+ * ota.c - resumable firmware streaming over Bluetooth.
  *
- * The upload is a raw binary stream with a Content-Length. The httpd task
- * reads it whole into PSRAM (receiving never touches flash), then hands the
- * buffer to a dedicated internal-DRAM task that performs the flash write:
- * esp_ota_write freezes the cache and ESP-IDF asserts the calling task's
- * stack is in DRAM, which the PSRAM-stacked httpd task cannot satisfy.
- *
- * The source bytes must also be in internal DRAM: spi_flash copies the source
- * into a small stack buffer while the cache is frozen, and PSRAM is
- * unreachable in that window. The writer therefore streams the PSRAM buffer
- * through a small internal-DRAM chunk.
- *
- * Rollback story: with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE, a booted-but-
- * unverified app is reverted by the boot loader unless the app calls
- * ota_mark_valid() once it is demonstrably running. A corrupted image never
- * even gets that far: esp_ota_end() validates the image before the boot
- * partition is switched.
+ * The session streams bytes into flash as they arrive; it does not buffer the
+ * image in PSRAM. The flash writer task has an internal-DRAM stack, and copies
+ * each ring-buffered chunk into its stack before esp_ota_write while the cache
+ * is frozen. The source bytes must therefore be reachable in that window.
  */
 #include "ota.h"
-
-#include <string.h>
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
-
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
-
 #include "flash_write.h"
 #include "netlog.h"
 
+#define OTA_RING_BYTES 32768
+#define OTA_WRITE_CHUNK 4096
+#define OTA_RECEIVE_TICK_MS 250
+#define OTA_STARVE_MS 5000
+#define OTA_RESUME_GRACE_MS 120000
+#define OTA_APPEND_WAIT_MS 5000
+#define OTA_FINISH_WAIT_MS 30000
+
 static const char *TAG = "ota";
+static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_finished;
+static StreamBufferHandle_t s_ring;
+static StaticStreamBuffer_t s_ring_struct;
+static uint8_t *s_ring_storage;
+static const esp_partition_t *s_part;
+static esp_ota_handle_t s_handle;
+static size_t s_total;
+static volatile size_t s_written;
+static bool s_worker_running;
+static esp_err_t s_result;
+static esp_timer_handle_t s_expire;
+static volatile bool s_end_requested;
+static volatile bool s_abort_requested;
 
-/* httpd handles requests on one task, so this needs no locking. */
-static bool s_ota_active = false;
-
-typedef struct {
-    const esp_partition_t *part;
-    const uint8_t *data;
-    size_t len;
-    esp_err_t result;
-} ota_write_ctx_t;
-
-/* Runs on the flash-writer task, whose stack is in internal DRAM. */
-static void ota_write_fn(void *arg)
+static void ota_session_abort_locked(void)
 {
-    ota_write_ctx_t *c = arg;
-    esp_ota_handle_t handle = 0;
-
-    c->result = esp_ota_begin(c->part, OTA_SIZE_UNKNOWN, &handle);
-
-    /* The source must be internal DRAM while the cache is frozen during the
-     * write, so stream the PSRAM buffer through a small chunk. The chunk is
-     * on this task's stack (internal DRAM) and needs no heap: the internal
-     * heap is nearly exhausted after boot. */
-    uint8_t chunk[1024];
-
-    size_t off = 0;
-    while (c->result == ESP_OK && off < c->len) {
-        const size_t n = (c->len - off < sizeof(chunk)) ? (c->len - off) : sizeof(chunk);
-        memcpy(chunk, c->data + off, n);
-        c->result = esp_ota_write(handle, chunk, n);
-        off += n;
+    esp_timer_stop(s_expire);
+    if (s_handle != 0) {
+        esp_ota_abort(s_handle);
+        s_handle = 0;
     }
-
-    if (c->result == ESP_OK) {
-        c->result = esp_ota_end(handle);
-    }
-    if (c->result == ESP_OK) {
-        c->result = esp_ota_set_boot_partition(c->part);
-    } else if (handle != 0) {
-        esp_ota_abort(handle);
-    }
+    if (s_ring_storage != NULL) heap_caps_free(s_ring_storage);
+    s_ring_storage = NULL;
+    s_ring = NULL;
+    s_part = NULL;
+    s_total = 0;
+    s_written = 0;
+    s_worker_running = false;
+    s_end_requested = false;
+    s_abort_requested = false;
 }
 
-static esp_err_t send_json(httpd_req_t *req, const char *status,
-                           const char *body)
+static void ota_worker_exit(esp_err_t result, bool finished)
 {
-    httpd_resp_set_status(req, status);
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_result = result;
+    s_worker_running = false;
+    if (!finished && s_total != 0) {
+        esp_timer_start_once(s_expire, (uint64_t)OTA_RESUME_GRACE_MS * 1000);
+        ESP_LOGI(TAG, "stream stalled at %u of %u bytes",
+                 (unsigned)s_written, (unsigned)s_total);
+    }
+    xSemaphoreGive(s_lock);
+    xSemaphoreGive(s_finished);
 }
 
-esp_err_t ota_handle_upload(httpd_req_t *req)
+static void ota_stream_fn(void *arg)
 {
-    if (s_ota_active) {
-        return send_json(req, "409 Conflict",
-                         "{\"ok\":false,\"error\":\"update already in progress\"}");
-    }
-
-    const int content_len = req->content_len;
-    if (content_len <= 0) {
-        return send_json(req, "411 Length Required",
-                         "{\"ok\":false,\"error\":\"Content-Length required\"}");
-    }
-
-    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
-    if (part == NULL) {
-        return send_json(req, "500 Internal Server Error",
-                         "{\"ok\":false,\"error\":\"no OTA partition\"}");
-    }
-    if ((size_t)content_len > part->size) {
-        return send_json(req, "413 Content Too Large",
-                         "{\"ok\":false,\"error\":\"image larger than partition\"}");
-    }
-
-    s_ota_active = true;
-
-    uint8_t *data = heap_caps_malloc((size_t)content_len, MALLOC_CAP_SPIRAM);
-    if (data == NULL) {
-        s_ota_active = false;
-        return send_json(req, "500 Internal Server Error",
-                         "{\"ok\":false,\"error\":\"out of memory\"}");
-    }
-
-    int received = 0;
-    while (received < content_len) {
-        const int r = httpd_req_recv(req, (char *)(data + received),
-                                     (size_t)(content_len - received));
-        if (r <= 0) {
-            ESP_LOGW(TAG, "receive failed at %d of %d bytes",
-                     received, content_len);
-            heap_caps_free(data);
-            s_ota_active = false;
-            return send_json(req, "500 Internal Server Error",
-                             "{\"ok\":false,\"error\":\"upload failed\"}");
+    (void)arg;
+    esp_ota_handle_t handle = s_handle;
+    esp_err_t err = ESP_OK;
+    if (handle == 0) {
+        err = esp_ota_begin(s_part, s_total, &handle);
+        if (err != ESP_OK) {
+            ota_worker_exit(err, false);
+            return;
         }
-        received += r;
+        s_handle = handle;
     }
 
-    ota_write_ctx_t ctx = {
-        .part = part,
-        .data = data,
-        .len = (size_t)content_len,
-        .result = ESP_FAIL,
-    };
-    netlog_record(NETLOG_EVT_OTA_BEGIN, 0, 0);
-    const esp_err_t run_err = flash_write_run(ota_write_fn, &ctx);
-    heap_caps_free(data);
-
-    if (run_err != ESP_OK || ctx.result != ESP_OK) {
-        s_ota_active = false;
-        const esp_err_t reason = run_err != ESP_OK ? run_err : ctx.result;
-        ESP_LOGE(TAG, "flash write failed: %s", esp_err_to_name(reason));
-        return send_json(req, "500 Internal Server Error",
-                         "{\"ok\":false,\"error\":\"image rejected\"}");
+    uint8_t chunk[OTA_WRITE_CHUNK];
+    int64_t idle_since = esp_timer_get_time();
+    for (;;) {
+        const size_t n = xStreamBufferReceive(s_ring, chunk, sizeof(chunk),
+                                              pdMS_TO_TICKS(OTA_RECEIVE_TICK_MS));
+        if (n > 0) {
+            err = esp_ota_write(handle, chunk, n);
+            if (err != ESP_OK) {
+                esp_ota_abort(handle);
+                s_handle = 0;
+                ota_worker_exit(err, true);
+                return;
+            }
+            s_written += n;
+            idle_since = esp_timer_get_time();
+            continue;
+        }
+        if (s_abort_requested) {
+            esp_ota_abort(handle);
+            s_handle = 0;
+            ota_worker_exit(ESP_ERR_INVALID_STATE, true);
+            return;
+        }
+        if (s_end_requested) {
+            if (s_written != s_total) {
+                esp_ota_abort(handle);
+                s_handle = 0;
+                ota_worker_exit(ESP_ERR_INVALID_STATE, true);
+                return;
+            }
+            break;
+        }
+        if (esp_timer_get_time() - idle_since > (int64_t)OTA_STARVE_MS * 1000) {
+            s_end_requested = false;
+            ota_worker_exit(ESP_ERR_TIMEOUT, false);
+            return;
+        }
     }
 
-    s_ota_active = false;
-    ESP_LOGI(TAG, "received %d bytes, new app on partition \"%s\", rebooting",
-             received, part->label);
-    netlog_record(NETLOG_EVT_OTA_OK, 0, 0);
-
-    send_json(req, "200 OK", "{\"ok\":true}");
-    /* The response is queued by the stack; a short delay on the httpd task
-     * lets it flush to the network before the chip restarts, so the phone
-     * sees "ok" instead of a dropped connection. */
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-    return ESP_OK;   /* unreachable */
+    err = esp_ota_end(handle);
+    s_handle = 0;
+    if (err == ESP_OK) err = esp_ota_set_boot_partition(s_part);
+    ota_worker_exit(err, true);
 }
+
+static esp_err_t ota_submit_locked(void)
+{
+    const esp_err_t err = flash_write_submit(ota_stream_fn, NULL);
+    if (err == ESP_OK) s_worker_running = true;
+    return err;
+}
+
+static void ota_expire_cb(void *arg)
+{
+    (void)arg;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_total != 0 && !s_worker_running) {
+        if (s_handle != 0) esp_ota_abort(s_handle);
+        s_handle = 0;
+        if (s_ring_storage != NULL) heap_caps_free(s_ring_storage);
+        s_ring_storage = NULL;
+        s_ring = NULL;
+        s_total = 0;
+        s_written = 0;
+        s_end_requested = false;
+        s_abort_requested = false;
+        s_result = ESP_ERR_TIMEOUT;
+        ESP_LOGW(TAG, "idle OTA session dropped");
+    }
+    xSemaphoreGive(s_lock);
+}
+
+esp_err_t ota_init(void)
+{
+    s_lock = xSemaphoreCreateMutex();
+    s_finished = xSemaphoreCreateBinary();
+    const esp_timer_create_args_t args = {
+        .callback = ota_expire_cb, .name = "ota_expire",
+    };
+    if (s_lock == NULL || s_finished == NULL ||
+        esp_timer_create(&args, &s_expire) != ESP_OK) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+esp_err_t ota_session_begin(size_t total, size_t offset)
+{
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (part == NULL) return ESP_ERR_INVALID_STATE;
+    if (total == 0 || total > part->size) return ESP_ERR_INVALID_ARG;
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (offset > 0) {
+        if (s_total != total || s_written != offset) {
+            xSemaphoreGive(s_lock);
+            return ESP_ERR_INVALID_ARG;
+        }
+        esp_timer_stop(s_expire);
+        if (!s_worker_running) {
+            const esp_err_t err = ota_submit_locked();
+            if (err != ESP_OK) {
+                xSemaphoreGive(s_lock);
+                return ESP_ERR_INVALID_STATE;
+            }
+        }
+        ESP_LOGI(TAG, "update resumed at %u of %u bytes",
+                 (unsigned)offset, (unsigned)total);
+        xSemaphoreGive(s_lock);
+        return ESP_OK;
+    }
+
+    ota_session_abort_locked();
+    if (s_ring_storage != NULL) heap_caps_free(s_ring_storage);
+    s_ring_storage = heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_SPIRAM);
+    if (s_ring_storage == NULL) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NO_MEM;
+    }
+    s_ring = xStreamBufferCreateStatic(OTA_RING_BYTES, 1, s_ring_storage,
+                                       &s_ring_struct);
+    if (s_ring == NULL) {
+        heap_caps_free(s_ring_storage);
+        s_ring_storage = NULL;
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NO_MEM;
+    }
+    s_part = part;
+    s_total = total;
+    s_written = 0;
+    s_result = ESP_FAIL;
+    s_end_requested = false;
+    s_abort_requested = false;
+    xSemaphoreTake(s_finished, 0);
+    const esp_err_t err = ota_submit_locked();
+    if (err != ESP_OK) {
+        ota_session_abort_locked();
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    netlog_record(NETLOG_EVT_OTA_BEGIN, 0, 0);
+    ESP_LOGI(TAG, "update started, %u bytes", (unsigned)total);
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+esp_err_t ota_session_append(const uint8_t *data, size_t len)
+{
+    if (data == NULL || len == 0) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_total == 0 || !s_worker_running) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    StreamBufferHandle_t ring = s_ring;
+    xSemaphoreGive(s_lock);
+    const size_t sent = xStreamBufferSend(ring, data, len,
+                                          pdMS_TO_TICKS(OTA_APPEND_WAIT_MS));
+    return sent == len ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t ota_session_finish(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_total == 0) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_end_requested = true;
+    if (!s_worker_running) {
+        xSemaphoreTake(s_finished, 0);
+        if (ota_submit_locked() != ESP_OK) {
+            xSemaphoreGive(s_lock);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    if (xSemaphoreTake(s_finished, pdMS_TO_TICKS(OTA_FINISH_WAIT_MS)) != pdTRUE) {
+        ota_session_abort();
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = s_result;
+    ota_session_abort();
+    return err;
+}
+
+void ota_session_abort(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool running = s_worker_running;
+    if (running) s_abort_requested = true;
+    xSemaphoreGive(s_lock);
+    if (running) xSemaphoreTake(s_finished, pdMS_TO_TICKS(2000));
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    ota_session_abort_locked();
+    xSemaphoreGive(s_lock);
+}
+
+/* 32-bit aligned loads are atomic on this target; the writer only increments
+ * s_written and these accessors read it, so no lock is needed. */
+size_t ota_session_written(void) { return s_written; }
+size_t ota_session_total(void) { return s_total; }
+bool ota_session_active(void) { return s_total != 0; }
 
 void ota_mark_valid(void)
 {

@@ -12,7 +12,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-
+import 'dart:typed_data';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'mirror_ble_protocol.dart';
@@ -49,7 +49,9 @@ class BlePushException implements Exception {
 /// user, so it is passed through as-is. Anything else came from the plugin or
 /// the platform, where Dart's `Exception: ` prefix is noise on a toast.
 String bleErrorMessage(Object e) {
-  if (e is BleUnavailableException || e is BlePushException) return e.toString();
+  if (e is BleUnavailableException || e is BlePushException) {
+    return e.toString();
+  }
   return e.toString().replaceFirst('Exception: ', '');
 }
 
@@ -336,9 +338,8 @@ class BleSession {
   /// wait keeps each exchange whole; the predicate below keeps an unsolicited
   /// game line from ending this one.
   Future<MirrorDeviceInfo?> getDeviceInfo() {
-    final result = _pushTail.then((_) async =>
-        parseDeviceInfoLine(await _sendAndWait('get device',
-            accepts: _isDeviceReply)));
+    final result = _pushTail.then((_) async => parseDeviceInfoLine(
+        await _sendAndWait('get device', accepts: _isDeviceReply)));
     _pushTail = result.then<void>((_) {}, onError: (_) {});
     return result;
   }
@@ -375,6 +376,24 @@ class BleSession {
   Future<BleLatency?> getLatency() async {
     return parseLatencyStatus(
         await _sendAndWait('get latency', accepts: _isLatencyReply));
+  }
+
+  /// The mirror's open OTA session, or null on older firmware.
+  Future<BleOtaStatus?> getOtaStatus() async =>
+      BleOtaStatus.parse(await _sendAndWait('get ota',
+          accepts: (line) =>
+              line.startsWith('ota ') || line == unknownCommandReply));
+
+  /// Stream a firmware image, resuming at [offset].
+  Future<void> pushFirmware(
+    Uint8List bytes, {
+    int offset = 0,
+    void Function(int sent, int total)? onProgress,
+  }) {
+    final result = _pushTail.then((_) =>
+        _pushFirmwareTransfer(bytes, offset: offset, onProgress: onProgress));
+    _pushTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
   }
 
   /// Round-trip time of a command write plus its status notification. A
@@ -589,7 +608,7 @@ class BleSession {
 
   Future<String> _pushTransfer(String kind, List<int> payload) async {
     final writer = BlePayloadWriter(chunkSize: _chunkSize);
-    final begin = await _sendAndWait('begin $kind ${payload.length}',
+    final begin = await _sendAndWait(beginCommand(kind, payload.length),
         accepts: (line) => line.startsWith('begin '));
     if (begin != 'begin ok') {
       throw BlePushException(begin.startsWith('begin error')
@@ -609,6 +628,59 @@ class BleSession {
           : commit);
     }
     return commit;
+  }
+
+  Future<void> _pushFirmwareTransfer(
+    Uint8List bytes, {
+    required int offset,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final begin = await _sendAndWait(
+        beginCommand('firmware', bytes.length, offset: offset),
+        timeout: const Duration(seconds: 30),
+        accepts: (line) => line.startsWith('begin '));
+    if (begin != 'begin ok') throw BlePushException(_beginReason(begin));
+    for (var sent = offset; sent < bytes.length; sent += _chunkSize) {
+      final end =
+          sent + _chunkSize < bytes.length ? sent + _chunkSize : bytes.length;
+      await _serialized(
+          () => _data.write(Uint8List.sublistView(bytes, sent, end)));
+      onProgress?.call(end, bytes.length);
+    }
+    final commit = await _sendAndWait('commit',
+        timeout: const Duration(seconds: 60),
+        accepts: (line) => line == 'ota ok' || line.startsWith('ota error '));
+    if (commit != 'ota ok') throw BlePushException(_commitReason(commit));
+  }
+
+  String _beginReason(String line) {
+    switch (line) {
+      case 'begin error bad offset':
+        return 'the mirror refused to resume this update; connect again to start it over';
+      case 'begin error busy':
+        return 'the mirror is already receiving an image';
+      case 'begin error too large':
+        return 'the image is larger than the mirror\'s update partition';
+      case 'begin error unavailable':
+        return 'the mirror could not start an update';
+      case 'unknown command':
+        return 'this mirror\'s firmware is too old for an update over Bluetooth';
+      default:
+        return line;
+    }
+  }
+
+  String _commitReason(String line) {
+    switch (line) {
+      case 'ota error incomplete':
+        return 'the mirror received fewer bytes than the image contains';
+      case 'ota error rejected':
+        return 'the mirror rejected the image';
+      case 'ota error write':
+        return 'the mirror could not write the image to flash';
+      default:
+        return line;
+    }
   }
 
   Future<void> close() async {

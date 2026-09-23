@@ -33,6 +33,30 @@ BleBrightness? parseBrightnessStatus(String line) {
   return BleBrightness(value: value, auto: mode == 'auto');
 }
 
+/// What the mirror reports for `get ota`.
+class BleOtaStatus {
+  const BleOtaStatus(
+      {required this.written, required this.total, required this.active});
+  final int written;
+  final int total;
+  final bool active;
+
+  static BleOtaStatus? parse(String line) {
+    final parts = line.split(' ');
+    if (parts.length != 4 || parts[0] != 'ota') return null;
+    final written = int.tryParse(parts[1]);
+    final total = int.tryParse(parts[2]);
+    if (written == null || total == null) return null;
+    if (parts[3] == 'active') {
+      return BleOtaStatus(written: written, total: total, active: true);
+    }
+    if (parts[3] == 'idle') {
+      return BleOtaStatus(written: written, total: total, active: false);
+    }
+    return null;
+  }
+}
+
 /// A parsed `latency <input_to_render_us> <conn_itvl_ms>` status line.
 class BleLatency {
   const BleLatency({required this.inputToRenderUs, required this.connItvlMs});

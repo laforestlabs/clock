@@ -149,6 +149,13 @@ class _Connection extends MirrorConnection {
   int displayApi = 1;
   Object? connectError;
   final List<String> connects = <String>[];
+
+  /// The pong the link reports once a session is up; null means nothing has
+  /// answered yet, which is what the rest of this file's cases assume.
+  BlePong? pongOverride;
+
+  @override
+  BlePong? get pong => live == null ? null : pongOverride;
   int disconnects = 0;
   bool disposed = false;
 
@@ -1305,6 +1312,23 @@ void main() {
     lan.statusGate!.complete();
     await checked;
     expect(lan.putCalls, 0);
+    f.registry.dispose();
+  });
+
+  test('firmware update is unavailable without a live session', () async {
+    final f = _Fixture();
+    await f.registry.load();
+    final device = await f.registry.addLan('10.0.0.7', 80);
+    expect(device.canUpdateFirmware, isFalse);
+    f.registry.dispose();
+  });
+
+  test('firmware update is available with a live session', () async {
+    final f = _Fixture();
+    await f.registry.load();
+    final device = await f.registry.addBle(f.entry('REMOTE-1'));
+    f.radio.created.last.adopt(_Session());
+    expect(device.canUpdateFirmware, isTrue);
     f.registry.dispose();
   });
 }

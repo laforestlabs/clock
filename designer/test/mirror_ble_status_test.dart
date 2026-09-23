@@ -72,4 +72,21 @@ void main() {
       expect(parseLatencyStatus(''), isNull);
     });
   });
+  group('BleOtaStatus.parse', () {
+    test('parses idle and active sessions', () {
+      expect(BleOtaStatus.parse('ota 0 0 idle')!.active, isFalse);
+      final active = BleOtaStatus.parse('ota 524288 1338096 active');
+      expect(active!.written, 524288);
+      expect(active.total, 1338096);
+      expect(active.active, isTrue);
+    });
+    test('rejects unrelated or malformed replies', () {
+      for (final line in <String>[
+        'unknown command', 'ota ok', 'ota 1 2 3 4', 'ota x 2 active',
+        'ota 1 2 weird',
+      ]) {
+        expect(BleOtaStatus.parse(line), isNull, reason: line);
+      }
+    });
+  });
 }

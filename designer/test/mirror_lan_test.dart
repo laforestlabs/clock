@@ -125,14 +125,6 @@ class FakeMirror {
         req.response.write('{"ok":true,"diag":["note 1"]}');
         break;
 
-      case 'POST /api/ota':
-        await for (final chunk in req) {
-          receivedOta.addAll(chunk);
-        }
-        req.response.headers.contentType = ContentType('application', 'json');
-        req.response.write('{"ok":true}');
-        break;
-
       case 'PUT /api/mode':
         modeCalls++;
         modeContentLength = req.contentLength;
@@ -443,37 +435,6 @@ void main() {
         await tunneled.reachable(timeout: const Duration(milliseconds: 500)),
         isFalse,
       );
-    });
-  });
-
-  group('OTA', () {
-    test('uploads byte-identical content with monotonic progress', () async {
-      final dir = await Directory.systemTemp.createTemp('mirror_lan_test');
-      addTearDown(() => dir.delete(recursive: true));
-      final file = File('${dir.path}/smart_mirror.bin');
-      // A distinctive pattern, larger than one 64KB chunk.
-      final bytes = Uint8List(200 * 1024);
-      for (var i = 0; i < bytes.length; i++) {
-        bytes[i] = (i * 31 + 7) % 256;
-      }
-      await file.writeAsBytes(bytes, flush: true);
-
-      final progress = <(int, int)>[];
-      await lan.uploadFirmware(
-        file,
-        onProgress: (sent, total) => progress.add((sent, total)),
-      );
-
-      expect(fake.receivedOta, bytes,
-          reason: 'server must receive the file verbatim');
-      expect(progress, isNotEmpty);
-      expect(progress.first.$1, greaterThan(0));
-      expect(progress.last, (bytes.length, bytes.length));
-      for (var i = 1; i < progress.length; i++) {
-        expect(progress[i].$1, greaterThan(progress[i - 1].$1),
-            reason: 'progress must be monotonic');
-        expect(progress[i].$2, bytes.length);
-      }
     });
   });
 

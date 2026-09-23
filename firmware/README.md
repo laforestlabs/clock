@@ -31,10 +31,9 @@ tools/firmware_version.py stamp            # record the sources as this version
 
 Three places run `check`, so a change that forgot the bump cannot reach a
 board: the firmware's own configure step (no `idf.py build` starts on a stale
-stamp), `tools/bundle_firmware.sh` (every Android build and
-`tools/build_ota.sh` stage through it, and it checks the staged image is the
-version the tree declares), and `designer/test/bundled_firmware_test.dart` for
-the copy the app ships.
+stamp), `tools/bundle_firmware.sh` (every Android build stage through it, and
+it checks the staged image is the version the tree declares), and
+`designer/test/bundled_firmware_test.dart` for the copy the app ships.
 
 So any change the image is built from is three steps:
 
@@ -351,46 +350,27 @@ before Flutter packs the assets into the APK. A stale bundle is therefore
 not possible, and a machine without ESP-IDF fails the build loudly rather
 than shipping an old image.
 
-The normal loop, with the phone and the mirror on the same WiFi:
+The update travels over the Bluetooth link the app already holds. Neither a
+WiFi address nor the phone being on the mirror's network matters; the phone
+and mirror only need to remain within Bluetooth range. The transfer takes tens
+of seconds rather than WiFi's roughly three seconds.
 
-1. Bump the version: `project(smart_mirror VERSION x.y.z)` in
-   `firmware/CMakeLists.txt`. The version is baked into the image and is what
-   the app shows after the update, so a release that changes it is verifiable.
-2. Rebuild and install the app on the phone (see `designer/README.md`: build
-   the APK explicitly so a stale one is not installed). That build stages the
-   current firmware into the APK; run `tools/build_ota.sh` separately if you
-   want the version-named image file, its size and SHA-256 printed.
-3. In the app: connect to the mirror over Bluetooth, Update firmware, then
-   confirm **Install vx.y.z**. The app uploads the bundled image over HTTP to
-   the mirror's LAN API (`POST /api/ota`), the mirror validates it with
-   `esp_ota_end`, switches the boot partition and reboots; the app polls
-   `/api/status` until the mirror answers and shows the new version.
+1. Bump `project(smart_mirror VERSION x.y.z)` in `firmware/CMakeLists.txt`.
+2. Rebuild and install the app explicitly (see `designer/README.md`); the APK
+   bundles the current image.
+3. Connect over Bluetooth, tap **Update to latest**, and confirm the update.
+   The app streams the image, waits for validation, and reconnects after the
+   mirror reboots.
 
-"Choose file..." and "From URL..." remain in the same dialog for pushing a
-specific image, for example a `tools/build_ota.sh --serve` URL, which serves
-the directory on `http://<pc-ip>:8000/`.
+If Bluetooth drops, the mirror keeps the bytes already written to flash and
+the app resumes from that offset. A rejected image leaves the running app
+untouched: the boot partition is switched only after `esp_ota_end` validates
+the complete image. Rollback remains automatic for an image that crashes
+before the new app marks itself valid.
 
-Rollback is built in and automatic: an image that crashes early (before the
-render task marks the new image valid) is reverted to the previous one on the
-next boot, thanks to `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. A bad update
-therefore ends with the mirror on the old, working image, not on a blank
-panel. The upload leg itself must be over LAN because the image is a 4 MB app
-partition; OTA over BLE is deliberately out of scope.
-
-Notes:
-
-- The phone and the mirror must be on the same LAN for the upload; the app
-  warns about this when the mirror reports no usable WiFi IP.
-- Bluetooth and WiFi are separate paths: a phone can hold a BLE session to a
-  mirror it cannot reach at its LAN address. The usual cause is a VPN on the
-  phone that routes local traffic into its tunnel (Proton VPN's "Allow LAN
-  connections" off, or any full-tunnel VPN), which is invisible from the app —
-  the mirror looks connected. Before an upload the app opens a TCP connection
-  to the mirror and, when that fails, says so and names the two causes instead
-  of failing mid-upload with a socket error.
-- `python3 -m http.server` (which `--serve` wraps) is not a hardened web
-  server. It is fine for a home LAN update session; do not expose it to the
-  internet.
+WiFi remains the transport for layout/status/pictures and those picture uploads
+still require the phone to reach the mirror on the LAN. A VPN can block that
+local picture route; it does not affect OTA over Bluetooth.
 
 ## Data providers
 

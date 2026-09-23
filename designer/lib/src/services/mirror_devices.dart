@@ -288,6 +288,14 @@ class MirrorDevice extends ChangeNotifier {
   /// `host:port` for the LAN transport, null when there is no address.
   String? get endpoint => _host == null ? null : '$_host:$_port';
 
+  /// Whether a firmware update can be sent over a live Bluetooth link.
+  bool get canUpdateFirmware => _connection.session != null;
+
+  /// Shown when [canUpdateFirmware] is false.
+  static const String needsBluetooth =
+      'A firmware update is sent over Bluetooth, so this mirror needs a live '
+      'Bluetooth connection. Connect to it and try again.';
+
   @override
   String toString() => '$name ($key)';
 
@@ -372,6 +380,12 @@ class MirrorDevices extends ChangeNotifier {
   final BleReadyProbe _ensureBleReady;
   final PreviewDirectory _previewDirectoryOf;
   final DateTime Function() _now;
+
+  /// The LAN transport every request to a mirror goes through. Exposed so the
+  /// firmware upload - the one caller that sends bytes without a record-level
+  /// mutation to hang off - uses the same transport as everything else, and so
+  /// a test can answer it instead of the network.
+  LanFactory get lanFactory => _lanFactory;
 
   final List<MirrorDevice> _devices = <MirrorDevice>[];
   final _RefreshGate _refreshGate = _RefreshGate(_refreshLimit);

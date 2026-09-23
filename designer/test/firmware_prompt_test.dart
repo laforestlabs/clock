@@ -27,19 +27,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mirror_designer/src/services/bundled_firmware.dart';
 import 'package:mirror_designer/src/services/mirror_ble.dart';
-import 'package:mirror_designer/src/services/mirror_connection.dart';
 import 'package:mirror_designer/src/services/mirror_devices.dart';
 import 'package:mirror_designer/src/services/mirror_display.dart';
+import 'package:mirror_designer/src/services/mirror_ble_status.dart';
+import 'package:mirror_designer/src/services/mirror_connection.dart';
 import 'package:mirror_designer/src/services/mirror_lan.dart';
-import 'package:mirror_designer/src/ui/device_routes.dart';
 import 'package:mirror_designer/src/ui/device_screen.dart';
+import 'package:mirror_designer/src/ui/device_routes.dart';
+
+const String _firmwareId = 'aaaa00000001';
+String _installedVersion = '';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late String bundledVersion;
-  late Uint8List bundledBytes;
-
   setUpAll(() async {
     // The test binding installs an HttpClient that answers every request with
     // 400 so a test cannot depend on the network. The update path is real
@@ -51,7 +53,7 @@ void main() {
     final bundled = await loadBundledFirmware();
     expect(bundled, isNotNull, reason: 'the app must ship a firmware image');
     bundledVersion = bundled!.version;
-    bundledBytes = bundled.bytes;
+    _installedVersion = bundled.version;
   });
 
   setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
@@ -123,95 +125,32 @@ void main() {
     }
     expect(find.text('Firmware update available'), findsNothing);
   });
-
-  testWidgets('accepting installs the image this app ships', (tester) async {
-    final mirror = _FakeMirror()
-      // The device reboots into the image it was handed: the status read
-      // after the upload is what reports the new version.
-      ..nextVersion = bundledVersion;
-    await tester.runAsync(mirror.start);
-    addTearDown(mirror.close);
-
-    late final _Fixture fixture;
-    late final MirrorDevice device;
-    await tester.runAsync(() async {
-      fixture = _Fixture();
-      addTearDown(fixture.dispose);
-      fixture.lanAt('127.0.0.1:${mirror.port}').version = '0.0.1';
-      device = await fixture.registry.addLan('127.0.0.1', mirror.port);
-      // The Bluetooth alias the rebooted device has to reconnect over. The
-      // candidate must confirm the identity the LAN status reported.
-      await fixture.registry.attachBle(device, fixture.nearby());
-    });
-    final connection = device.connection as _Connection;
-
-    await boot(tester, fixture.registry, device);
-    await pumpUntil(tester, find.text('Firmware update available'));
-    await tester.tap(find.text('Update to v$bundledVersion'));
-    await tester.pump();
-
-    // The upload is real I/O, and every step of it is awaited: run the real
-    // clock so the socket work progresses, then pump so the flow issues its
-    // next step, until the mirror reports the new version back.
-    final updated = find.text('Updated to $bundledVersion');
-    for (var i = 0; i < 300 && updated.evaluate().isEmpty; i++) {
-      await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)));
-      await tester.pump();
-    }
-
-    expect(mirror.receivedOta.length, bundledBytes.length,
-        reason: 'the acknowledged upload must contain the complete image');
-    expect(mirror.receivedOta, orderedEquals(bundledBytes),
-        reason: 'the whole image, byte for byte');
-    expect(updated, findsOneWidget,
-        reason: 'the version read back after the reboot is reported');
-    expect(find.text('Updating firmware'), findsNothing,
-        reason: 'the progress dialog is closed when the update finishes');
-    expect(connection.connects, greaterThan(1),
-        reason: 'the rebooted mirror is reconnected over Bluetooth');
-  });
-
-  testWidgets('accepting a Bluetooth-only mirror says where the image goes',
-      (tester) async {
-    final fixture = _Fixture();
-    addTearDown(fixture.dispose);
-    late final MirrorDevice device;
-    await tester.runAsync(() async {
-      device = await fixture.addBle('REMOTE-1');
-    });
-    expect(device.endpoint, isNull);
-
-    await boot(tester, fixture.registry, device);
-    await pumpUntil(tester, find.text('Firmware update available'));
-    await tester.tap(find.text('Update to v$bundledVersion'));
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.textContaining('no Wi-Fi address'), findsOneWidget,
-        reason: 'the update is megabytes over Wi-Fi, and this record has no '
-            'address for it');
-    expect(find.text('Updating firmware'), findsNothing);
-  });
 }
-
-/// The firmware identity every fake here reports.
-const String _firmwareId = 'aaaa00000001';
 
 /// A live BLE session whose identity the test controls.
 class _Session extends Fake implements BleSession {
-  _Session(this.firmwareId);
-
+  _Session(this.firmwareId, this.onPush);
   final String firmwareId;
+  final void Function() onPush;
 
   @override
   Future<MirrorDeviceInfo?> getDeviceInfo() async => MirrorDeviceInfo(
-        id: firmwareId,
-        displayApi: 1,
-        mode: DisplayMode.clock,
-        baseMode: DisplayMode.clock,
-        pictureReady: false,
-      );
+      id: firmwareId,
+      displayApi: 1,
+      mode: DisplayMode.clock,
+      baseMode: DisplayMode.clock,
+      pictureReady: false);
+  @override
+  Future<BleOtaStatus?> getOtaStatus() async => null;
+  @override
+  Future<void> pushFirmware(
+    Uint8List bytes, {
+    int offset = 0,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    onProgress?.call(bytes.length, bytes.length);
+    onPush();
+  }
 
   @override
   Future<void> close() async {}
@@ -229,6 +168,11 @@ class _Connection extends MirrorConnection {
   /// The version the link's pong reports before an update.
   String version = '0.0.1';
 
+  /// The Wi-Fi address the link's pong reports. 0.0.0.0 is what the firmware
+  /// sends until its station interface has an address, and what these cases
+  /// use unless they are about an address being there.
+  String pongIp = '0.0.0.0';
+
   _Session? live;
   int connects = 0;
 
@@ -242,7 +186,7 @@ class _Connection extends MirrorConnection {
 
   @override
   BlePong? get pong =>
-      live == null ? null : BlePong(version, '0.0.0.0', 'mini', 64, 32);
+      live == null ? null : BlePong(version, pongIp, 'mini', 64, 32);
 
   @override
   String? get deviceName => live == null ? null : 'Twirling Elephant';
@@ -253,8 +197,11 @@ class _Connection extends MirrorConnection {
     required String name,
     Duration timeout = const Duration(seconds: 35),
   }) async {
-    connects++;
-    live = _Session(_firmwareId);
+    live = _Session(_firmwareId, () {
+      version = _installedVersion;
+      live = null;
+      notifyListeners();
+    });
     notifyListeners();
   }
 
@@ -265,8 +212,9 @@ class _Connection extends MirrorConnection {
   }
 }
 
-/// The registry's LAN transport, scripted per endpoint. The upload itself does
-/// not go through this: it builds its own client from the endpoint string.
+/// The registry's LAN transport, scripted per endpoint: every request the app
+/// makes to a mirror goes through it, the firmware upload included, so a case
+/// can see exactly what was asked, and of which address.
 class _Lan extends MirrorLan {
   _Lan(this.endpoint) : super(endpoint);
 
@@ -274,6 +222,12 @@ class _Lan extends MirrorLan {
 
   /// What the mirror reports; the page's firmware prompt reads this.
   String version = '0.0.1';
+
+  /// Whether this endpoint is a real HTTP server. The LAN cases are, and their
+  /// requests really travel over it; a Bluetooth record's address is a bare IP
+  /// on port 80, where no test server can listen, so those cases are answered
+  /// in memory — and record what the app asked the transport to do.
+  bool overHttp = true;
 
   @override
   Future<MirrorStatus> status() async => MirrorStatus(

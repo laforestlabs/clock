@@ -42,7 +42,6 @@ class BlePong {
   final String layout;
   final int width;
   final int height;
-
   static BlePong? parse(String pong) {
     final parts = pong.split(' ');
     if (parts.length < 6 || parts[0] != 'pong') return null;

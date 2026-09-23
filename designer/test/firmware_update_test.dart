@@ -5,12 +5,9 @@
 // already current or silently never offers the update the app was built to
 // carry.
 
-import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_designer/src/services/firmware_update.dart';
+import 'package:mirror_designer/src/services/mirror_ble_status.dart';
 
 void main() {
   group('compareFirmwareVersions', () {
@@ -77,88 +74,32 @@ void main() {
       }
     });
   });
-
-  group('uploadFirmwareAndWait', () {
-    late _FakeMirror mirror;
-    setUp(() async {
-      mirror = _FakeMirror();
-      await mirror.start();
-    });
-    tearDown(() => mirror.close());
-
-    Uint8List image([int length = 200000]) =>
-        Uint8List.fromList(List<int>.generate(length, (i) => i & 0xFF));
-
-    test('sends every byte and returns the version the mirror comes back on',
-        () async {
-      final bytes = image();
-      final progress = <double>[];
-
-      final status = await uploadFirmwareAndWait(
-        mirror.address,
-        bytes,
-        onProgress: (sent, total) => progress.add(sent / total),
-        rebootTimeout: const Duration(seconds: 5),
-        pollInterval: const Duration(milliseconds: 20),
-      );
-
-      expect(mirror.receivedOta, bytes,
-          reason: 'the whole image, byte for byte');
-      expect(progress, isNotEmpty);
-      expect(progress.last, 1.0);
-      expect(status?.version, '9.9.9',
-          reason: 'the version read back after the reboot');
-    });
-
-    test('reports no answer when the mirror never comes back', () async {
-      mirror.statusFails = true;
-
-      final status = await uploadFirmwareAndWait(
-        mirror.address,
-        image(1024),
-        rebootTimeout: const Duration(milliseconds: 300),
-        pollInterval: const Duration(milliseconds: 50),
-      );
-
-      expect(status, isNull);
-      expect(mirror.receivedOta, isNotEmpty,
-          reason: 'the image was still written');
+  group('firmwareResumeOffset', () {
+    test('resumes only matching active sessions', () {
+      expect(firmwareResumeOffset(null, 1338096), 0);
+      expect(
+          firmwareResumeOffset(
+              const BleOtaStatus(written: 5, total: 10, active: false), 10),
+          0);
+      expect(
+          firmwareResumeOffset(
+              const BleOtaStatus(written: 5, total: 9, active: true), 10),
+          0);
+      expect(
+          firmwareResumeOffset(
+              const BleOtaStatus(written: 0, total: 10, active: true), 10),
+          0);
+      expect(
+          firmwareResumeOffset(
+              const BleOtaStatus(written: 524288, total: 1338096, active: true),
+              1338096),
+          524288);
+      expect(
+          firmwareResumeOffset(
+              const BleOtaStatus(
+                  written: 1338096, total: 1338096, active: true),
+              1338096),
+          1338096);
     });
   });
-}
-
-/// A mirror on the LAN: the two endpoints the update path uses, and the image
-/// it was sent. The same contract as firmware/main/net/ota.c and api_server.c.
-class _FakeMirror {
-  late final HttpServer server;
-  final List<int> receivedOta = <int>[];
-  String version = '9.9.9';
-  bool statusFails = false;
-
-  Future<void> start() async {
-    server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    server.listen((req) async {
-      switch ('${req.method} ${req.uri.path}') {
-        case 'POST /api/ota':
-          receivedOta.addAll(await req.fold<List<int>>(
-              <int>[], (all, chunk) => all..addAll(chunk)));
-          req.response.write(jsonEncode(<String, bool>{'ok': true}));
-        case 'GET /api/status':
-          if (statusFails) {
-            req.response.statusCode = 500;
-          } else {
-            req.response.headers.contentType =
-                ContentType('application', 'json');
-            req.response.write(jsonEncode(<String, dynamic>{'version': version}));
-          }
-        default:
-          req.response.statusCode = 404;
-      }
-      await req.response.close();
-    });
-  }
-
-  String get address => '127.0.0.1:${server.port}';
-
-  Future<void> close() => server.close(force: true);
 }

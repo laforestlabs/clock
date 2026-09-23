@@ -52,12 +52,11 @@
 #include "host/ble_hs_adv.h"
 #include "host/util/util.h"
 #include "layout_store.h"
-#include "mirror/game.h"
-#include "mirror/json.h"
 #include "mirror/mirror.h"
+#include "net/ota.h"
 #include "net/provision.h"
 #include "net/wifi.h"
-
+#include "netlog.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "os/os_mbuf.h"
@@ -103,12 +102,9 @@ typedef enum {
     TRANSFER_LAYOUT,
     TRANSFER_CONFIG,
     TRANSFER_WIFI,
-    /* {"mode":"clock"} or {"mode":"picture"}: the saved base display, applied
-     * through the same display store the LAN API writes, so both transports
-     * accept exactly the same document. */
     TRANSFER_DISPLAY,
-    /* Not a payload transfer: a commit-queue job kind with no buffer,
-     * queued by the "factory reset" command. */
+    /* Firmware bytes stream directly into the OTA session; buf stays NULL. */
+    TRANSFER_FIRMWARE,
     TRANSFER_RESET
 } transfer_kind_t;
 
@@ -162,7 +158,11 @@ static void unlock(void) { xSemaphoreGive(s_lock); }
 
 static void advertise(void);
 
-/* ---------------------------------------------------------- transfer */
+static bool transfer_open_locked(void)
+{
+    /* A firmware transfer owns the OTA session instead of a staging buffer. */
+    return s_xfer.kind != TRANSFER_NONE;
+}
 
 static void transfer_clear_locked(void)
 {
@@ -327,39 +327,61 @@ static void cmd_get_device(void)
                 display_store_picture_ready() ? "true" : "false");
 }
 
+static void cmd_begin_firmware(int len, int offset)
+{
+    if (len < 1 || offset < 0) {
+        send_status("begin error bad offset");
+        return;
+    }
+    lock();
+    if (offset == 0 && transfer_open_locked()) {
+        unlock();
+        send_status("begin error busy");
+        return;
+    }
+    const esp_err_t err = ota_session_begin((size_t)len, (size_t)offset);
+    if (err != ESP_OK) {
+        unlock();
+        send_status("begin error %s",
+                    err == ESP_ERR_INVALID_ARG
+                        ? (offset > 0 ? "bad offset" : "too large")
+                        : "unavailable");
+        return;
+    }
+    s_xfer.kind = TRANSFER_FIRMWARE;
+    s_xfer.declared = (size_t)len;
+    s_xfer.received = (size_t)offset;
+    unlock();
+    ESP_LOGI(TAG, "begin firmware, %d bytes at offset %d", len, offset);
+    send_status("begin ok");
+}
+
 static void cmd_begin(const char *arg)
 {
     char kind[16];
-    int len = 0;
-    if (sscanf(arg, "%15s %d", kind, &len) != 2) {
+    int len = 0, offset = 0;
+    const int fields = sscanf(arg, "%15s %d %d", kind, &len, &offset);
+    if (fields < 2) {
         send_status("begin error bad kind");
         return;
     }
-
+    if (strcmp(kind, "firmware") == 0) {
+        cmd_begin_firmware(len, fields < 3 ? 0 : offset);
+        return;
+    }
     transfer_kind_t k;
-    if (strcmp(kind, "layout") == 0) {
-        k = TRANSFER_LAYOUT;
-    } else if (strcmp(kind, "wifi") == 0) {
-        k = TRANSFER_WIFI;
-    } else if (strcmp(kind, "config") == 0) {
-        k = TRANSFER_CONFIG;
-    } else if (strcmp(kind, "display") == 0) {
-        k = TRANSFER_DISPLAY;
-    } else {
-        send_status("begin error bad kind");
-        return;
-    }
-    if (len < 1 || len > MAX_PAYLOAD) {
+    if (strcmp(kind, "layout") == 0) k = TRANSFER_LAYOUT;
+    else if (strcmp(kind, "wifi") == 0) k = TRANSFER_WIFI;
+    else if (strcmp(kind, "config") == 0) k = TRANSFER_CONFIG;
+    else if (strcmp(kind, "display") == 0) k = TRANSFER_DISPLAY;
+    else { send_status("begin error bad kind"); return; }
+    if (len < 1 || len > MAX_PAYLOAD ||
+        (k == TRANSFER_DISPLAY && len > DISPLAY_MODE_JSON_MAX)) {
         send_status("begin error too large");
         return;
     }
-    if (k == TRANSFER_DISPLAY && len > DISPLAY_MODE_JSON_MAX) {
-        send_status("begin error too large");
-        return;
-    }
-
     lock();
-    if (s_xfer.buf != NULL) {
+    if (transfer_open_locked()) {
         unlock();
         send_status("begin error busy");
         return;
@@ -374,7 +396,6 @@ static void cmd_begin(const char *arg)
     s_xfer.declared = (size_t)len;
     s_xfer.received = 0;
     unlock();
-
     ESP_LOGI(TAG, "begin %s, %d bytes", kind, len);
     send_status("begin ok");
 }
@@ -382,23 +403,32 @@ static void cmd_begin(const char *arg)
 static void cmd_commit(void)
 {
     lock();
-    if (s_xfer.buf == NULL) {
+    if (!transfer_open_locked()) {
         unlock();
         send_status("commit error no transfer");
         return;
     }
     if (s_xfer.received != s_xfer.declared) {
-        ESP_LOGW(TAG, "commit with %u of %u bytes",
-                 (unsigned)s_xfer.received, (unsigned)s_xfer.declared);
         transfer_clear_locked();
         unlock();
         send_status("commit error length mismatch");
         return;
     }
-
-    /* Detach the staging buffer: the caller owns it from here on, so the
-     * transfer slot is free for the next push while the commit work runs on
-     * the copied-out payload. */
+    if (s_xfer.kind == TRANSFER_FIRMWARE) {
+        unlock();
+        const esp_err_t err = ota_session_finish();
+        if (err != ESP_OK) {
+            send_status("ota error %s", err == ESP_ERR_INVALID_STATE
+                                            ? "incomplete" : "rejected");
+            return;
+        }
+        transfer_reset();
+        netlog_record(NETLOG_EVT_OTA_OK, 0, 0);
+        send_status("ota ok");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        return;
+    }
     const transfer_kind_t kind = s_xfer.kind;
     char *buf = s_xfer.buf;
     const size_t len = s_xfer.received;
@@ -407,23 +437,13 @@ static void cmd_commit(void)
     s_xfer.declared = 0;
     s_xfer.received = 0;
     unlock();
-
-    /* Hand the payload to the commit task: the transfer state is free and
-     * the store/config modules are themselves locked, so a concurrent push
-     * can start cleanly while the commit work runs off the host task. */
     if (s_commit_q == NULL) {
-        /* ble_commit_init() failing at boot is the only way to get here. */
-        ESP_LOGE(TAG, "commit queue missing, rejecting");
         send_status("commit error busy");
         heap_caps_free((void *)buf);
         return;
     }
     const commit_job_t job = { .kind = kind, .buf = buf, .len = len };
     if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
-        /* The phone pushes one transfer at a time, so a full queue means a
-         * commit is already in flight. Reject rather than block the host
-         * task on a queue send. */
-        ESP_LOGW(TAG, "commit queue full, rejecting");
         send_status("commit error busy");
         heap_caps_free((void *)buf);
         return;
@@ -558,8 +578,19 @@ static void commit_task(void *arg)
 
 static void cmd_abort(void)
 {
+    lock();
+    const bool firmware = s_xfer.kind == TRANSFER_FIRMWARE;
+    unlock();
     transfer_reset();
+    if (firmware) ota_session_abort();
     send_status("abort ok");
+}
+
+static void cmd_get_ota(void)
+{
+    const size_t total = ota_session_total();
+    send_status("ota %u %u %s", (unsigned)ota_session_written(),
+                (unsigned)total, total == 0 ? "idle" : "active");
 }
 
 static void cmd_get_brightness(void)
@@ -715,10 +746,8 @@ static void ble_wifi_scan_done_cb(void)
                     results[i].security == PROVISION_SEC_OPEN ? "true" : "false",
                     provision_security_name(results[i].security));
     }
-    send_status("wifi-scan done %d", n);
     heap_caps_free(results);
 }
-
 static void ble_wifi_result_cb(bool connected, const char *arg)
 {
     send_status(connected ? "wifi connect ok %s" : "wifi connect error %s",
@@ -735,6 +764,8 @@ static void handle_cmd(char *line)
         cmd_get_config();
     } else if (strcmp(line, "get device") == 0) {
         cmd_get_device();
+    } else if (strcmp(line, "get ota") == 0) {
+        cmd_get_ota();
     } else if (strcmp(line, "get brightness") == 0) {
         cmd_get_brightness();
     } else if (strcmp(line, "get wifi") == 0) {
@@ -797,15 +828,12 @@ static void handle_cmd(char *line)
 }
 
 /* --------------------------------------------------------- GATT svc */
-
 static int cmd_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                         struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     (void)conn_handle; (void)attr_handle; (void)arg;
-
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len == 0) return 0;
-
     char line[MAX_CMD_LEN + 1];
     if (len > MAX_CMD_LEN) {
         send_status("cmd too long");
@@ -813,7 +841,6 @@ static int cmd_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     os_mbuf_copydata(ctxt->om, 0, len, line);
     line[len] = '\0';
-
     handle_cmd(line);
     return 0;
 }
@@ -822,19 +849,28 @@ static int data_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     (void)conn_handle; (void)attr_handle; (void)arg;
-
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len == 0) return 0;
-
     lock();
-    if (s_xfer.buf == NULL) {
-        /* No transfer open: the chunk is dropped, per the protocol. */
+    if (!transfer_open_locked()) {
         unlock();
         return 0;
     }
-
-    /* Never write past the declared length. A client that overshoots is
-     * violating the protocol; commit's length check reports it. */
+    if (s_xfer.kind == TRANSFER_FIRMWARE) {
+        const size_t room = s_xfer.declared - s_xfer.received;
+        const size_t take = len < room ? len : room;
+        uint8_t chunk[512];
+        os_mbuf_copydata(ctxt->om, 0, take, chunk);
+        unlock();
+        if (ota_session_append(chunk, take) != ESP_OK) {
+            send_status("ota error write");
+            return BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
+        lock();
+        s_xfer.received += take;
+        unlock();
+        return 0;
+    }
     const size_t room = s_xfer.declared - s_xfer.received;
     const size_t take = len < room ? len : room;
     os_mbuf_copydata(ctxt->om, 0, take, s_xfer.buf + s_xfer.received);

@@ -228,13 +228,13 @@ peer can also stall the device for seconds at a time, repeatably.
 2. `ble.c` — `get token` / `set token <32 hex>`, behind the same pairing policy as
    `factory reset`; the designer stores it in its settings.
 3. `api_server.c` — require `Authorization: Bearer <token>` on `PUT /api/layout`,
-   `POST /api/ota`, `GET /api/layout` and `GET /api/log`; leave `GET /api/status` open but
+   `POST /api/image`, `GET /api/layout` and `GET /api/log`; leave `GET /api/status` open but
    free of anything sensitive. Add a `Host` allow-list check and never send a wildcard CORS
    header.
 4. `mirror_lan.dart` — send the header, and report 401 distinctly from "wrong address".
 
-**Done when.** `curl -X POST --data-binary @firmware/build/smart_mirror.bin http://<ip>/api/ota`
-returns 401 and the running app is untouched; the designer's LAN push and OTA still work.
+**Done when.** `curl -X POST --data-binary @firmware/build/smart_mirror.bin http://<ip>/api/image`
+returns 401 and the running app is untouched; the designer's LAN push still works.
 
 ---
 

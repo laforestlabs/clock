@@ -1,10 +1,10 @@
 /*
- * flash_write.h - run a flash-write callback on a dedicated internal-DRAM task.
+ * flash_write.h - run flash-write callbacks on a dedicated internal-DRAM task.
  *
  * Flash writes (esp_ota_*, SPIFFS) freeze the flash cache, and ESP-IDF asserts
  * the calling task's stack is in internal DRAM while caches are frozen. The
- * httpd task lives in PSRAM (internal DRAM is the scarce resource), so flash
- * writes reachable from httpd are routed through this module instead.
+ * writer runs either a short batched job (NVS, SPIFFS, a layout commit) or the
+ * whole OTA stream; callers are serialized by this module.
  */
 #ifndef MIRROR_FLASH_WRITE_H
 #define MIRROR_FLASH_WRITE_H
@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-/* Call once at boot before any flash_write_run(). */
+/* Call once at boot before any flash_write_run() or flash_write_submit(). */
 void flash_write_init(void);
 
 /*
@@ -24,6 +24,13 @@ void flash_write_init(void);
  */
 esp_err_t flash_write_run(void (*fn)(void *ctx), void *ctx);
 
+/*
+ * Queue a job and return without waiting for it. The writer task releases the
+ * mutex and its "done" credit when the job returns, so the next sync or async
+ * caller starts only after this one has finished. Use for a job that runs
+ * longer than the caller can block for (the OTA stream).
+ */
+esp_err_t flash_write_submit(void (*fn)(void *ctx), void *ctx);
 #ifdef __cplusplus
 }
 #endif

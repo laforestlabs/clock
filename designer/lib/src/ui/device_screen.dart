@@ -259,6 +259,8 @@ class _DeviceScreenState extends State<DeviceScreen>
         context,
         deviceVersion: version,
         bundledVersion: bundled.version,
+        blockedReason:
+            _device.canUpdateFirmware ? null : MirrorDevice.needsBluetooth,
       );
       if (!accepted || !mounted) return;
       await _installBundledFirmware(bundled);
@@ -271,61 +273,36 @@ class _DeviceScreenState extends State<DeviceScreen>
   ///
   /// The upload writes straight to an address rather than through the
   /// registry's mutations, so everything it needs is captured before the first
-  /// await — the record, the endpoint and the firmware identity that endpoint
-  /// has to answer as — and the identity is confirmed again on a fresh status
-  /// read. An address that now belongs to another mirror is never written to.
+  /// await: the record, the address to send to (see
+  /// [MirrorDevice.updateAddress]) and, when that address came from the
+  /// record, the firmware identity it has to answer as.
+  ///
+  /// An address the mirror reported itself — the pong on a live Bluetooth link
+  /// — needs no LAN identity check: it came from this device, over the link
+  /// being held. One taken from the record is re-confirmed against a fresh
+  /// status read, because an address can be handed to another mirror between a
+  /// poll and a write. Either way an image is never written to hardware the
+  /// owner did not choose.
   Future<void> _installBundledFirmware(BundledFirmware bundled) async {
     final device = _device;
-    final endpoint = device.endpoint;
-    final expectedId = device.id;
-    if (endpoint == null) {
-      _toast('This mirror has no Wi-Fi address yet. Set up its network '
-          'first; the image is megabytes over Wi-Fi.');
+    if (device.removed) return;
+    if (device.connection.session == null) {
+      _toast(MirrorDevice.needsBluetooth);
       return;
     }
-    if (!await ensureMirrorReachable(context, endpoint)) return;
-    if (!mounted) return;
-
-    // Through the registry, so a mismatched identity invalidates the endpoint
-    // exactly as a poll would rather than being noticed only here.
-    await widget.devices.refresh(device);
-    if (!mounted) return;
-    final answeredId = device.id;
-    final identityOk = device.endpoint == endpoint &&
-        device.lanReachable &&
-        (expectedId == null || answeredId == null || answeredId == expectedId);
-    if (!identityOk) {
-      _toast(device.endpoint != endpoint
-          ? 'That address now answers as a different mirror. Nothing was sent.'
-          : 'The mirror did not answer at $endpoint. Nothing was sent.');
-      return;
-    }
-
     try {
-      final status = await pushFirmwareWithProgress(
-        context,
-        ip: endpoint,
-        bytes: bundled.bytes,
-        label: 'bundled v${bundled.version}',
-      );
+      final version = await pushFirmwareOverBleWithProgress(context,
+          devices: widget.devices,
+          device: device,
+          bytes: bundled.bytes,
+          label: 'bundled v${bundled.version}');
       if (!mounted) return;
-      if (status != null) {
-        // The mirror rebooted and the Bluetooth link died with it. Only the
-        // captured device is reconnected: a reboot of the chosen mirror is no
-        // reason to touch another one's link.
-        if (device.bleId != null) {
-          try {
-            await widget.devices.connect(device);
-          } catch (_) {
-            // The poll below reports the state; a failed reconnect is not
-            // worth an extra dialog after an update that worked.
-          }
-        }
+      _toast(version == null
+          ? 'Update uploaded; the mirror is rebooting'
+          : 'Updated to $version');
+      if (version != null) {
         unawaited(widget.devices.refresh(device, includeFrame: true));
       }
-      _toast(status == null
-          ? 'Update uploaded; the mirror is rebooting'
-          : 'Updated to ${status.version}');
     } catch (e) {
       if (mounted) _toast('Update: ${describeRegistryError(e)}');
     }
@@ -511,6 +488,8 @@ class _DeviceScreenState extends State<DeviceScreen>
       context,
       deviceVersion: version,
       bundledVersion: bundled.version,
+      blockedReason:
+          _device.canUpdateFirmware ? null : MirrorDevice.needsBluetooth,
     );
     if (!accepted || !mounted) return;
     _offeredFirmware.add('${_device.key}|$version');

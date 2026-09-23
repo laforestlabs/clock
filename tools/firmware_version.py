@@ -19,7 +19,7 @@ Usage:
 
 Both firmware build paths run it: firmware/CMakeLists.txt at configure time
 (so no idf.py build starts on a stale stamp) and tools/bundle_firmware.sh,
-which every Android build and tools/build_ota.sh stage through. So after
+which every Android build and `tools/bundle_firmware.sh` stage through. After
 changing anything the image is built from:
 
     1. bump  firmware/CMakeLists.txt: project(smart_mirror VERSION x.y.z)
