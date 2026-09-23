@@ -80,17 +80,17 @@ class MotionControl {
     this.escapeAfter = const Duration(seconds: 1),
     this.escapeTolerance = 0.02,
     this.escapeTrust = 0.25,
-    this.restRate = 0.15,
-    this.restTolerance = 0.3,
+    this.restRate = 0.8,
+    this.restTolerance = 1.2,
     this.nominalStep = const Duration(milliseconds: 20),
-  }) : assert(deadZone >= 0 && deadZone < travel),
-       assert(smoothing > 0 && smoothing <= 1),
-       assert(trustReject > trustAngle && trustAngle >= 0),
-       assert(fallbackReject > fallbackTolerance && fallbackTolerance >= 0),
-       assert(correctionSeconds > 0),
-       assert(fallbackCorrectionSeconds > 0),
-       assert(nominalStep > Duration.zero),
-       assert(escapeTrust >= 0 && escapeTrust < 1);
+  })  : assert(deadZone >= 0 && deadZone < travel),
+        assert(smoothing > 0 && smoothing <= 1),
+        assert(trustReject > trustAngle && trustAngle >= 0),
+        assert(fallbackReject > fallbackTolerance && fallbackTolerance >= 0),
+        assert(correctionSeconds > 0),
+        assert(fallbackCorrectionSeconds > 0),
+        assert(nominalStep > Duration.zero),
+        assert(escapeTrust >= 0 && escapeTrust < 1);
 
   /// The wire value for an axis nobody is driving, matching `ML_AXIS_IDLE` in
   /// `gamekit/include/mirror/game.h`: the game holds its position.
@@ -121,9 +121,10 @@ class MotionControl {
 
   /// The Earth's gravity, as the accelerometer should read it on a still phone.
   static const double _gravityEarth = 9.80665;
+  static final double _neutralDirectionLimit = 1 - math.cos(8 * math.pi / 180);
 
-  /// Samples accepted at rest to establish neutral. The player holds the phone
-  /// still for a moment, and that hold becomes the middle of the travel.
+  /// Samples averaged to establish neutral. Normal hand wobble is allowed;
+  /// a larger movement starts a fresh window at the player's new grip.
   final int calibrationSamples;
 
   /// Radians of tilt from neutral that saturate the travel.
@@ -179,12 +180,12 @@ class MotionControl {
   /// The trust used by that recovery, in [0, 1).
   final double escapeTrust;
 
-  /// rad/s: the most the phone may be rotating for a calibration sample —
-  /// or the round's own accelerometer samples — to be treated as at rest.
+  /// rad/s: maximum rotation during neutral collection (about 46°/s).
+  /// This does not change the in-game fusion's trust thresholds.
   final double restRate;
 
-  /// m/s²: how far the magnitude may sit from Earth's gravity for a
-  /// calibration sample to be treated as at rest.
+  /// m/s²: allowed departure from Earth's gravity during neutral collection.
+  /// Tolerates hand acceleration, while rejecting a shake or free fall.
   final double restTolerance;
 
   /// The step used when a sample carries no usable timestamp.
@@ -237,9 +238,8 @@ class MotionControl {
   /// report and both axes are [idle].
   bool get calibrated => _calibrated;
 
-  /// How many samples have been accepted toward [calibrationSamples]. Samples
-  /// taken while the phone is being moved are not accepted, so this is what the
-  /// "hold still" view shows the player.
+  /// Samples collected in the current neutral window. Small movements are
+  /// averaged; a shake or a substantial grip change restarts the window.
   int get calibrationProgress => _calibrated ? calibrationSamples : _accepted;
 
   /// Whether the gyroscope is feeding the estimate. False without one, and
@@ -264,10 +264,6 @@ class MotionControl {
     _lastAccelStamp = stamp;
     final double mag = math.sqrt(x * x + y * y + z * z);
     if (mag < 1e-3) return;
-    if (!_calibrated) {
-      _acceptForNeutral(x, y, z, mag);
-      return;
-    }
     // A gyro that has gone quiet is no gyro: nothing can predict with it, so
     // the fallback gate takes over rather than the innovation gate freezing
     // every rotation.
@@ -276,6 +272,10 @@ class MotionControl {
         stamp != null &&
         stamp.difference(_gyroStamp!).inMicroseconds > _staleMicros) {
       _gyroLive = false;
+    }
+    if (!_calibrated) {
+      _acceptForNeutral(x, y, z, mag);
+      return;
     }
     final double ax = x / mag, ay = y / mag, az = z / mag;
     final bool assisted = _gyroLive;
@@ -370,8 +370,7 @@ class MotionControl {
       // hand accelerating the phone (the magnitude moved with it) or a gyro
       // that is talking nonsense. Only the second may be recovered from, and
       // only a magnitude that is at rest answers the question.
-      if (_gated >= _escapeSeconds &&
-          (mag - _m0).abs() <= escapeTolerance) {
+      if (_gated >= _escapeSeconds && (mag - _m0).abs() <= escapeTolerance) {
         return escapeTrust;
       }
       return 0;
@@ -382,21 +381,25 @@ class MotionControl {
     return ramp.clamp(0.0, 1.0);
   }
 
-  /// Take one sample into the neutral hold, if the phone is at rest by all
-  /// three tests: gravity magnitude, no rotation, and a direction that agrees
-  /// with the samples already taken. The third one is what a translation
-  /// during the hold fails — a movement changes the direction and nothing
-  /// else.
+  /// Average a short, approximately steady grip, not laboratory stillness.
+  /// Calibration's eight-degree envelope is deliberately separate from the
+  /// much tighter in-game correction gate. Never keep a partial hold anchored
+  /// to an orientation the player has left: start again at their new grip.
   void _acceptForNeutral(double x, double y, double z, double mag) {
-    if ((mag - _gravityEarth).abs() > restTolerance) return;
-    if (_gyroSeen && _gyroRate > restRate) return;
+    if ((mag - _gravityEarth).abs() > restTolerance ||
+        (_gyroLive && _gyroRate > restRate)) {
+      _resetNeutralWindow();
+      return;
+    }
     final double ax = x / mag, ay = y / mag, az = z / mag;
     if (_accepted > 0) {
-      final double norm = math.sqrt(_sumX * _sumX + _sumY * _sumY + _sumZ * _sumZ);
+      final double norm =
+          math.sqrt(_sumX * _sumX + _sumY * _sumY + _sumZ * _sumZ);
       if (norm < 1e-9) return;
-      final double d =
-          1 - (ax * _sumX + ay * _sumY + az * _sumZ) / norm;
-      if (d > _dTolerate) return;
+      final double d = 1 - (ax * _sumX + ay * _sumY + az * _sumZ) / norm;
+      if (d > _neutralDirectionLimit) {
+        _resetNeutralWindow();
+      }
     }
     _sumX += ax;
     _sumY += ay;
@@ -404,7 +407,8 @@ class MotionControl {
     _sumMag += mag;
     _accepted++;
     if (_accepted < calibrationSamples) return;
-    final double norm = math.sqrt(_sumX * _sumX + _sumY * _sumY + _sumZ * _sumZ);
+    final double norm =
+        math.sqrt(_sumX * _sumX + _sumY * _sumY + _sumZ * _sumZ);
     if (norm < 1e-9) return; // degenerate hold: neutral stays unestablished.
     _gx = _sumX / norm;
     _gy = _sumY / norm;
@@ -415,6 +419,11 @@ class MotionControl {
     _roll = 0;
     _pitch = 0;
     _calibrated = true;
+  }
+
+  void _resetNeutralWindow() {
+    _accepted = 0;
+    _sumX = _sumY = _sumZ = _sumMag = 0;
   }
 
   /// The two angle offsets from neutral, low-pass filtered. The estimate is

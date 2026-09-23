@@ -40,8 +40,7 @@ int _posFor(double deg) {
   const double dead = 0.5 * math.pi / 180;
   if (rad.abs() <= dead) return 0;
   final double scaled = (rad.abs() - dead) / (travel - dead);
-  final int value =
-      ((scaled > 1 ? 1.0 : scaled) * MotionControl.full).round();
+  final int value = ((scaled > 1 ? 1.0 : scaled) * MotionControl.full).round();
   return rad < 0 ? -value : value;
 }
 
@@ -117,8 +116,7 @@ class _Rig {
 
   /// Rotate by [deg] over [samples] samples, then hold the new angle for
   /// [settle] samples.
-  void turn(MotionControl m, double deg,
-      {int samples = 10, int settle = 0}) {
+  void turn(MotionControl m, double deg, {int samples = 10, int settle = 0}) {
     final double rate = deg * math.pi / 180 / (samples * _step);
     for (var i = 0; i < samples; i++) {
       sample(m, rate: rate);
@@ -266,10 +264,12 @@ void main() {
       final noise = math.Random(7);
       for (var i = 0; i < 300; i++) {
         final List<double> a = r._accel;
-        m.addAccelSample(a[0] + noise.nextDouble() * 0.1 - 0.05,
+        m.addAccelSample(
+            a[0] + noise.nextDouble() * 0.1 - 0.05,
             a[1] + noise.nextDouble() * 0.1 - 0.05,
             a[2] + noise.nextDouble() * 0.1 - 0.05);
-        m.addGyroSample(noise.nextDouble() * 0.01 - 0.005,
+        m.addGyroSample(
+            noise.nextDouble() * 0.01 - 0.005,
             noise.nextDouble() * 0.01 - 0.005,
             noise.nextDouble() * 0.01 - 0.005);
       }
@@ -298,7 +298,8 @@ void main() {
       // would be posX 29991, a swing across 91% of the travel.
       r.linear = <double>[0, 1.5, 0];
       r.hold(m, 25);
-      expect(m.posX, held, reason: 'the player moved with the hand, not the tilt');
+      expect(m.posX, held,
+          reason: 'the player moved with the hand, not the tilt');
 
       r.linear = <double>[0, 0, 0];
       r.hold(m, 25);
@@ -440,41 +441,44 @@ void main() {
       expect(m.posY, 0);
     });
 
-    test('calibration refuses samples taken while the phone is moving', () {
-      // A translation during the hold is a direction change with no gyro rate.
-      // Note the size: 0.5 m/s² perpendicular to gravity moves the magnitude by
-      // 0.013 m/s² (second order) but the *direction* by 2.9 degrees — which is
-      // exactly why the direction test, not the magnitude test, is what
-      // protects the neutral.
+    test('neutral averages ordinary hand wobble rather than timing out', () {
+      final m = MotionControl();
+      final r = _Rig.roll(angle: 20 * math.pi / 180);
+      for (var i = 0; i < 20; i++) {
+        // A small wrist oscillation plus half a m/s² of hand acceleration.
+        r.linear = <double>[0, 0, i.isEven ? 0.5 : -0.5];
+        r.sample(m, rate: i < 5 || i >= 15 ? 0.4 : -0.4);
+      }
+      expect(m.calibrated, isTrue);
+      r.linear = <double>[0, 0, 0];
+      r.hold(m);
+      expect(m.posX.abs(), lessThan(_posFor(1)));
+      expect(m.posY, 0);
+    });
+
+    test('a changed grip replaces the old partial neutral hold', () {
       final m = MotionControl();
       final r = _Rig.roll();
-      for (var i = 0; i < 10; i++) {
-        r.sample(m);
-      }
-      expect(m.calibrationProgress, 10);
-
-      r.linear = <double>[0, 0.5, 0];
-      final int stalled = m.calibrationProgress;
-      for (var i = 0; i < 10; i++) {
-        r.sample(m);
-      }
-      expect(m.calibrationProgress, stalled,
-          reason: 'a movement counted toward the neutral hold');
-
-      // A larger movement is refused by the magnitude test as well.
-      r.linear = <double>[0, 3, 0];
-      for (var i = 0; i < 10; i++) {
-        r.sample(m);
-      }
-      expect(m.calibrationProgress, stalled);
-
-      r.linear = <double>[0, 0, 0];
-      while (!m.calibrated) {
-        r.sample(m);
-      }
-      r.hold(m, 60);
+      r.hold(m, 8);
+      r.turn(m, 25, samples: 10);
+      expect(m.calibrated, isFalse);
+      r.hold(m, 20);
+      expect(m.calibrated, isTrue);
+      r.hold(m);
       expect(m.posX, 0);
       expect(m.posY, 0);
+    });
+
+    test('a stale rotating gyro cannot block neutral calibration', () {
+      final m = MotionControl();
+      final stamp = DateTime.fromMillisecondsSinceEpoch(0);
+      m.addGyroSample(2, 0, 0, stamp: stamp);
+      for (var i = 0; i < 20; i++) {
+        m.addAccelSample(0, 0, _g,
+            stamp: stamp.add(Duration(milliseconds: 300 + i * 20)));
+      }
+      expect(m.calibrated, isTrue);
+      expect(m.posX, 0);
     });
 
     test('a hold that never stops moving never establishes neutral', () {
