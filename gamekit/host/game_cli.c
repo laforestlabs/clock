@@ -136,23 +136,17 @@ static const step GALLERY_DEMO[] = {
     { 4, 1, 4, 1 }, { 80, 1, 4, 0 },
 };
 
-/* Jumpman demo: hold Right and jump every twenty ticks, held for eight, which
- * is what it takes to clear a block rather than clip its corner. Ten of those
- * jumps run the whole first course at seed 1 without losing a life and reach
- * the flag, so a capture shows the course, a jump and a stomp rather than a
- * player wedged against a block. Codes: 0 Left, 1 Right, 2 Jump. */
+/* Jumpman demo: hold Right and use short, regular jumps through the opening
+ * beats. The authored level is deliberately readable in a 90-frame capture:
+ * the player clears the first goomba and approaches the pipe. Codes: 0 Left,
+ * 1 Right, 2 Jump. */
 static const step JUMPMAN_DEMO[] = {
-    { 0,  1, 1, 1 },
-    { 2, 1, 2, 1 }, { 10, 1, 2, 0 },
-    { 22, 1, 2, 1 }, { 30, 1, 2, 0 },
-    { 42, 1, 2, 1 }, { 50, 1, 2, 0 },
-    { 62, 1, 2, 1 }, { 70, 1, 2, 0 },
-    { 82, 1, 2, 1 }, { 90, 1, 2, 0 },
-    { 102, 1, 2, 1 }, { 110, 1, 2, 0 },
-    { 122, 1, 2, 1 }, { 130, 1, 2, 0 },
-    { 142, 1, 2, 1 }, { 150, 1, 2, 0 },
-    { 162, 1, 2, 1 }, { 170, 1, 2, 0 },
-    { 182, 1, 2, 1 }, { 190, 1, 2, 0 },
+    { 0, 1, 1, 1 },
+    { 4, 1, 2, 1 }, { 10, 1, 2, 0 },
+    { 22, 1, 2, 1 }, { 28, 1, 2, 0 },
+    { 40, 1, 2, 1 }, { 46, 1, 2, 0 },
+    { 58, 1, 2, 1 }, { 64, 1, 2, 0 },
+    { 76, 1, 2, 1 }, { 82, 1, 2, 0 },
 };
 
 static void print_ascii(const uint8_t *rgb, int w, int h)

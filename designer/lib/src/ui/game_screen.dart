@@ -406,8 +406,8 @@ class _GameScreenState extends State<GameScreen>
       goal: 'Tilt to aim and hold Shoot to hit targets. Consecutive hits earn more points.',
     ),
     'jumpman': _GameCopy(
-      goal: 'Run right, jump the gaps and land on the blobs to squash them. '
-          'Reach the flag on each of the three courses.',
+      goal: 'Run right, jump the gaps and stomp the goombas. Bump the ? blocks for coins, '
+          'grab a mushroom to take an extra hit, and reach the flagpole.',
     ),
   };
 

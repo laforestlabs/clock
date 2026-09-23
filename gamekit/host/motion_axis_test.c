@@ -710,8 +710,8 @@ static void test_cave(void)
 
 /* The leftmost column of the player on the panel. The cap is red, and the
  * boots that share it are in the same columns, so the scan lands on the same
- * edge either way. The course's flag is red too, but it stands at the end of a
- * 160-column course and the camera never gets near it inside 30 columns. */
+ * edge either way. The level's flag is red too, but it stands at the end of a
+ * 256-column level and the camera never gets near it inside 30 columns. */
 static int jumpman_player_x(ml_game_session *s)
 {
     const uint8_t *rgba = ml_game_render_rgba(s);
@@ -724,11 +724,9 @@ static int jumpman_player_x(ml_game_session *s)
 static void test_jumpman(void)
 {
     printf("jumpman: a deliberate tilt runs, a level phone stands still\n");
-    /* Every step here is kept inside the first 30 columns, because the camera
-     * follows the player once it is past the middle of the window: what is
-     * read is the column on the panel, which stops moving with the player at
-     * that point. The opening of a course holds nothing that can end a life,
-     * so nothing here dies while the running contract is being read. */
+    /* Every step here is kept inside the first 30 columns. The first enemy is
+     * at column 23, beyond the roughly 12 columns this script reaches, so
+     * nothing here dies while the running contract is being read. */
     ml_game_session *s = open_game("jumpman", 1);
     if (!s) return;
 
