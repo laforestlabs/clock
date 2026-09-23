@@ -1071,12 +1071,10 @@ void main() {
   testWidgets('LAN discovery adds only mirrors that answer', (tester) async {
     final dashboard = _Dashboard()
       ..advertised.addAll(<LanDevice>[
-        LanDevice(
-            'smart-mirror-aabb._smartmirror._tcp.local', '127.0.0.1', 8080),
+        LanDevice('smart-mirror-aaaa00000001.local', '127.0.0.1', 8080),
         // Advertises the same service but is not a mirror: multicast announces
         // a service, not a device.
-        LanDevice(
-            'smart-mirror-cccc._smartmirror._tcp.local', '127.0.0.1', 8081),
+        LanDevice('smart-mirror-cccc00000002.local', '127.0.0.1', 8081),
       ]);
     addTearDown(dashboard.registry.dispose);
     await loadRegistry(tester, dashboard.registry);

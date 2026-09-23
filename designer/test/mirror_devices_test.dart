@@ -776,8 +776,8 @@ void main() {
     final fixture = _Fixture();
     await fixture.registry.load();
     fixture.advertised.addAll(<LanDevice>[
-      LanDevice('Kitchen._smartmirror._tcp.local', '10.0.0.1', 80),
-      LanDevice('Garage._smartmirror._tcp.local', '10.0.0.2', 80),
+      LanDevice('smart-mirror-aaaa00000001.local', '10.0.0.1', 80),
+      LanDevice('smart-mirror-bbbb00000002.local', '10.0.0.2', 80),
     ]);
     fixture.lanAt('10.0.0.1:80').statusBody =
         () => mirrorStatus(id: 'aaaa00000001', name: 'Kitchen');
@@ -800,6 +800,25 @@ void main() {
     await second.registry.refreshDiscovery();
     expect(second.registry.discoveryError, isNotNull);
     second.registry.dispose();
+    fixture.registry.dispose();
+  });
+
+  test('a mirror too old to report a name keeps its advertised hostname',
+      () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.advertised.add(LanDevice('smart-mirror.local', '10.0.0.9', 80));
+    // Firmware from before the identity fields: /api/status describes a panel
+    // but carries no id and no name.
+    fixture.lanAt('10.0.0.9:80').statusBody = () => mirrorStatus();
+
+    await fixture.registry.refreshDiscovery();
+
+    final device = fixture.registry.devices.single;
+    expect(device.name, 'smart-mirror.local',
+        reason:
+            'the name discovery found stands until the mirror names itself');
+    expect(device.endpoint, '10.0.0.9:80');
     fixture.registry.dispose();
   });
 

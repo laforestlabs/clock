@@ -35,6 +35,24 @@ const MethodChannel _multicastChannel = MethodChannel(
 class LanDevice {
   LanDevice(this.name, this.ip, this.port);
 
+  /// The device one answered SRV/A pair describes.
+  ///
+  /// The name is the SRV target — the mirror's hostname on the LAN
+  /// (`smart-mirror-e072a1f66570.local`), one per board and the same string
+  /// the manual address field accepts. The PTR name is deliberately not used:
+  /// it is the service *instance* FQDN, and a board whose firmware predates
+  /// the identity fields calls itself "Smart Mirror", so its tile would be
+  /// named `Smart Mirror._smartmirror._tcp.local` rather than a device. A
+  /// record with no target leaves the name empty; the registry then lists the
+  /// address.
+  factory LanDevice.fromRecords(
+    SrvResourceRecord service,
+    IPAddressResourceRecord address,
+  ) =>
+      LanDevice(service.target, address.address.address, service.port);
+
+  /// What the mirror is listed under until its own status names it: the SRV
+  /// target, or empty when the advertisement carried no hostname.
   final String name;
   final String ip;
   final int port;
@@ -130,7 +148,7 @@ Stream<LanDevice> browseMdns({
         continue; // no A answer; skip
       }
 
-      yield LanDevice(ptr.domainName, a.address.address, srv.port);
+      yield LanDevice.fromRecords(srv, a);
     }
   } finally {
     client?.stop();
