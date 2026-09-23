@@ -3,9 +3,8 @@
  * flash writes that must not run on a PSRAM-backed task (see flash_write.h).
  *
  * The stack is static so it lives in internal DRAM at link time and is not
- * subject to the fragmented internal heap, which has only ~15KB free at
- * runtime. Callers are serialized by a mutex; jobs may be synchronous or
- * asynchronous.
+ * subject to the fragmented internal heap. Callers are serialized by a binary
+ * semaphore; the writer may release it after synchronous or asynchronous jobs.
  */
 #include "flash_write.h"
 
@@ -41,13 +40,14 @@ static void flash_writer_task(void *arg)
 
 void flash_write_init(void)
 {
-    s_mutex = xSemaphoreCreateMutex();
+    s_mutex = xSemaphoreCreateBinary();
     s_ready = xSemaphoreCreateBinary();
     s_done = xSemaphoreCreateBinary();
     if (s_mutex == NULL || s_ready == NULL || s_done == NULL) {
         ESP_LOGE("flash_write", "could not create synchronization objects");
         return;
     }
+    xSemaphoreGive(s_mutex);
 
     TaskHandle_t handle = xTaskCreateStatic(flash_writer_task, "flash_write",
                                             FLASH_WRITER_STACK_WORDS, NULL,

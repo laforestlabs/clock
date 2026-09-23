@@ -1508,9 +1508,9 @@ class MirrorDevices extends ChangeNotifier {
       device._touch();
       throw _wrapped(e);
     }
-    if (device._id == null || info?.id != device._id) {
+    if (info == null || (device._id != null && info.id != device._id)) {
       await _closeQuietly(connection);
-      device._error = device._id == null || info == null
+      device._error = info == null
           ? 'Update firmware before pairing: this mirror’s identity could not be confirmed.'
           : 'That Bluetooth device is a different mirror.';
       device._touch();
