@@ -1,10 +1,11 @@
-# Golden render digests. FNV-1a 64 over the exact
-# gamma-corrected RGB888 bytes sent to the panel.
+# Golden render digests. FNV-1a 64 over the exported
+# gamma-corrected RGB888 frame at the layout's brightness,
+# which is what the designer's preview draws.
 #
 # Regenerate deliberately after an intended rendering change:
 #   MIRROR_UPDATE_GOLDEN=1 make -f Makefile.host test
 #
-# render engine version 11
+# render engine version 12
 
 mini:typical             05f1c77254e37526
 mini:cold                585e696e30df7510
@@ -26,3 +27,23 @@ precip:typical           2243ac04a3934fef
 precip:cold              b2085443910d9446
 precip:overflow          c982a73134627987
 precip:evening           247f1fe74a664db5
+wind:typical             26c3202d87dfde4f
+wind:cold                8737530111826c70
+wind:overflow            be88410ae27ae643
+wind:evening             82739e443cfe70af
+air:typical              216b37699aa1854f
+air:cold                 c47ef406a1057f7a
+air:overflow             15928a07cd0d767b
+air:evening              5fc438641bee6801
+traffic:typical          fe59a0bfff32783e
+traffic:cold             02397e3d928f9026
+traffic:overflow         a06910cebcca0b1d
+traffic:evening          9225e228cf516cc5
+sky:typical              41508dfdbd5f26cd
+sky:cold                 c429853d4d46c1be
+sky:overflow             7eee68005c8b7a7d
+sky:evening              d6fa707c862d66b5
+forecast:typical         ca208c1c0abebf98
+forecast:cold            45a12e9dac090d57
+forecast:overflow        16038e51166c28e5
+forecast:evening         5bb041a3edff517b

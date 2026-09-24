@@ -95,12 +95,16 @@ static void bootstrap_clock(const char *date)
 
 esp_err_t http_get(const char *url, const char *bearer,
                    char *buf, size_t cap, size_t *out_len,
+                   int *out_status,
                    int timeout_ms)
 {
     if (url == NULL || buf == NULL || cap == 0) return ESP_ERR_INVALID_ARG;
 
     buf[0] = '\0';
     if (out_len != NULL) *out_len = 0;
+    /* 0 until a response arrives, so a caller can tell "the service refused
+     * the request" from "the request never reached a service". */
+    if (out_status != NULL) *out_status = 0;
 
     char date[DATE_CAP] = {0};
 
@@ -136,6 +140,7 @@ esp_err_t http_get(const char *url, const char *bearer,
 
     const int64_t content_length = esp_http_client_fetch_headers(client);
     const int status = esp_http_client_get_status_code(client);
+    if (out_status != NULL && status >= 100) *out_status = status;
 
     /* No status line at all means the transport gave up before the server
      * answered: a connectivity problem, not a service one. Report it as

@@ -19,6 +19,11 @@ class MirrorConfig {
     this.clock12h,
     this.tempF,
     this.flip180,
+    this.routeFrom,
+    this.routeTo,
+    this.routeLabel,
+    this.trafficKey,
+    this.routeKeySet = false,
   });
 
   /// The name the mirror broadcasts over Bluetooth and shows in the app's
@@ -52,6 +57,24 @@ class MirrorConfig {
   /// layout one. Null leaves the device unchanged.
   final bool? flip180;
 
+  /// The commute the traffic widget reports on: two "lat,lon" pairs and the
+  /// label printed under the travel time. Null leaves the device's stored
+  /// route unchanged, which is why a dialog the owner never touched pushes
+  /// neither end.
+  final String? routeFrom;
+  final String? routeTo;
+  final String? routeLabel;
+
+  /// The routing service's API key. Null leaves the stored key alone, and the
+  /// device never sends one back, so a null here is the normal case after a
+  /// prefill: the owner types a new key or the old one stays.
+  final String? trafficKey;
+
+  /// Read-only: whether the device already holds a routing API key. Parsed
+  /// from the device's reply, never pushed, because the key itself is the one
+  /// field the device withholds.
+  final bool routeKeySet;
+
   /// Only the non-null fields, which is exactly what the firmware accepts.
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (name != null) 'name': name,
@@ -63,10 +86,14 @@ class MirrorConfig {
         if (clock12h != null) 'clock12h': clock12h,
         if (tempF != null) 'temp_unit': tempF! ? 'F' : 'C',
         if (flip180 != null) 'flip180': flip180,
+        if (routeFrom != null) 'route_from': routeFrom,
+        if (routeTo != null) 'route_to': routeTo,
+        if (routeLabel != null) 'route_label': routeLabel,
+        if (trafficKey != null) 'traffic_key': trafficKey,
       };
 
   /// Parse a decoded JSON object. Returns null when the object carries none
-  /// of the nine known fields.
+  /// of the thirteen known fields.
   static MirrorConfig? fromJson(Map<String, dynamic> json) {
     String? str(String key) => json[key] is String ? json[key] as String : null;
 
@@ -84,6 +111,11 @@ class MirrorConfig {
     final tempUnit = str('temp_unit');
     final tempF = tempUnit == 'F' ? true : (tempUnit == 'C' ? false : null);
     final flip180 = json['flip180'] is bool ? json['flip180'] as bool : null;
+    final routeFrom = str('route_from');
+    final routeTo = str('route_to');
+    final routeLabel = str('route_label');
+    final routeKeySet =
+        json['route_key_set'] is bool ? json['route_key_set'] as bool : false;
     if (name == null &&
         timezone == null &&
         latitude == null &&
@@ -92,7 +124,11 @@ class MirrorConfig {
         brightness == null &&
         clock12h == null &&
         tempF == null &&
-        flip180 == null) {
+        flip180 == null &&
+        routeFrom == null &&
+        routeTo == null &&
+        routeLabel == null &&
+        !routeKeySet) {
       return null;
     }
     return MirrorConfig(
@@ -105,6 +141,10 @@ class MirrorConfig {
       clock12h: clock12h,
       tempF: tempF,
       flip180: flip180,
+      routeFrom: routeFrom,
+      routeTo: routeTo,
+      routeLabel: routeLabel,
+      routeKeySet: routeKeySet,
     );
   }
 
@@ -116,7 +156,9 @@ class MirrorConfig {
   /// weather.place[24]), brightness an integer in [0, 255], name non-empty
   /// after trimming, at most 24 chars, printable ASCII only (the firmware's
   /// JSON decoder would silently land non-ASCII bytes as '?', and the
-  /// advertising packet is size-bound besides).
+  /// advertising packet is size-bound besides), the commute endpoints
+  /// "lat,lon" pairs in range, the route label printable ASCII of at most 15
+  /// characters, and the routing API key printable ASCII of at most 64.
   String? validate() {
     if (name != null) {
       final n = name!.trim();
@@ -152,8 +194,54 @@ class MirrorConfig {
     if (brightness != null && (brightness! < 0 || brightness! > 255)) {
       return 'Brightness must be an integer in [0, 255]';
     }
+    if (routeFrom != null) {
+      final problem = _routeError(routeFrom!, 'Origin');
+      if (problem != null) return problem;
+    }
+    if (routeTo != null) {
+      final problem = _routeError(routeTo!, 'Destination');
+      if (problem != null) return problem;
+    }
+    if (routeLabel != null && routeLabel!.length > 15) {
+      return 'Route label is too long (max 15)';
+    }
+    if (routeLabel != null && !_isPrintableAscii(routeLabel!)) {
+      return 'Route label can only contain printable characters';
+    }
+    if (trafficKey != null && trafficKey!.length > 64) {
+      return 'API key is too long (max 64)';
+    }
+    if (trafficKey != null && !_isPrintableAscii(trafficKey!)) {
+      return 'API key can only contain printable characters';
+    }
     return null;
   }
+}
+
+/// Null when [v] is a "lat,lon" pair the firmware will accept, otherwise a
+/// message naming the offending end of the route.
+///
+/// Stricter than double.parse around the comma: the firmware reads the pair
+/// with strtod and requires the comma to follow the latitude exactly, so
+/// whitespace anywhere is rejected here too rather than being accepted by the
+/// dialog and refused by the device.
+String? _routeError(String v, String field) {
+  if (v.contains(RegExp(r'\s'))) return '$field must be "lat,lon"';
+  final comma = v.indexOf(',');
+  if (comma < 0) return '$field must be "lat,lon"';
+  final lat = double.tryParse(v.substring(0, comma));
+  final lon = double.tryParse(v.substring(comma + 1));
+  if (lat == null || lon == null) return '$field must be "lat,lon"';
+  if (lat < -90 || lat > 90) return 'Latitude must be a number in [-90, 90]';
+  if (lon < -180 || lon > 180) return 'Longitude must be a number in [-180, 180]';
+  return null;
+}
+
+bool _isPrintableAscii(String s) {
+  for (final c in s.codeUnits) {
+    if (c < 0x20 || c > 0x7E) return false;
+  }
+  return true;
 }
 
 /// A named timezone option for the configure dialog.

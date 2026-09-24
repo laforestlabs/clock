@@ -1,0 +1,19 @@
+{
+  "name": "forecast",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "text", "id": "heading",
+      "rect": [0, 0, 64, 7],
+      "font": "sans8", "fit": true, "text": "3 DAY",
+      "color": "#7A8A99", "align": "center" },
+
+    { "type": "forecast", "id": "forecast",
+      "rect": [0, 8, 64, 24],
+      "icon_set": "wx16", "font": "display-thin", "fit": true,
+      "color": "#FFFFFF",
+      "colors": ["#C9CDD6", "#5AA0E0", "#E8EEF4"] }
+  ]
+}

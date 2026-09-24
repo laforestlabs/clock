@@ -20,6 +20,12 @@ void main() {
         'agenda',
         'todo',
         'countdown',
+        'wind',
+        'air',
+        'traffic',
+        'sun',
+        'moon',
+        'forecast',
       ]) {
         expect(keysFor(type), contains('scale'), reason: '$type has no scale');
         expect(keysFor(type), contains('fit'), reason: '$type has no fit');
@@ -36,6 +42,12 @@ void main() {
         'agenda',
         'todo',
         'countdown',
+        'wind',
+        'air',
+        'traffic',
+        'sun',
+        'moon',
+        'forecast',
       ]) {
         expect(
           keysFor(type),

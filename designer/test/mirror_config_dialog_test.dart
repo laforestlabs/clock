@@ -100,9 +100,12 @@ void main() {
     expect(placeLabel(tester), 'Berlin');
     expect(chosenTimezone(tester), 'CET-1CEST,M3.5.0,M10.5.0/3');
 
-    await tester.tap(find.text('GPS'));
+    // The dialog hosts three pickers now (the mirror's own location and the
+    // commute's two ends), so the source selector is addressed by position:
+    // the mirror's is the first.
+    await tester.tap(find.text('GPS').first);
     await tester.pump();
-    await tester.tap(find.text('Use my location'));
+    await tester.tap(find.text('Use my location').first);
     await tester.pump();
     await tester.pump();
 
@@ -131,11 +134,16 @@ void main() {
     await tester.pumpAndSettle();
     final cfg = saved()!;
     // A partial push: the firmware applies what it is given, so a device with
-    // no stored point keeps whatever it had.
+    // no stored point keeps whatever it had. The same holds for the commute:
+    // an untouched dialog must not replace the stored route or its key.
     expect(cfg.latitude, isNull);
     expect(cfg.longitude, isNull);
     expect(cfg.place, isNull);
     expect(cfg.timezone, isNull);
+    expect(cfg.routeFrom, isNull);
+    expect(cfg.routeTo, isNull);
+    expect(cfg.routeLabel, isNull);
+    expect(cfg.trafficKey, isNull);
   });
 
   testWidgets('a stored point that is not a point prefills nothing',

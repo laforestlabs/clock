@@ -658,6 +658,150 @@ static int wx_category(int code)
     return 3;
 }
 
+/* --------------------------------------------------------------- geometry */
+
+/*
+ * Small-integer square root. The core links no libm - the host build's LDLIBS
+ * is empty and nothing here includes <math.h> - and every shape below lives on
+ * a panel measured in tens of pixels, so a linear search is cheaper than
+ * saddling both the host and ESP-IDF builds with a math library.
+ */
+static int isqrt_int(int v)
+{
+    int r = 0;
+    if (v <= 0) return 0;
+    while ((r + 1) * (r + 1) <= v) r++;
+    return r;
+}
+
+/* A filled circle, one horizontal run per row, clipped by the canvas. */
+static void fill_disc(ml_canvas *c, int cx, int cy, int r, ml_rgb color)
+{
+    if (r <= 0) return;
+    for (int dy = -r; dy <= r; dy++) {
+        const int hw = isqrt_int(r * r - dy * dy);
+        ml_canvas_hline(c, cx - hw, cy + dy, hw * 2 + 1, color);
+    }
+}
+
+/* The 16-point compass directions in screen coordinates (y grows downwards),
+ * quarter-scaled by 100 so they stay whole numbers. Index 0 points up, index
+ * 4 right, and every entry is a unit vector to within a pixel. */
+static const int k_dir_x[16] = {0, 38, 71, 92, 100, 92, 71, 38,
+                                0, -38, -71, -92, -100, -92, -71, -38};
+static const int k_dir_y[16] = {-100, -92, -71, -38, 0, 38, 71, 92,
+                                100, 92, 71, 38, 0, -38, -71, -92};
+
+/*
+ * A solid triangle, filled one candidate pixel at a time: the pixel centre is
+ * tested against the three edges with integer cross products, which needs no
+ * scanline sorting, no division and no libm. Vertices are in hundredths of a
+ * pixel so the direction table's vectors stay exact.
+ */
+static void fill_triangle(ml_canvas *c, int ax, int ay, int bx, int by,
+                          int cx, int cy, ml_rgb color)
+{
+    int xl = ax < bx ? ax : bx; if (cx < xl) xl = cx;
+    int xr = ax > bx ? ax : bx; if (cx > xr) xr = cx;
+    int yt = ay < by ? ay : by; if (cy < yt) yt = cy;
+    int yb = ay > by ? ay : by; if (cy > yb) yb = cy;
+
+    /* One pixel of slack on every side: truncating division is not floor for
+     * negative values, and ml_canvas_set bounds-checks anyway. */
+    for (int y = yt / 100 - 1; y <= yb / 100 + 1; y++) {
+        for (int x = xl / 100 - 1; x <= xr / 100 + 1; x++) {
+            const int px = x * 100 + 50, py = y * 100 + 50;
+            const int c1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+            const int c2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+            const int c3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+            if ((c1 >= 0 && c2 >= 0 && c3 >= 0) ||
+                (c1 <= 0 && c2 <= 0 && c3 <= 0)) {
+                ml_canvas_set(c, x, y, color);
+            }
+        }
+    }
+}
+
+/*
+ * An arrow pointing along one of the 16 compass sectors: a stamped shaft, a
+ * triangular head with its apex on the tip, and a round tail cap at the pivot.
+ *
+ * The head is a triangle rather than a disc. A disc centred on the tip has a
+ * rounded front, and a shape with two rounded ends cannot be told from its
+ * own mirror image - which is exactly the one thing a wind arrow has to say.
+ * The shaft stops at the head's base for the same reason: run to the tip it
+ * pokes through the taper and blunts the point. It is stamped in half-pixel
+ * steps (and every vertex is in hundredths) so a diagonal stroke stays
+ * connected instead of breaking into dots.
+ */
+static void draw_arrow(ml_canvas *c, int cx, int cy, int r, int dir16, ml_rgb color)
+{
+    const int d  = dir16 & 15;
+    const int ux = k_dir_x[d], uy = k_dir_y[d];
+    const int th = r / 3 < 1 ? 1 : r / 3;
+
+    const int hl  = r * 3 / 4 < 2 ? 2 : r * 3 / 4;   /* head length */
+    const int hh  = r / 2 < 2 ? 2 : r / 2;           /* head half-width */
+    const int tip_x = cx * 100 + ux * r;
+    const int tip_y = cy * 100 + uy * r;
+    const int base_x = tip_x - ux * hl;
+    const int base_y = tip_y - uy * hl;
+
+    for (int t = 0; t <= (r - hl) * 2; t++) {
+        const int x = cx + ux * t / 200;
+        const int y = cy + uy * t / 200;
+        ml_canvas_fill_rect(c, ML_RECT(x - th, y - th, th * 2 + 1, th * 2 + 1), color);
+    }
+
+    /* The base corners are the shaft's end offset along the perpendicular,
+     * which is the direction vector turned a quarter turn. */
+    fill_triangle(c, tip_x, tip_y,
+                  base_x - uy * hh, base_y + ux * hh,
+                  base_x + uy * hh, base_y - ux * hh,
+                  color);
+
+    fill_disc(c, cx, cy, th, color);
+}
+
+/*
+ * Which sector the arrow should point along for a wind blowing *from*
+ * deg_from: downwind, where the air is going. The text names the direction
+ * the wind comes from (the meteorological convention); the arrow shows what it
+ * is doing, so a south-westerly blows towards the north-east.
+ */
+static int wind_arrow_dir(float deg_from)
+{
+    return (int)(((deg_from + 180.0f) / 22.5f) + 0.5f) & 15;
+}
+
+/*
+ * The split the wind and moon widgets share: a square graphic box on the left,
+ * at most half the rect wide so the text always keeps the other half, and the
+ * rest of the rect for the text. *text is always filled in, and holds the
+ * whole rect when there is no room for a graphic - which is also what the
+ * font is chosen against, so the text is sized to the column it is drawn in
+ * rather than to a box half of which the graphic occupies.
+ *
+ * Returns the square's side, or 0 when the box is too small for one.
+ */
+static int graphic_split(const ml_widget *w, int min_r, ml_rect *text)
+{
+    *text = w->rect;
+
+    if (w->rect.h < 8) return 0;
+
+    const int S = w->rect.h < w->rect.w / 2 ? w->rect.h : w->rect.w / 2;
+    if (S / 2 - 1 < min_r) return 0;
+
+    text->x += S + 1;
+    text->w -= S + 1;
+    if (text->w <= 0) {
+        *text = w->rect;
+        return 0;
+    }
+    return S;
+}
+
 /* ---------------------------------------------------------------- widgets */
 
 /*
@@ -727,6 +871,15 @@ static int temp_display(const ml_model *m, float celsius)
 {
     if (!m->temp_f) return (int)(celsius + 0.5f);
     return (int)(celsius * 9.0f / 5.0f + 32.0f + 0.5f);
+}
+
+/* Wind speed in the device's display unit, following the same convention as
+ * temp_display: miles per hour when the device shows Fahrenheit, km/h when it
+ * shows Celsius. Providers report km/h, as Open-Meteo does. */
+static int wind_display(const ml_model *m, float kph)
+{
+    if (!m->temp_f) return (int)(kph + 0.5f);
+    return (int)(kph * 0.6213712f + 0.5f);
 }
 
 /* The temperature line, the one line a weather widget is sized against. */
@@ -1033,6 +1186,439 @@ static void draw_precip_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     }
 }
 
+/*
+ * Wind block: speed, direction and gust, with the direction also drawn as an
+ * arrow that points downwind. Modelled on the weather block, including the
+ * split between a square graphic on the left and a text column on the right,
+ * so the same widget is useful in a full-width strip and in a narrow column.
+ */
+static void draw_wind_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    char buf[TEXT_BUF];
+
+    /* The text column, and the square the arrow is drawn in when there is
+     * room for one. The font is chosen against the column, not the whole
+     * rect, so a fitted widget spends its size on text it can actually show
+     * instead of overflowing the half the arrow took. */
+    ml_rect box;
+    const int S = graphic_split(w, 1, &box);
+    ml_widget col = *w;
+    col.rect = box;
+
+    /* Sized against the speed line, which is the one drawn without clipping
+     * and the one anybody reads across a room. */
+    if (m->weather.valid) {
+        snprintf(buf, sizeof(buf), "%d %s", wind_display(m, m->weather.wind_kph),
+                 m->temp_f ? "mph" : "km/h");
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(&col, "display24", buf, &sc);
+    const int fh     = ml_text_height(f, sc);
+    const int line_h = fh + row_gap(w);
+
+    if (!m->weather.valid) {
+        ml_text_draw(c, f, w->rect.x, w->rect.y, "--", dim(w->color), sc);
+        return;
+    }
+
+    if (S > 0 && m->weather.wind_dir_valid) {
+        draw_arrow(c, w->rect.x + S / 2, w->rect.y + S / 2, S / 2 - 1,
+                   wind_arrow_dir(m->weather.wind_dir_deg), w->color);
+    }
+
+    int y  = box.y;
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw(c, f, align_x(w->align, box, tw), y, buf, w->color, sc);
+    y += line_h;
+
+    /* Row 2: where the wind comes from and how hard it gusts. With no
+     * direction the cardinal is a lie, so only the gust is shown. */
+    if (y + fh <= w->rect.y + w->rect.h) {
+        if (m->weather.wind_dir_valid) {
+            snprintf(buf, sizeof(buf), "%s %d",
+                     ml_wind_cardinal(m->weather.wind_dir_deg),
+                     wind_display(m, m->weather.wind_gust_kph));
+        } else {
+            snprintf(buf, sizeof(buf), "G%d", wind_display(m, m->weather.wind_gust_kph));
+        }
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, box, tw), y, box.w, buf,
+                             secondary(w), sc);
+        y += line_h;
+    }
+
+    if (y + fh <= w->rect.y + w->rect.h) {
+        snprintf(buf, sizeof(buf), "HUM %d%%", m->weather.humidity_pct);
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, box, tw), y, box.w, buf,
+                             secondary(w), sc);
+        y += line_h;
+    }
+
+    if (y + fh <= w->rect.y + w->rect.h) {
+        snprintf(buf, sizeof(buf), "FEELS %d" ML_DEGREE "%c",
+                 temp_display(m, m->weather.feels_c), m->temp_f ? 'F' : 'C');
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, box, tw), y, box.w, buf,
+                             secondary(w), sc);
+    }
+}
+
+/* The air widget's rows are built from the same idea as the wind block: one
+ * linesize that fits the box, then as many secondary rows as there is height. */
+static void draw_air_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    char buf[TEXT_BUF];
+    const bool us   = w->us_aqi;
+    const int  aqi  = us ? m->air.aqi_us : m->air.aqi;
+
+    if (m->air.valid) {
+        snprintf(buf, sizeof(buf), "%d %s", aqi, ml_aqi_label(aqi, us));
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
+    const int fh     = ml_text_height(f, sc);
+    const int line_h = fh + row_gap(w);
+
+    if (!m->air.valid) {
+        ml_text_draw(c, f, w->rect.x, w->rect.y, "--", dim(w->color), sc);
+        return;
+    }
+
+    int y  = w->rect.y;
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw(c, f, align_x(w->align, w->rect, tw), y, buf, w->color, sc);
+    y += line_h;
+
+    if (y + fh <= w->rect.y + w->rect.h) {
+        snprintf(buf, sizeof(buf), "UV %d", (int)(m->air.uv_index + 0.5f));
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y, w->rect.w,
+                             buf, secondary(w), sc);
+        y += line_h;
+    }
+
+    /* Which plant is the problem, not all three: a 64px column has room for a
+     * name and a number, and the bars below carry the comparison. */
+    int best = 0;
+    if (m->air.pollen_valid) {
+        for (int i = 1; i < ML_POLLEN_TYPES; i++) {
+            if (m->air.pollen[i] > m->air.pollen[best]) best = i;
+        }
+        if (y + fh <= w->rect.y + w->rect.h) {
+            static const char *const plants[ML_POLLEN_TYPES] = {"Alder", "Birch", "Grass"};
+            const float v = m->air.pollen[best] > 0.0f ? m->air.pollen[best] : 0.0f;
+            snprintf(buf, sizeof(buf), "%s %d", plants[best], (int)(v + 0.5f));
+            tw = ml_text_width(f, buf, sc);
+            ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y, w->rect.w,
+                                 buf, secondary(w), sc);
+            y += line_h;
+        }
+    }
+
+    /*
+     * One bar per plant in whatever height is left, 60 grains/m3 at full
+     * scale. The cap is a display choice, not a health threshold: the row
+     * above carries the exact number, and without a cap a single bad day
+     * would flatten the other two bars to nothing.
+     */
+    const int bars_h = w->rect.y + w->rect.h - y;
+    if (!m->air.pollen_valid || bars_h < 6) return;
+
+    const int plot_w = w->rect.w;
+    const int base_y = w->rect.y + w->rect.h - 1;
+    const int area_h = bars_h;
+    ml_canvas_hline(c, w->rect.x, base_y, plot_w, secondary(w));
+
+    for (int i = 0; i < ML_POLLEN_TYPES; i++) {
+        float v = m->air.pollen[i];
+        if (v < 0.0f) v = 0.0f;
+        if (v > 60.0f) v = 60.0f;
+        if (v <= 0.0f) continue;
+
+        const int x0 = w->rect.x + (plot_w * i) / ML_POLLEN_TYPES;
+        const int x1 = w->rect.x + (plot_w * (i + 1)) / ML_POLLEN_TYPES;
+        /* Same one-pixel gap as the precip chart, and only once the columns
+         * are wide enough to survive losing it. */
+        const int pad = (x1 - x0 >= 4) ? 1 : 0;
+        const int bx0 = x0 + pad;
+        const int bx1 = x1 - pad;
+        if (bx1 <= bx0) continue;
+
+        const int bar_h = (int)(v / 60.0f * (area_h - 1) + 0.5f);
+        if (bar_h <= 0) continue;
+
+        ml_canvas_fill_rect(c, ML_RECT(bx0, base_y - bar_h, bx1 - bx0, bar_h),
+                            w->color);
+    }
+}
+
+/* Commute block: how long the drive takes, and how much of that is traffic. */
+static void draw_traffic_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    char buf[TEXT_BUF];
+
+    const bool have = m->traffic.valid;
+    if (have) {
+        snprintf(buf, sizeof(buf), "%d min", (m->traffic.travel_s + 30) / 60);
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(w, "display24", buf, &sc);
+    const int fh     = ml_text_height(f, sc);
+    const int line_h = fh + row_gap(w);
+
+    if (!have) {
+        ml_text_draw(c, f, w->rect.x, w->rect.y, "--", dim(w->color), sc);
+        return;
+    }
+
+    int y  = w->rect.y;
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw(c, f, align_x(w->align, w->rect, tw), y, buf, w->color, sc);
+    y += line_h;
+
+    if (y + fh <= w->rect.y + w->rect.h) {
+        /* Under a minute of delay is "on time": "+0 min" reads like a
+         * measurement, and the number is noise at that scale anyway. */
+        if (m->traffic.delay_s < 60 && m->traffic.delay_s > -60) {
+            snprintf(buf, sizeof(buf), "on time");
+        } else {
+            const int d = m->traffic.delay_s;
+            snprintf(buf, sizeof(buf), "%+d min",
+                     (d + (d < 0 ? -30 : 30)) / 60);
+        }
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y, w->rect.w,
+                             buf, secondary(w), sc);
+        y += line_h;
+    }
+
+    if (m->traffic.label[0] && y + fh <= w->rect.y + w->rect.h) {
+        tw = ml_text_width(f, m->traffic.label, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, w->rect, tw), y, w->rect.w,
+                             m->traffic.label, secondary(w), sc);
+    }
+}
+
+/*
+ * Sun widget: a day track with the elapsed daylight filled in, the two times
+ * under it and the length of the day. The track is drawn even with no times so
+ * the box reads as an empty day rather than a drawing that failed.
+ */
+static void draw_sun_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    const int bar_h   = w->rect.h >= 12 ? 4 : 2;
+    const int track_y = w->rect.y + bar_h - 1;
+
+    ml_canvas_hline(c, w->rect.x, track_y, w->rect.w, secondary(w));
+
+    const bool have_times = m->weather.sunrise_min >= 0 &&
+                            m->weather.sunset_min > m->weather.sunrise_min;
+    if (!have_times) return;
+
+    /*
+     * The filled fraction is where the clock sits between sunrise and sunset.
+     * An unsynced clock is treated as sunrise rather than as "now": the bar
+     * starts empty and fills as the day is known, instead of inventing a
+     * position from a zeroed time.
+     */
+    float frac = 0.0f;
+    if (m->now.valid) {
+        const int now_min = m->now.hour * 60 + m->now.minute;
+        frac = (float)(now_min - m->weather.sunrise_min) /
+               (float)(m->weather.sunset_min - m->weather.sunrise_min);
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+    }
+    const int fill_w = (int)(w->rect.w * frac + 0.5f);
+    if (fill_w > 0) {
+        ml_canvas_fill_rect(c, ML_RECT(w->rect.x, w->rect.y, fill_w, bar_h),
+                            w->color);
+    }
+
+    /* Text below the bar, sized against a copy of the widget whose rect starts
+     * under it, so the font tracks the space that is actually left. */
+    ml_widget text = *w;
+    text.rect.y += bar_h;
+    text.rect.h -= bar_h;
+    if (text.rect.h <= 0) return;
+
+    char buf[TEXT_BUF];
+    snprintf(buf, sizeof(buf), "%02d:%02d %02d:%02d",
+             m->weather.sunrise_min / 60, m->weather.sunrise_min % 60,
+             m->weather.sunset_min / 60, m->weather.sunset_min % 60);
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(&text, "display24", buf, &sc);
+    const int fh     = ml_text_height(f, sc);
+    int y  = text.rect.y;
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw_clipped(c, f, align_x(w->align, text.rect, tw), y, text.rect.w,
+                         buf, w->color, sc);
+    y += fh + row_gap(w);
+
+    if (y + fh <= text.rect.y + text.rect.h) {
+        const int dur = m->weather.sunset_min - m->weather.sunrise_min;
+        snprintf(buf, sizeof(buf), "%dh %02dm", dur / 60, dur % 60);
+        tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, text.rect, tw), y,
+                             text.rect.w, buf, secondary(w), sc);
+    }
+}
+
+/*
+ * Moon widget: the phase drawn as a lit limb, with the illumination and the
+ * phase's name beside it. The terminator comes from the same fixed-point
+ * cosine the moon.illum binding uses, so the picture and the percentage are
+ * two views of one number.
+ */
+static void draw_moon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    const float phase = ml_moon_phase(m);
+
+    ml_rect box;
+    const int S = graphic_split(w, 2, &box);
+    const int r = S > 0 ? S / 2 - 1 : 0;
+    ml_widget col = *w;
+    col.rect = box;
+
+    char buf[TEXT_BUF];
+    if (phase < 0.0f) snprintf(buf, sizeof(buf), "--");
+    else              snprintf(buf, sizeof(buf), "%d%%", ml_moon_illum(phase));
+
+    int sc = ML_SCALE_1X;
+    const ml_font *f = choose_font(&col, "display24", buf, &sc);
+    const int fh     = ml_text_height(f, sc);
+    const int line_h = fh + row_gap(w);
+
+    if (phase < 0.0f) {
+        ml_text_draw(c, f, w->rect.x, w->rect.y, "--", dim(w->color), sc);
+        return;
+    }
+
+    if (r > 0) {
+        const int cx = w->rect.x + S / 2;
+        const int cy = w->rect.y + S / 2;
+        const int cos_q = ml_cos_q15(phase);
+        for (int dy = -r; dy <= r; dy++) {
+            const int hw = isqrt_int(r * r - dy * dy);
+            /*
+             * The terminator sits at cos(phase) across the row's half-width.
+             * Scaling by hw + 1 rather than hw is what makes the two extremes
+             * exact: at new moon the lit run starts one pixel past the limb
+             * and vanishes, and at full moon it reaches one pixel past the
+             * other limb and is clamped back to the disc edge, so the disc is
+             * whole.
+             */
+            const int lim = (int)((int32_t)cos_q * (hw + 1) / 32767);
+            int x0, x1;
+            /* A waxing moon lights the right limb, a waning one the left,
+             * which is the northern-hemisphere view every weather app draws. */
+            if (phase < 0.5f) { x0 = cx + lim; x1 = cx + hw; }
+            else              { x0 = cx - hw;  x1 = cx - lim; }
+            if (x0 < cx - hw) x0 = cx - hw;
+            if (x1 > cx + hw) x1 = cx + hw;
+            if (x1 < x0) continue;
+            ml_canvas_hline(c, x0, cy + dy, x1 - x0 + 1, w->color);
+        }
+    }
+
+    int y  = box.y;
+    int tw = ml_text_width(f, buf, sc);
+    ml_text_draw(c, f, align_x(w->align, box, tw), y, buf, w->color, sc);
+    y += line_h;
+
+    if (y + fh <= box.y + box.h) {
+        const char *label = ml_moon_label(phase);
+        tw = ml_text_width(f, label, sc);
+        ml_text_draw_clipped(c, f, align_x(w->align, box, tw), y, box.w, label,
+                             secondary(w), sc);
+    }
+}
+
+/*
+ * Multi-day forecast: one column per day, an icon above the day's high/low.
+ * The column slots are fixed by ML_FORECAST_DAYS so the strip does not reflow
+ * as the provider fills in days, and only day_count of them carry content.
+ * There are deliberately no weekday labels: three columns in a 64px strip
+ * leave no width for them.
+ */
+static void draw_forecast_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
+{
+    const int have = m->weather.valid
+                         ? (m->weather.day_count > ML_FORECAST_DAYS
+                                ? ML_FORECAST_DAYS
+                                : m->weather.day_count)
+                         : 0;
+
+    if (have <= 0) {
+        int sc = ML_SCALE_1X;
+        const ml_font *f = choose_font(w, "display24", "--", &sc);
+        ml_text_draw(c, f, w->rect.x, w->rect.y, "--", dim(w->color), sc);
+        return;
+    }
+
+    /* The icon lookup is the icon widget's, so a layout cannot be handed a
+     * digits cut for a weather pictogram. */
+    const ml_font *icon_font =
+        pick_font(w->icon_set[0] ? w->icon_set : w->font, "wx16");
+
+    ml_rgb pal[4];
+    for (int i = 0; i < 4; i++) pal[i] = w->color;
+    for (int i = 0; i < w->color_count && i < ML_ICON_COLORS; i++)
+        pal[i + 1] = w->colors[i];
+
+    for (int i = 0; i < have; i++) {
+        const int x0 = w->rect.x + (w->rect.w * i) / ML_FORECAST_DAYS;
+        const int x1 = w->rect.x + (w->rect.w * (i + 1)) / ML_FORECAST_DAYS;
+
+        /* A one-pixel gutter between columns, the same rule the precip chart
+         * uses, so the ranges of adjacent days do not run together. The slot
+         * boundaries themselves never move: only what is drawn inside them. */
+        const int pad = (x1 - x0 >= 6) ? 1 : 0;
+        const int bx0 = x0 + pad;
+        const int bw  = x1 - x0 - pad * 2;
+        if (bw <= 0) continue;
+
+        char glyph[2] = {(char)('0' + wx_category(m->weather.days[i].code)), '\0'};
+        const int isc = fit_scale(icon_font, glyph, bw, w->rect.h * 3 / 5);
+        const int gw  = ml_text_width(icon_font, glyph, isc);
+        const int gh  = ml_text_height(icon_font, isc);
+        ml_text_draw_pal(c, icon_font, bx0 + (bw - gw) / 2, w->rect.y, glyph,
+                         pal, isc);
+
+        /* The range under the icon, in a widget copy whose rect is the space
+         * left below it, so the font follows that space rather than the whole
+         * widget. */
+        ml_widget row = *w;
+        row.rect.x = bx0;
+        row.rect.w = bw;
+        row.rect.y = w->rect.y + gh;
+        row.rect.h = w->rect.y + w->rect.h - row.rect.y;
+        if (row.rect.h <= 0) continue;
+
+        char buf[TEXT_BUF];
+        snprintf(buf, sizeof(buf), "%d/%d",
+                 temp_display(m, m->weather.days[i].temp_max_c),
+                 temp_display(m, m->weather.days[i].temp_min_c));
+
+        int sc = ML_SCALE_1X;
+        const ml_font *f = choose_font(&row, "sans8", buf, &sc);
+        const int tw = ml_text_width(f, buf, sc);
+        ml_text_draw_clipped(c, f, align_x(row.align, row.rect, tw), row.rect.y,
+                             bw, buf, w->color, sc);
+    }
+}
+
 static void draw_agenda_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
 {
     /*
@@ -1209,6 +1795,103 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
     case ML_W_TODO:
         f = choose_list_font(w, &sc);
         break;
+
+    /*
+     * The composite widgets report the font their first (unclipped) row draws
+     * with, which is the one their box is sized against. A widget with nothing
+     * to draw its rows from reports no font at all.
+     */
+    case ML_W_WIND: {
+        ml_rect box;
+        graphic_split(w, 1, &box);
+        ml_widget col = *w;
+        col.rect = box;
+        if (m->weather.valid) {
+            snprintf(buf, sizeof(buf), "%d %s",
+                     wind_display(m, m->weather.wind_kph),
+                     m->temp_f ? "mph" : "km/h");
+        } else {
+            snprintf(buf, sizeof(buf), "--");
+        }
+        f = choose_font(&col, "display24", buf, &sc);
+        break;
+    }
+    case ML_W_AIR: {
+        const bool us = w->us_aqi;
+        const int  aqi = us ? m->air.aqi_us : m->air.aqi;
+        if (m->air.valid) {
+            snprintf(buf, sizeof(buf), "%d %s", aqi, ml_aqi_label(aqi, us));
+        } else {
+            snprintf(buf, sizeof(buf), "--");
+        }
+        f = choose_font(w, "display24", buf, &sc);
+        break;
+    }
+    case ML_W_TRAFFIC:
+        if (m->traffic.valid) {
+            snprintf(buf, sizeof(buf), "%d min", (m->traffic.travel_s + 30) / 60);
+        } else {
+            snprintf(buf, sizeof(buf), "--");
+        }
+        f = choose_font(w, "display24", buf, &sc);
+        break;
+    case ML_W_SUN: {
+        ml_widget row = *w;
+        const int bar_h = w->rect.h >= 12 ? 4 : 2;
+        row.rect.y += bar_h;
+        row.rect.h -= bar_h;
+        if (row.rect.h <= 0) return NULL;
+        if (m->weather.sunrise_min < 0 ||
+            m->weather.sunset_min <= m->weather.sunrise_min) {
+            return NULL;   /* only the track is drawn: no text to report */
+        }
+        snprintf(buf, sizeof(buf), "%02d:%02d %02d:%02d",
+                 m->weather.sunrise_min / 60, m->weather.sunrise_min % 60,
+                 m->weather.sunset_min / 60, m->weather.sunset_min % 60);
+        f = choose_font(&row, "display24", buf, &sc);
+        break;
+    }
+    case ML_W_MOON: {
+        ml_rect box;
+        graphic_split(w, 2, &box);
+        ml_widget col = *w;
+        col.rect = box;
+        const float phase = ml_moon_phase(m);
+        if (phase < 0.0f) snprintf(buf, sizeof(buf), "--");
+        else              snprintf(buf, sizeof(buf), "%d%%", ml_moon_illum(phase));
+        f = choose_font(&col, "display24", buf, &sc);
+        break;
+    }
+    case ML_W_FORECAST: {
+        const int have = m->weather.valid
+                             ? (m->weather.day_count > ML_FORECAST_DAYS
+                                    ? ML_FORECAST_DAYS
+                                    : m->weather.day_count)
+                             : 0;
+        if (have <= 0) {
+            const ml_font *df = choose_font(w, "display24", "--", &sc);
+            if (scale_q8) *scale_q8 = sc;
+            return df;
+        }
+        const ml_font *icon_font =
+            pick_font(w->icon_set[0] ? w->icon_set : w->font, "wx16");
+        char glyph[2] = {(char)('0' + wx_category(m->weather.days[0].code)), '\0'};
+        const int slot  = w->rect.w / ML_FORECAST_DAYS;
+        const int pad   = (slot >= 6) ? 1 : 0;
+        const int bw    = slot - pad * 2;
+        if (bw <= 0) return NULL;
+        const int isc   = fit_scale(icon_font, glyph, bw, w->rect.h * 3 / 5);
+        ml_widget row = *w;
+        row.rect.w = bw;
+        row.rect.y = w->rect.y + ml_text_height(icon_font, isc);
+        row.rect.h = w->rect.y + w->rect.h - row.rect.y;
+        if (row.rect.h <= 0) return NULL;
+        snprintf(buf, sizeof(buf), "%d/%d",
+                 temp_display(m, m->weather.days[0].temp_max_c),
+                 temp_display(m, m->weather.days[0].temp_min_c));
+        f = choose_font(&row, "sans8", buf, &sc);
+        break;
+    }
     default:
         return NULL;
     }
@@ -1245,6 +1928,12 @@ void ml_render_widget(const ml_widget *w, const ml_model *m, ml_canvas *c)
     case ML_W_TODO:    draw_todo_w(w, m, c);    break;
     case ML_W_COUNTDOWN: draw_countdown_w(w, m, c); break;
     case ML_W_PRECIP:   draw_precip_w(w, m, c); break;
+    case ML_W_WIND:     draw_wind_w(w, m, c);   break;
+    case ML_W_AIR:      draw_air_w(w, m, c);    break;
+    case ML_W_TRAFFIC:  draw_traffic_w(w, m, c); break;
+    case ML_W_SUN:      draw_sun_w(w, m, c);    break;
+    case ML_W_MOON:     draw_moon_w(w, m, c);   break;
+    case ML_W_FORECAST: draw_forecast_w(w, m, c); break;
     default: break;
     }
 

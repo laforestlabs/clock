@@ -96,6 +96,43 @@ void ml_model_mock(ml_model *m, int variant)
         snprintf(m->weather.place, sizeof(m->weather.place), "Longplacename");
         set_precip(&m->weather, k_precip_overflow);
 
+        /* Boundary case for the new widgets: a storm-force wind from the
+         * north-east, the highest UV band, a pollen count past the chart's
+         * 60 grains/m3 cap on two plants, and a route label at the length
+         * limit. */
+        m->weather.wind_dir_deg  = 22.0f;
+        m->weather.wind_dir_valid = true;
+        m->weather.wind_gust_kph  = 140.0f;
+        m->weather.sunrise_min    = 292;    /* 04:52 */
+        m->weather.sunset_min     = 1298;   /* 21:38 */
+        m->weather.day_count      = ML_FORECAST_DAYS;
+        m->weather.days[0].code       = 75;
+        m->weather.days[0].temp_max_c = -3.0f;
+        m->weather.days[0].temp_min_c = -11.0f;
+        m->weather.days[1].code       = 95;
+        m->weather.days[1].temp_max_c = -2.0f;
+        m->weather.days[1].temp_min_c = -9.5f;
+        m->weather.days[2].code       = 71;
+        m->weather.days[2].temp_max_c = -5.0f;
+        m->weather.days[2].temp_min_c = -14.0f;
+
+        m->air.valid        = true;
+        m->air.aqi          = 105;
+        m->air.aqi_us       = 260;
+        m->air.pm2_5        = 96.0f;
+        m->air.pm10         = 140.0f;
+        m->air.uv_index     = 11.4f;
+        m->air.pollen[0]    = 64.0f;
+        m->air.pollen[1]    = 3.0f;
+        m->air.pollen[2]    = 41.0f;
+        m->air.pollen_valid = true;
+
+        m->traffic.valid      = true;
+        m->traffic.travel_s   = 3599;
+        m->traffic.free_flow_s = 2699;
+        m->traffic.delay_s    = 900;
+        snprintf(m->traffic.label, sizeof(m->traffic.label), "MORNING COMMUTE");
+
         add_event(m, "Quarterly planning review with the whole team", 9 * 60 + 0, false);
         add_event(m, "1:1 Alex", 11 * 60 + 30, false);
         add_event(m, "Lunch and learn: distributed tracing", 12 * 60 + 15, false);
@@ -132,6 +169,44 @@ void ml_model_mock(ml_model *m, int variant)
         m->weather.is_day       = false;
         snprintf(m->weather.place, sizeof(m->weather.place), "Home");
         set_precip(&m->weather, k_precip_evening);
+
+        /* Wind from the south-south-west, sun times shared with the typical
+         * fixture, and a forecast whose three days are all different kinds of
+         * rain: a strip that reads day 0 for every column is then obvious
+         * rather than plausible. */
+        m->weather.wind_dir_deg   = 200.0f;
+        m->weather.wind_dir_valid = true;
+        m->weather.wind_gust_kph  = 41.0f;
+        m->weather.sunrise_min    = 312;    /* 05:12 */
+        m->weather.sunset_min     = 1247;   /* 20:47 */
+        m->weather.day_count      = ML_FORECAST_DAYS;
+        m->weather.days[0].code       = 61;
+        m->weather.days[0].temp_max_c = 12.0f;
+        m->weather.days[0].temp_min_c = 7.4f;
+        m->weather.days[1].code       = 80;
+        m->weather.days[1].temp_max_c = 11.2f;
+        m->weather.days[1].temp_min_c = 6.8f;
+        m->weather.days[2].code       = 95;
+        m->weather.days[2].temp_max_c = 10.5f;
+        m->weather.days[2].temp_min_c = 6.1f;
+
+        m->air.valid        = true;
+        m->air.aqi          = 58;
+        m->air.aqi_us       = 104;
+        m->air.pm2_5        = 22.6f;
+        m->air.pm10         = 31.0f;
+        m->air.uv_index     = 0.0f;
+        m->air.pollen[0]    = 3.0f;
+        m->air.pollen[1]    = 2.0f;
+        m->air.pollen[2]    = 1.0f;
+        m->air.pollen_valid = true;
+
+        m->traffic.valid       = true;
+        m->traffic.travel_s    = 1500;
+        m->traffic.free_flow_s = 1020;
+        m->traffic.delay_s     = 480;
+        snprintf(m->traffic.label, sizeof(m->traffic.label), "WORK");
+
         /* No events and no todos: exercises the empty-state strings. */
         return;
 
@@ -143,12 +218,45 @@ void ml_model_mock(ml_model *m, int variant)
         m->weather.temp_min_c   = 14.0f;
         m->weather.temp_max_c   = 24.0f;
         m->weather.code         = 2;    /* partly cloudy */
-        m->weather.wind_kph     = 12.0f;
+        m->weather.wind_kph     = 24.0f;
         m->weather.humidity_pct = 63;
         m->weather.precip_prob  = 15;
         m->weather.is_day       = true;
         snprintf(m->weather.place, sizeof(m->weather.place), "Home");
         set_precip(&m->weather, k_precip_typical);
+
+        m->weather.wind_dir_deg   = 315.0f;   /* a north-westerly */
+        m->weather.wind_dir_valid = true;
+        m->weather.wind_gust_kph  = 34.0f;
+        m->weather.sunrise_min    = 312;      /* 05:12 */
+        m->weather.sunset_min     = 1247;     /* 20:47 */
+        m->weather.day_count      = ML_FORECAST_DAYS;
+        m->weather.days[0].code       = 2;
+        m->weather.days[0].temp_max_c = 22.4f;
+        m->weather.days[0].temp_min_c = 14.1f;
+        m->weather.days[1].code       = 61;
+        m->weather.days[1].temp_max_c = 19.8f;
+        m->weather.days[1].temp_min_c = 13.2f;
+        m->weather.days[2].code       = 3;
+        m->weather.days[2].temp_max_c = 21.0f;
+        m->weather.days[2].temp_min_c = 12.6f;
+
+        m->air.valid        = true;
+        m->air.aqi          = 32;
+        m->air.aqi_us       = 61;
+        m->air.pm2_5        = 8.4f;
+        m->air.pm10         = 15.2f;
+        m->air.uv_index     = 4.2f;
+        m->air.pollen[0]    = 12.0f;
+        m->air.pollen[1]    = 34.0f;
+        m->air.pollen[2]    = 8.0f;
+        m->air.pollen_valid = true;
+
+        m->traffic.valid       = true;
+        m->traffic.travel_s    = 1080;
+        m->traffic.free_flow_s = 960;
+        m->traffic.delay_s     = 120;
+        snprintf(m->traffic.label, sizeof(m->traffic.label), "WORK");
 
         add_event(m, "Standup", 10 * 60 + 0, false);
         add_event(m, "Design review", 11 * 60 + 30, false);

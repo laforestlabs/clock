@@ -1,0 +1,22 @@
+{
+  "name": "air",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "air", "id": "air",
+      "rect": [0, 0, 40, 20],
+      "font": "display-thin", "fit": true, "line_gap": 1,
+      "color": "#FFFFFF", "accent": "#66D9EF" },
+
+    { "type": "text", "id": "uv",
+      "rect": [40, 0, 24, 8],
+      "font": "display-thin", "fit": true, "bind": "air.uv_index",
+      "format": "UV %.0f", "color": "#FFD24D", "align": "right" },
+
+    { "type": "precip", "id": "precip-chart",
+      "rect": [0, 21, 64, 11],
+      "color": "#5AA0E0", "accent": "#2A3B4D" }
+  ]
+}

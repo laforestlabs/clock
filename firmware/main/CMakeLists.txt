@@ -19,6 +19,8 @@ idf_component_register(
         "games/game_runner.c"
         "providers/provider.c"
         "providers/openmeteo.c"
+        "providers/air.c"
+        "providers/traffic.c"
     INCLUDE_DIRS
         "."
     REQUIRES

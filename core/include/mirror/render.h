@@ -67,8 +67,13 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *model,
  *  11  countdown rolls hours into a days field past 24h ("2d 03:04:05"). A
  *      multi-day countdown renders differently on older builds, so the
  *      designer/device version check must warn.
+ *  12  six new widget types: wind, air, traffic, sun, moon and forecast,
+ *      with the wind, air, traffic, sun and moon bindings that feed them. A
+ *      version 11 device renders every one of them as nothing, since it
+ *      neither knows the types nor has the model fields behind the new
+ *      bindings, so the designer/device version check must warn.
  */
-#define ML_RENDER_VERSION 11
+#define ML_RENDER_VERSION 12
 
 #ifdef __cplusplus
 }

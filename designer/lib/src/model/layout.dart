@@ -128,6 +128,12 @@ class LayoutDoc {
       'agenda',
       'todo',
       'countdown',
+      'wind',
+      'air',
+      'traffic',
+      'sun',
+      'moon',
+      'forecast',
     };
     if (textTypes.contains(type)) {
       raw['font'] = 'display-thin';

@@ -367,6 +367,12 @@ static const char *k_type_names[] = {
     "rect", "line", "text", "clock", "date", "weather", "icon", "agenda", "todo",
     "countdown",
     "precip",
+    "wind",
+    "air",
+    "traffic",
+    "sun",
+    "moon",
+    "forecast",
 };
 
 int ml_sim_type_count(void)
@@ -392,6 +398,13 @@ static const char *k_bind_paths[] = {
     "weather.temp", "weather.temp_min", "weather.temp_max",
     "weather.code", "weather.label", "weather.place",
     "weather.wind_kph", "weather.humidity_pct", "weather.precip_prob", "weather.is_day",
+    "weather.wind", "weather.wind_gust", "weather.wind_gust_kph",
+    "weather.wind_dir", "weather.wind_dir_name", "weather.feels",
+    "weather.sunrise", "weather.sunset", "weather.sunrise_min", "weather.sunset_min",
+    "air.aqi_eu", "air.aqi_us", "air.label_eu", "air.label_us",
+    "air.pm25", "air.pm10", "air.uv_index", "air.pollen", "air.pollen_type",
+    "traffic.travel_min", "traffic.delay_min", "traffic.free_flow_min", "traffic.label",
+    "moon.phase", "moon.illum", "moon.label",
     "system.online", "system.rssi", "system.uptime_s",
     "counts.events", "counts.todos",
 };

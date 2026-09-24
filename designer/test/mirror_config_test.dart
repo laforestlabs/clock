@@ -259,6 +259,110 @@ void main() {
     });
   });
 
+  group('MirrorConfig commute', () {
+    test('accepts a route, a label and a key', () {
+      final cfg = MirrorConfig(
+        routeFrom: '51.50740,-0.12780',
+        routeTo: '51.47000,-0.45430',
+        routeLabel: 'WORK',
+        trafficKey: 'a' * 64,
+      );
+      expect(cfg.validate(), isNull);
+      expect(const MirrorConfig(routeLabel: 'MORNING COMMUTE').validate(),
+          isNull);
+    });
+
+    test('rejects a route that is not a pair of numbers', () {
+      expect(const MirrorConfig(routeFrom: '51.5074').validate(),
+          contains('lat,lon'));
+      expect(const MirrorConfig(routeTo: '51.5074,').validate(),
+          contains('lat,lon'));
+      expect(const MirrorConfig(routeFrom: '51.5074,west').validate(),
+          contains('lat,lon'));
+    });
+
+    test('rejects a route outside the coordinate ranges', () {
+      expect(const MirrorConfig(routeFrom: '91,0').validate(),
+          contains('[-90, 90]'));
+      expect(const MirrorConfig(routeTo: '0,-181').validate(),
+          contains('[-180, 180]'));
+    });
+
+    // The firmware reads the pair with strtod and requires the comma to
+    // follow the latitude exactly, so a spaced pair it would refuse must not
+    // leave here looking acceptable. A blank origin is likewise not a clear:
+    // the dialog simply omits the key.
+    test('rejects whitespace inside a route', () {
+      expect(const MirrorConfig(routeFrom: '51.5074, -0.1278').validate(),
+          contains('lat,lon'));
+      expect(const MirrorConfig(routeFrom: ' 51.5074,-0.1278').validate(),
+          contains('lat,lon'));
+    });
+
+    test('rejects an over-long label or key', () {
+      expect(MirrorConfig(routeLabel: 'X' * 16).validate(), contains('15'));
+      expect(MirrorConfig(trafficKey: 'K' * 65).validate(), contains('64'));
+    });
+
+    test('rejects a label or key with non-printable characters', () {
+      expect(const MirrorConfig(routeLabel: 'Work\u00e9').validate(),
+          contains('printable'));
+      expect(const MirrorConfig(trafficKey: 'k\ney').validate(),
+          contains('printable'));
+    });
+
+    test('toJson carries each field only when set', () {
+      final empty = const MirrorConfig().toJson();
+      expect(empty.containsKey('route_from'), isFalse);
+      expect(empty.containsKey('route_to'), isFalse);
+      expect(empty.containsKey('route_label'), isFalse);
+      expect(empty.containsKey('traffic_key'), isFalse);
+
+      final full = const MirrorConfig(
+        routeFrom: '51.50740,-0.12780',
+        routeTo: '51.47000,-0.45430',
+        routeLabel: 'WORK',
+        trafficKey: 'secret',
+      ).toJson();
+      expect(full['route_from'], '51.50740,-0.12780');
+      expect(full['route_to'], '51.47000,-0.45430');
+      expect(full['route_label'], 'WORK');
+      expect(full['traffic_key'], 'secret');
+    });
+
+    test('fromJson never pushes a field the device withheld', () {
+      // The device's own reply: the key itself is absent, only its presence
+      // is reported, and that report must not turn into a push.
+      final cfg = MirrorConfig.fromJson(<String, dynamic>{
+        'route_from': '51.50740,-0.12780',
+        'route_to': '51.47000,-0.45430',
+        'route_label': 'WORK',
+        'route_key_set': true,
+      });
+      expect(cfg, isNotNull);
+      expect(cfg!.routeFrom, '51.50740,-0.12780');
+      expect(cfg.routeTo, '51.47000,-0.45430');
+      expect(cfg.routeLabel, 'WORK');
+      expect(cfg.routeKeySet, isTrue);
+      expect(cfg.trafficKey, isNull);
+      expect(cfg.toJson().containsKey('traffic_key'), isFalse);
+      expect(cfg.toJson().containsKey('route_key_set'), isFalse);
+    });
+
+    test('a stored key alone still reads as a config', () {
+      final cfg =
+          MirrorConfig.fromJson(<String, dynamic>{'route_key_set': true});
+      expect(cfg, isNotNull);
+      expect(cfg!.routeKeySet, isTrue);
+      expect(cfg.validate(), isNull);
+    });
+
+    test('fromJson ignores a non-boolean route_key_set', () {
+      expect(MirrorConfig.fromJson(<String, dynamic>{'route_key_set': 'yes'}),
+          isNull);
+    });
+  });
+
   group('timezone presets', () {
     test('are all well-formed', () {
       expect(kTimezonePresets, isNotEmpty);

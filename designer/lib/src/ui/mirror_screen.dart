@@ -1044,6 +1044,18 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
   /// The picker's choice; null when the owner has not chosen a point.
   LocationChoice? _choice;
 
+  /// The commute's endpoints, null until the owner picks them (or the device
+  /// already holds a route).
+  LocationChoice? _routeFrom;
+  LocationChoice? _routeTo;
+
+  late final TextEditingController _routeLabel;
+  final TextEditingController _trafficKey = TextEditingController();
+
+  /// Whether the API key field shows what is typed. Obscured by default, and
+  /// the toggle is there because the owner usually pastes the key.
+  bool _revealKey = false;
+
   /// Display settings default to the device's factory values (12-hour,
   /// Fahrenheit) when the device could not be prefilled. They are always
   /// pushed: unlike the location there is no "unchanged" empty state for a
@@ -1068,13 +1080,39 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
     }
     _tzCustom = TextEditingController(text: tz ?? '');
     _choice = _initialChoice(initial);
+    _routeLabel = TextEditingController(text: initial?.routeLabel ?? '');
+    _routeFrom = _routeChoice(initial?.routeFrom);
+    _routeTo = _routeChoice(initial?.routeTo);
   }
 
   @override
   void dispose() {
     _tzCustom.dispose();
+    _routeLabel.dispose();
+    _trafficKey.dispose();
     super.dispose();
   }
+
+  /// Prefill one end of the commute from the device's stored "lat,lon", or
+  /// null when it is absent or not a point. No timezone: the route pickers
+  /// have no zone to offer and the weather's zone is a separate control.
+  LocationChoice? _routeChoice(String? stored) {
+    if (stored == null) return null;
+    final comma = stored.indexOf(',');
+    if (comma < 0) return null;
+    final lat = double.tryParse(stored.substring(0, comma));
+    final lon = double.tryParse(stored.substring(comma + 1));
+    if (lat == null || lon == null) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LocationChoice(latitude: lat, longitude: lon);
+  }
+
+  /// One end of the route as the firmware stores it: five decimal places,
+  /// which is the convention the coordinates use too.
+  String? _routePoint(LocationChoice? choice) => choice == null
+      ? null
+      : '${choice.latitude.toStringAsFixed(5)},'
+          '${choice.longitude.toStringAsFixed(5)}';
 
   /// The picker prefill: the device's stored point, when both numbers parse
   /// and are in range. No timezone: the dialog has no zone source until a
@@ -1128,6 +1166,8 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
 
   MirrorConfig _collect() {
     final place = _choice?.place.trim() ?? '';
+    final label = _routeLabel.text.trim();
+    final key = _trafficKey.text.trim();
     return MirrorConfig(
       timezone: _timezone,
       latitude: _choice?.latitude.toStringAsFixed(5),
@@ -1137,6 +1177,18 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
           : (place.length <= 23 ? place : place.substring(0, 23)),
       clock12h: _clock12h,
       tempF: _tempF,
+      // Null while the owner has not chosen an end, so an untouched dialog
+      // leaves the device's stored route alone.
+      routeFrom: _routePoint(_routeFrom),
+      routeTo: _routePoint(_routeTo),
+      routeLabel: label.isEmpty
+          ? null
+          : (label.length <= 15 ? label : label.substring(0, 15)),
+      // Blank keeps the stored key rather than clearing it: the device never
+      // sends the key back, so an untouched field cannot be told from a
+      // deliberate wipe, and losing a credential to a stray Save is the worse
+      // mistake. A typed key replaces the stored one.
+      trafficKey: key.isEmpty ? null : key,
     );
   }
 
@@ -1228,6 +1280,73 @@ class _MirrorConfigDialogState extends State<MirrorConfigDialog> {
               selected: <bool>{_tempF},
               onSelectionChanged: (s) => setState(() => _tempF = s.first),
             ),
+            const Divider(height: 24),
+            const Text('Commute',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const Padding(
+              padding: EdgeInsets.only(top: 4, bottom: 8),
+              child: Text(
+                'Optional: the traffic widget reports on this drive.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+            const Text('From', style: TextStyle(fontSize: 13)),
+            LocationPicker(
+              initial: _routeFrom,
+              geocode: widget.geocode,
+              timezoneLookup: widget.timezoneLookup,
+              deviceLocation: widget.deviceLocation,
+              pickOnMap: widget.pickOnMap,
+              onChanged: (choice) => setState(() => _routeFrom = choice),
+            ),
+            const SizedBox(height: 12),
+            const Text('To', style: TextStyle(fontSize: 13)),
+            LocationPicker(
+              initial: _routeTo,
+              geocode: widget.geocode,
+              timezoneLookup: widget.timezoneLookup,
+              deviceLocation: widget.deviceLocation,
+              pickOnMap: widget.pickOnMap,
+              onChanged: (choice) => setState(() => _routeTo = choice),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _routeLabel,
+              maxLength: 15,
+              decoration: const InputDecoration(
+                labelText: 'Commute label',
+                helperText: 'Printed under the travel time',
+                helperMaxLines: 1,
+                isDense: true,
+                counterText: '',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _trafficKey,
+              obscureText: !_revealKey,
+              decoration: InputDecoration(
+                labelText: 'Routing API key',
+                helperText: 'TomTom Routing API key - leave blank to keep '
+                    'the stored key',
+                helperMaxLines: 2,
+                isDense: true,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                      _revealKey ? Icons.visibility_off : Icons.visibility),
+                  tooltip: _revealKey ? 'Hide the key' : 'Show the key',
+                  onPressed: () => setState(() => _revealKey = !_revealKey),
+                ),
+              ),
+            ),
+            if (widget.initial?.routeKeySet ?? false)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'A key is already stored on the mirror.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
             // The dialog is BLE-only; the LAN API deliberately has no config
             // endpoint.
             const Text(

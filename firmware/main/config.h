@@ -32,6 +32,23 @@ const char *mirror_config_latitude(void);
 const char *mirror_config_longitude(void);
 const char *mirror_config_place(void);
 
+/*
+ * The commute route and the credential that fetches it. "from" and "to" are
+ * "lat,lon" pairs in the form the routing service wants, so the firmware can
+ * substitute them straight into the URL; the label is what the traffic widget
+ * prints. The key is the owner's TomTom credential and is empty when none has
+ * been stored. Never NULL, and valid for the life of the device, like the
+ * accessors above.
+ */
+const char *mirror_config_traffic_key(void);
+const char *mirror_config_route_from(void);
+const char *mirror_config_route_to(void);
+const char *mirror_config_route_label(void);
+
+/* True when both ends of the commute are configured. The traffic provider
+ * makes no network call while this is false. */
+bool mirror_config_has_route(void);
+
 /* True when clock widgets without an explicit format use a 12-hour face
  * ("3:41"), false for 24-hour ("15:41"). */
 bool mirror_config_clock_12h(void);
@@ -100,9 +117,10 @@ esp_err_t mirror_config_factory_reset(void);
 
 /*
  * Apply a partial JSON object: {"name","timezone","latitude","longitude",
- * "place","brightness","clock12h","flip180","temp_unit"}. Every present field
- * is validated, and nothing is persisted or applied unless all of them pass;
- * missing fields are left unchanged.
+ * "place","brightness","clock12h","flip180","temp_unit","route_from",
+ * "route_to","route_label","traffic_key"}. Every present field is validated,
+ * and nothing is persisted or applied unless all of them pass; missing fields
+ * are left unchanged.
  * "name" is the new Bluetooth-advertised device name: printable, trimmed,
  * 1..24 characters. "timezone" must be a POSIX TZ string (the only form newlib's tzset
  * parses; IANA names are rejected rather than silently degrading the clock
@@ -110,10 +128,15 @@ esp_err_t mirror_config_factory_reset(void);
  * the panel immediately. "clock12h" is a JSON boolean; "flip180" is a JSON
  * boolean that says the panel is mounted upside down, so every frame is
  * rotated 180 degrees on the device, applied immediately; "temp_unit" is "F"
- * or "C". On success the changed fields are written to NVS and applied:
- * timezone re-points TZ via setenv/tzset, coordinate or place changes kick a
- * provider refresh so the weather relocates promptly, and a name change
- * takes effect when the device advertises again.
+ * or "C". "route_from" and "route_to" are "lat,lon" pairs with the latitude in
+ * [-90, 90] and the longitude in [-180, 180]; "route_label" is printable ASCII
+ * of at most 15 characters; "traffic_key" is printable ASCII of at most 64,
+ * and the empty string clears the stored key. On success the changed fields
+ * are written to NVS and applied: timezone re-points TZ via setenv/tzset,
+ * coordinate or place changes kick a provider refresh so the weather relocates
+ * promptly, a route or key change invalidates the current commute reading
+ * before refreshing, and a name change takes effect when the device advertises
+ * again.
  *
  * On failure returns ESP_ERR_INVALID_ARG and err holds a human message.
  */

@@ -127,7 +127,7 @@ internal-RAM shortage into a weather outage. See M14 for the full chain.
 | I7 | `gen_gamma.py --check`, wired into `make check` | — | XS | — | Open |
 | **Tier 5 — functionality** | | | | | |
 | F1 | Calendar and todos via a server-expanded ICS feed | — | L | I4 | Open |
-| F2 | Sunrise/sunset and an hourly temperature series | — | M | — | Open |
+| F2 | Sunrise/sunset and an hourly temperature series | — | M | — | Partly done 2026-09-24: sunrise/sunset now fetched, with the `sun`/`moon`/`forecast` widgets; the hourly temperature series is still open |
 | F3 | Night dimming schedule | — | M | — | Open |
 | F4 | Panel sizes beyond 64x32 | — | L | *decision 5* | Open |
 | F5 | Gamekit protocol completion (HELLO/WELCOME, seq, journal hash, axes) | — | M | M12 | Open |
@@ -883,6 +883,13 @@ covers both:
 panel, and a completed task disappears when "hide done" is on.
 
 ### F2 — Sunrise/sunset and an hourly temperature series · Effort: M
+
+**Partly done (2026-09-24).** The weather request now asks for `sunrise` and `sunset`
+alongside a three-day `weather_code`/high/low series, and `ml_weather` carries them
+(`sunrise_min`, `sunset_min`, `days[]`, `day_count`) with binding paths for each. The
+`sun`, `moon` and `forecast` widgets draw them, and five stock layouts ship
+(`layouts/wind.json`, `air.json`, `traffic.json`, `sky.json`, `forecast.json`). What is
+left of this item is the hourly temperature series and the trend it would plot.
 
 The weather request already asks for today's high, low and rain chance plus twelve hours of
 rain probability. Adding sunrise, sunset and the hourly temperature is a parameter change

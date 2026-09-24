@@ -40,12 +40,16 @@ is needed to run any of it today.
 | M0 Core, host build, CLI, golden tests | Done |
 | M1 Flutter layout designer (desktop and mobile) | Done, builds and runs on Linux |
 | M2 Panel bring-up on ESP32-S3 | Firmware written, awaiting hardware |
-| M3 Data providers | Weather done; todos pending, calendar deferred |
+| M3 Data providers | Weather, air quality and commute traffic done; todos pending, calendar deferred |
 | M4 Hot-reload layout push | Done: LAN API (status/layout) and BLE push from the designer, layout survives reboot in SPIFFS |
 | M5 Provisioning, brightness, OTA | Provisioning and brightness done in M2/M4; OTA done: image streamed over Bluetooth, with automatic rollback |
 
-There is no companion service. Weather comes straight from Open-Meteo, which
-needs no API key. Calendar was deferred rather than solved with a helper box,
+There is no companion service. Weather, air quality and the multi-day forecast
+come straight from Open-Meteo, which needs no API key. Commute traffic is the
+one feature that needs a third-party credential: the owner's TomTom Routing key,
+pushed from the phone app over Bluetooth and kept in NVS, never in `sdkconfig`.
+Until a route and a key are both stored the traffic provider makes no request
+at all. Calendar was deferred rather than solved with a helper box,
 because expanding ICS recurrence rules is impractical on an MCU and the helper
 would need a machine that is always on. The route back is Google Calendar's
 `singleEvents=true`, which expands recurrences server-side.
@@ -115,7 +119,7 @@ The four mock variants exist to exercise the paths that break in the field:
 ```
 
 Widget types: `rect`, `line`, `text`, `clock`, `date`, `weather`, `icon`, `agenda`,
-`todo`, `countdown`, `precip`.
+`todo`, `countdown`, `precip`, `wind`, `air`, `traffic`, `sun`, `moon`, `forecast`.
 
 `precip` plots the precipitation chance over the next 12 hours as a bar chart:
 one bar per hour, height proportional to the 0..100 chance, on a baseline with
@@ -123,9 +127,58 @@ faint 50% and 100% reference lines. It reads `weather.precip_hourly` from the
 model, which Open-Meteo fills from its hourly forecast, so a mirror that has
 not fetched a forecast yet draws just the baseline rather than a flat zero.
 
+`wind` is the conditions block for wind: speed, then the cardinal the wind
+comes from with the gust, then humidity and the feels-like temperature, with a
+compass arrow on the left. The text names the direction the wind blows from
+and the arrow points where it is going, see
+[Wind arrows point downwind](#wind-arrows-point-downwind).
+
+`air` shows outdoor air quality: the AQI number with its band name, the UV
+index, the worst of the three pollen counts, and a bar per plant on a 60
+grains/m³ full scale. `"us_aqi": true` switches the number and the bands to the
+U.S. scale, which is a widget field rather than a device setting because the
+two scales disagree about what counts as bad and a layout may reasonably show
+either. Pollen is a Europe-only series, so `pollen` and `pollen_type` come back
+unavailable elsewhere and the bars are simply not drawn.
+
+`traffic` is the commute: travel time, how much of it is delay ("on time" under
+a minute either way), and the route's label. It needs a route and an API key,
+both set from the phone app; until then the widget draws its placeholder and
+the provider makes no request at all.
+
+`sun` draws the day as a track with the elapsed daylight filled in, the sunrise
+and sunset times under it and the length of the day. `moon` draws the current
+phase as a lit limb with its illumination and name. Neither invents anything
+when the data is missing: with no sun times the track is drawn empty, and with
+no synced clock the moon widget shows `--`.
+
+`forecast` is a multi-day strip: one column per day, a weather icon above the
+day's high and low. The column slots are fixed at three so the strip does not
+reflow as days arrive; columns with no data are left empty.
+
+```json
+{ "type": "wind", "rect": [0, 8, 64, 24],
+  "font": "display-thin", "fit": true,
+  "color": "#FFFFFF", "accent": "#66D9EF" }
+```
+
 Bindings are dotted paths into the model: `weather.temp`, `weather.label`,
-`weather.code`, `now.hour`, `system.rssi`, `counts.events`, and so on. See
-`ml_model_lookup()` in `core/src/model.c` for the full set.
+`weather.code`, `now.hour`, `system.rssi`, `counts.events`, and so on. The new
+widgets add `weather.wind`/`wind_gust`/`wind_gust_kph`/`wind_dir`/
+`wind_dir_name`/`feels` (`wind_kph` was already there),
+`weather.sunrise`/`sunset`/`sunrise_min`/`sunset_min`,
+`air.aqi_eu`/`aqi_us`/`label_eu`/`label_us`/`pm25`/`pm10`/`uv_index`/`pollen`/
+`pollen_type`, `traffic.travel_min`/`delay_min`/`free_flow_min`/`label`, and
+`moon.phase`/`illum`/`label`. See `ml_model_lookup()` in `core/src/model.c`
+for the full set.
+
+#### Wind arrows point downwind
+
+`weather.wind_dir` and the `wind` widget's text follow the meteorological
+convention: the direction the wind blows **from**, so a north-westerly reads
+`NW`. The arrow points the other way, where the air is going, which is what
+makes it a picture of what is happening rather than a label. One constant in
+`wind_arrow_dir()` decides it.
 
 Clock and temperature display follow the device settings, not the layout: a
 clock widget without an explicit `format` shows 12-hour or 24-hour time per
@@ -135,6 +188,10 @@ mirror is set to (`temp_unit`). Both default to 12-hour and Fahrenheit, and
 are set from the phone app over Bluetooth. A layout that pins its own clock
 `format` or binds the raw `weather.temp_c` paths opts out of those settings
 deliberately.
+
+The weather's coordinates and place label, and the commute's two endpoints,
+label and routing API key, are device settings for the same reason: one layout
+can be pointed at a different home, or a different drive, without being edited.
 
 ### Fonts: continuously scalable display faces
 

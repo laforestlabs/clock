@@ -1,0 +1,22 @@
+{
+  "name": "traffic",
+  "canvas": { "width": 64, "height": 32 },
+  "background": "#000000",
+  "brightness": 200,
+
+  "widgets": [
+    { "type": "clock", "id": "clock",
+      "rect": [0, 0, 64, 12],
+      "font": "display-thin", "fit": true, "format": "%l:%M",
+      "color": "#00E5FF", "align": "center" },
+
+    { "type": "line", "id": "rule",
+      "rect": [0, 12, 64, 1],
+      "color": "#1E2A33" },
+
+    { "type": "traffic", "id": "commute",
+      "rect": [0, 14, 64, 18],
+      "font": "display-thin", "fit": true, "line_gap": 1,
+      "color": "#FFFFFF", "accent": "#FF9F43" }
+  ]
+}

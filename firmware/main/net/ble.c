@@ -378,19 +378,30 @@ static void cmd_ping(uint16_t conn)
 static void cmd_get_config(uint16_t conn)
 {
     char esc_name[50], esc_tz[128], esc_place[64];
+    char esc_from[64], esc_to[64], esc_label[64];
     json_escape(esc_name, sizeof(esc_name), mirror_config_device_name());
     json_escape(esc_tz, sizeof(esc_tz), mirror_config_timezone());
     json_escape(esc_place, sizeof(esc_place), mirror_config_place());
+    json_escape(esc_from, sizeof(esc_from), mirror_config_route_from());
+    json_escape(esc_to, sizeof(esc_to), mirror_config_route_to());
+    json_escape(esc_label, sizeof(esc_label), mirror_config_route_label());
 
+    /* The stored API key is deliberately not echoed: the phone only needs to
+     * know whether one exists, since a blank field leaves it alone and an
+     * empty one clears it. */
     send_status_to(conn, "config {\"name\":\"%s\",\"timezone\":\"%s\",\"latitude\":\"%s\","
                          "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
-                         "\"clock12h\":%s,\"temp_unit\":\"%c\",\"flip180\":%s}",
+                         "\"clock12h\":%s,\"temp_unit\":\"%c\",\"flip180\":%s,"
+                         "\"route_from\":\"%s\",\"route_to\":\"%s\","
+                         "\"route_label\":\"%s\",\"route_key_set\":%s}",
                          esc_name, esc_tz, mirror_config_latitude(),
                          mirror_config_longitude(), esc_place,
                          mirror_config_brightness(),
                          mirror_config_clock_12h() ? "true" : "false",
                          mirror_config_temp_unit(),
-                         mirror_config_flip180() ? "true" : "false");
+                         mirror_config_flip180() ? "true" : "false",
+                         esc_from, esc_to, esc_label,
+                         mirror_config_traffic_key()[0] != '\0' ? "true" : "false");
 }
 
 static void cmd_get_device(uint16_t conn)

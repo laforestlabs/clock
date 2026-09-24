@@ -14,6 +14,7 @@
 #include "config.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -25,6 +26,7 @@
 #include "nvs.h"
 #include "panel.h"
 #include "providers/provider.h"
+#include "providers/traffic.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "config";
@@ -39,6 +41,12 @@ static const char *TAG = "config";
 #define NVS_KEY_FLIP180    "flip180"
 #define NVS_KEY_TEMP_UNIT  "temp_unit"
 #define NVS_KEY_NAME       "name"
+/* Commute. NVS keys are capped at 15 characters, so these are as short as the
+ * rest of the table and no shorter. */
+#define NVS_KEY_TRAFFIC_KEY "tr_key"
+#define NVS_KEY_ROUTE_FROM  "tr_from"
+#define NVS_KEY_ROUTE_TO    "tr_to"
+#define NVS_KEY_ROUTE_LABEL "tr_label"
 
 /* Validation limits, mirrored exactly in the Dart MirrorConfig.validate(). */
 #define TZ_MAX_LEN    63   /* POSIX TZ strings are short; 63 keeps snprintf
@@ -46,6 +54,9 @@ static const char *TAG = "config";
 #define PLACE_MAX_LEN 23   /* fits ml_weather.place[24] */
 #define NAME_MAX_LEN  24   /* fits the 31-byte BLE advertising packet next
                             * to the flags field, with room to spare */
+#define ROUTE_MAX_LEN 31   /* "%.7g,%.7g" over the coordinate ranges */
+#define ROUTE_LABEL_MAX_LEN 15   /* fits ml_traffic.label[16] */
+#define TRAFFIC_KEY_MAX_LEN 64   /* a TomTom key is 32 hex characters */
 
 /* Buffers for the formatted values. Latitude/longitude are stored as the
  * decimal strings the provider URL wants; 16 bytes covers any value the
@@ -54,6 +65,9 @@ static const char *TAG = "config";
 #define PLACE_BUF_LEN (PLACE_MAX_LEN + 1)
 #define COORD_BUF_LEN 16
 #define NAME_BUF_LEN  (NAME_MAX_LEN + 1)
+#define ROUTE_BUF_LEN (ROUTE_MAX_LEN + 1)
+#define ROUTE_LABEL_BUF_LEN  (ROUTE_LABEL_MAX_LEN + 1)
+#define TRAFFIC_KEY_BUF_LEN  (TRAFFIC_KEY_MAX_LEN + 1)
 /* 12 hex digits plus the terminator; the form is fixed, see
  * mirror_config_device_id(). */
 #define DEVICE_ID_LEN 13
@@ -66,6 +80,13 @@ static char        s_place[PLACE_BUF_LEN];
  * generated verb-and-animal identity below. */
 static char        s_name[NAME_BUF_LEN];
 static char        s_auto_name[NAME_BUF_LEN];
+/* The commute route. "from" and "to" are "lat,lon" pairs as the routing
+ * service wants them; the key is the owner's TomTom credential, and "" means
+ * there is none, in which case the traffic provider makes no request at all. */
+static char        s_route_from[ROUTE_BUF_LEN];
+static char        s_route_to[ROUTE_BUF_LEN];
+static char        s_route_label[ROUTE_LABEL_BUF_LEN];
+static char        s_traffic_key[TRAFFIC_KEY_BUF_LEN];
 /* The hardware identity: the station MAC, hex, no separators. Read once in
  * mirror_config_init(); the MAC cannot change afterwards. */
 static char        s_device_id[DEVICE_ID_LEN];
@@ -308,6 +329,15 @@ esp_err_t mirror_config_init(void)
      * s_name, and "" means "go by the generated name". */
     build_auto_name();
     load_key(h, NVS_KEY_NAME, s_name, sizeof(s_name), "");
+    /* No Kconfig entry for the key on purpose: a credential in sdkconfig is a
+     * credential in every build of the firmware. "tr_from"/"tr_to" have no
+     * sensible default either, so an unconfigured device has an empty route
+     * and the traffic provider stays quiet. */
+    load_key(h, NVS_KEY_ROUTE_LABEL, s_route_label, sizeof(s_route_label),
+             CONFIG_MIRROR_ROUTE_LABEL);
+    load_key(h, NVS_KEY_ROUTE_FROM, s_route_from, sizeof(s_route_from), "");
+    load_key(h, NVS_KEY_ROUTE_TO,   s_route_to,   sizeof(s_route_to),   "");
+    load_key(h, NVS_KEY_TRAFFIC_KEY, s_traffic_key, sizeof(s_traffic_key), "");
     load_brightness(h);
     load_clock12h(h);
     load_flip180(h);
@@ -327,6 +357,19 @@ const char *mirror_config_timezone(void)  { return s_tz; }
 const char *mirror_config_latitude(void)  { return s_lat; }
 const char *mirror_config_longitude(void) { return s_lon; }
 const char *mirror_config_place(void)     { return s_place; }
+
+const char *mirror_config_traffic_key(void)   { return s_traffic_key; }
+const char *mirror_config_route_from(void)    { return s_route_from; }
+const char *mirror_config_route_to(void)      { return s_route_to; }
+const char *mirror_config_route_label(void)   { return s_route_label; }
+
+bool mirror_config_has_route(void)
+{
+    lock();
+    const bool ok = s_route_from[0] != '\0' && s_route_to[0] != '\0';
+    unlock();
+    return ok;
+}
 
 const char *mirror_config_device_name(void)
 {
@@ -428,6 +471,46 @@ static void fail(char *err, size_t errsz, const char *msg)
 }
 
 /*
+ * Validate a "lat,lon" pair and write its canonical form. The stored string is
+ * what gets substituted into the routing URL, so it is normalized here - seven
+ * significant digits, no spaces - rather than passed through as pushed. A pair
+ * outside the coordinate ranges is rejected rather than clamped: a route that
+ * silently moved is worse than one that refused to save.
+ *
+ * Mirrored in the Dart MirrorConfig.validate().
+ */
+static bool route_normalise(const char *in, char *out, size_t outsz)
+{
+    const char *comma = strchr(in, ',');
+    if (comma == NULL) return false;
+
+    char *end = NULL;
+    const double lat = strtod(in, &end);
+    if (end != comma) return false;
+
+    const char *lon_from = comma + 1;
+    end = NULL;
+    const double lon = strtod(lon_from, &end);
+    if (end == lon_from || *end != '\0') return false;
+
+    if (!(lat >= -90.0 && lat <= 90.0))   return false;
+    if (!(lon >= -180.0 && lon <= 180.0)) return false;
+
+    const int n = snprintf(out, outsz, "%.7g,%.7g", lat, lon);
+    return n > 0 && (size_t)n < outsz;
+}
+
+/* Printable ASCII only, for the fields that reach a URL or the panel's bitmap
+ * fonts. */
+static bool is_printable_ascii(const char *s)
+{
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (*p < 0x20 || *p > 0x7E) return false;
+    }
+    return true;
+}
+
+/*
  * True when s has the shape newlib's tzset understands: a standard name of
  * three or more ASCII letters, then a numeric UTC offset, then only the
  * POSIX TZ alphabet (letters, digits, + - . , : /) for the DST name and the
@@ -516,6 +599,10 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     char   new_lon[COORD_BUF_LEN] = "";
     char   new_place[PLACE_BUF_LEN] = "";
     char   new_name[NAME_BUF_LEN] = "";
+    char   new_route_from[ROUTE_BUF_LEN] = "";
+    char   new_route_to[ROUTE_BUF_LEN] = "";
+    char   new_route_label[ROUTE_LABEL_BUF_LEN] = "";
+    char   new_traffic_key[TRAFFIC_KEY_BUF_LEN] = "";
     int    new_brightness = -1;
     bool   new_clock_12h = CLOCK12H_DEFAULT != 0;
     bool   new_flip180 = false;
@@ -523,6 +610,8 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     bool   have_name = false, have_tz = false, have_lat = false, have_lon = false, have_place = false;
     bool   have_brightness = false, have_clock12h = false, have_temp_unit = false;
     bool   have_flip180 = false;
+    bool   have_route_from = false, have_route_to = false;
+    bool   have_route_label = false, have_traffic_key = false;
 
     int t = ml_json_member(&j, 0, "name");
     if (t >= 0) {
@@ -662,10 +751,69 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         have_temp_unit = true;
     }
 
+    t = ml_json_member(&j, 0, "route_from");
+    if (t >= 0) {
+        char raw[ROUTE_BUF_LEN];
+        if (!ml_json_str(&j, t, raw, sizeof(raw)) ||
+            !route_normalise(raw, new_route_from, sizeof(new_route_from))) {
+            fail(err, errsz, "route_from must be \"lat,lon\"");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_route_from = true;
+    }
+
+    t = ml_json_member(&j, 0, "route_to");
+    if (t >= 0) {
+        char raw[ROUTE_BUF_LEN];
+        if (!ml_json_str(&j, t, raw, sizeof(raw)) ||
+            !route_normalise(raw, new_route_to, sizeof(new_route_to))) {
+            fail(err, errsz, "route_to must be \"lat,lon\"");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_route_to = true;
+    }
+
+    t = ml_json_member(&j, 0, "route_label");
+    if (t >= 0) {
+        if (!ml_json_str(&j, t, new_route_label, sizeof(new_route_label))) {
+            fail(err, errsz, "route_label must be a string");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (strlen(new_route_label) > ROUTE_LABEL_MAX_LEN) {
+            fail(err, errsz, "route_label is too long (max 15)");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (!is_printable_ascii(new_route_label)) {
+            fail(err, errsz, "route_label has unprintable characters");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_route_label = true;
+    }
+
+    t = ml_json_member(&j, 0, "traffic_key");
+    if (t >= 0) {
+        /* Empty is meaningful here: it is how the owner clears the stored
+         * key, which the device never sends back (see ble.c). */
+        if (!ml_json_str(&j, t, new_traffic_key, sizeof(new_traffic_key))) {
+            fail(err, errsz, "traffic_key must be a string");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (strlen(new_traffic_key) > TRAFFIC_KEY_MAX_LEN) {
+            fail(err, errsz, "traffic_key is too long (max 64)");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (!is_printable_ascii(new_traffic_key)) {
+            fail(err, errsz, "traffic_key has unprintable characters");
+            return ESP_ERR_INVALID_ARG;
+        }
+        have_traffic_key = true;
+    }
+
     /* Nothing named: a no-op, not an error. */
     if (!have_name && !have_tz && !have_lat && !have_lon && !have_place &&
         !have_brightness && !have_clock12h && !have_flip180 &&
-        !have_temp_unit) {
+        !have_temp_unit && !have_route_from && !have_route_to &&
+        !have_route_label && !have_traffic_key) {
         fail(err, errsz, "no known fields");
         return ESP_ERR_INVALID_ARG;
     }
@@ -683,10 +831,19 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     const bool temp_unit_changed = have_temp_unit &&
                                    new_temp_unit != s_temp_unit;
     const bool name_changed = have_name && strcmp(new_name, s_name) != 0;
+    const bool route_from_changed = have_route_from &&
+                                    strcmp(new_route_from, s_route_from) != 0;
+    const bool route_to_changed = have_route_to &&
+                                  strcmp(new_route_to, s_route_to) != 0;
+    const bool route_label_changed = have_route_label &&
+                                     strcmp(new_route_label, s_route_label) != 0;
+    const bool traffic_key_changed = have_traffic_key &&
+                                     strcmp(new_traffic_key, s_traffic_key) != 0;
 
     if (tz_changed || lat_changed || lon_changed || place_changed ||
         brightness_changed || clock12h_changed || flip180_changed ||
-        temp_unit_changed || name_changed) {
+        temp_unit_changed || name_changed || route_from_changed ||
+        route_to_changed || route_label_changed || traffic_key_changed) {
         nvs_handle_t h;
         esp_err_t nvs_err = nvs_open(NVS_NS, NVS_READWRITE, &h);
         if (nvs_err != ESP_OK) {
@@ -710,6 +867,10 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             char seed[2] = { new_temp_unit, '\0' };
             nvs_set_str(h, NVS_KEY_TEMP_UNIT, seed);
         }
+        if (route_from_changed) nvs_set_str(h, NVS_KEY_ROUTE_FROM, new_route_from);
+        if (route_to_changed)   nvs_set_str(h, NVS_KEY_ROUTE_TO, new_route_to);
+        if (route_label_changed) nvs_set_str(h, NVS_KEY_ROUTE_LABEL, new_route_label);
+        if (traffic_key_changed) nvs_set_str(h, NVS_KEY_TRAFFIC_KEY, new_traffic_key);
         nvs_err = nvs_commit(h);
         nvs_close(h);
         if (nvs_err != ESP_OK) {
@@ -728,6 +889,10 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     if (have_clock12h)   s_clock_12h = new_clock_12h;
     if (have_flip180)    s_flip180 = new_flip180;
     if (have_temp_unit)  s_temp_unit = new_temp_unit;
+    if (have_route_from)   memcpy(s_route_from, new_route_from, sizeof(s_route_from));
+    if (have_route_to)     memcpy(s_route_to, new_route_to, sizeof(s_route_to));
+    if (have_route_label)  memcpy(s_route_label, new_route_label, sizeof(s_route_label));
+    if (have_traffic_key)  memcpy(s_traffic_key, new_traffic_key, sizeof(s_traffic_key));
     unlock();
 
     if (name_changed) {
@@ -759,6 +924,20 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
     }
     if (have_temp_unit) {
         ESP_LOGI(TAG, "temperature unit set to %c", s_temp_unit);
+    }
+
+    if (route_from_changed || route_to_changed || traffic_key_changed) {
+        ESP_LOGI(TAG, "commute route now %s -> %s (\"%s\")%s",
+                 s_route_from, s_route_to, s_route_label,
+                 s_traffic_key[0] ? "" : ", no key stored");
+        /* The old reading belongs to the old route, so it goes before the new
+         * one is fetched: showing the previous route's travel time as this
+         * one's is exactly the sort of confident lie the model is built to
+         * avoid. */
+        traffic_invalidate();
+        providers_refresh_now();
+    } else if (route_label_changed) {
+        ESP_LOGI(TAG, "commute label set to \"%s\"", s_route_label);
     }
 
     return ESP_OK;

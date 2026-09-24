@@ -48,6 +48,12 @@ static const struct {
     {ML_W_TODO,    "todo"},
     {ML_W_COUNTDOWN, "countdown"},
     {ML_W_PRECIP,    "precip"},
+    {ML_W_WIND,      "wind"},
+    {ML_W_AIR,       "air"},
+    {ML_W_TRAFFIC,   "traffic"},
+    {ML_W_SUN,       "sun"},
+    {ML_W_MOON,      "moon"},
+    {ML_W_FORECAST,  "forecast"},
 };
 
 ml_widget_type ml_widget_type_from_name(const char *name)
@@ -319,6 +325,7 @@ static void parse_widget(const ml_json *j, int obj, ml_widget *w,
     w->has_smooth = ml_json_get_bool(j, obj, "smooth", &w->smooth);
     ml_json_get_bool(j, obj, "show_time", &w->show_time);
     ml_json_get_bool(j, obj, "hide_done", &w->hide_done);
+    ml_json_get_bool(j, obj, "us_aqi",    &w->us_aqi);
     ml_json_get_bool(j, obj, "visible",   &w->visible);
 }
 
@@ -585,6 +592,8 @@ size_t ml_layout_write(const ml_layout *l, char *buf, size_t cap)
         }
         if (w->type == ML_W_COUNTDOWN && w->until_s != 0)
             appendf(buf, cap, &len, ", \"until\": %lld", (long long)w->until_s);
+        if (w->type == ML_W_AIR && w->us_aqi)
+            appendf(buf, cap, &len, ", \"us_aqi\": true");
 
         /* Written only when they differ from the default, to keep the output
          * as small as the layouts people hand-write. */

@@ -409,6 +409,27 @@ Set your coordinates in `Smart Mirror > Weather`. The default is central
 London, so it will show you plausible-looking weather for the wrong place if
 you forget.
 
+**Air quality** comes from Open-Meteo's air-quality API, which is keyless for
+the same reason and refreshes on its own interval (30 minutes by default, and
+deliberately out of step with the weather so two TLS handshakes never want the
+same kilobytes of internal DRAM at the same moment). It carries both AQI
+scales, the particulate readings and the UV index. Pollen comes from the same
+response but only inside the CAMS Europe domain: outside it the three pollen
+series are absent, `air.pollen_valid` stays false, and the air widget simply
+draws no bars. `air.aqi` and `air.aqi_us` are global.
+
+**Commute traffic** comes from TomTom's routing API and is the one provider
+that needs a credential the owner has to supply. There is deliberately no
+Kconfig entry for it: a key in `sdkconfig` is a key in every build of the
+firmware, so it lives in NVS only, pushed from the phone app along with the two
+route endpoints and the label. Until a route *and* a key are both stored the
+provider makes no request at all, and the widget shows its placeholder. The
+route is stored as the two `lat,lon` pairs the service wants, and the request
+asks for `computeTravelTimeFor=all` with the route geometry suppressed, which is
+what makes the summary this reads a few hundred bytes rather than thousands.
+Changing the route or the key invalidates the current reading before refreshing,
+so the previous route's travel time is never shown as the new one's.
+
 ### Staleness is deliberate
 
 Each provider declares a refresh interval and a grace period. After three

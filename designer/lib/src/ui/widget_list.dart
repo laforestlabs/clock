@@ -26,6 +26,12 @@ class WidgetListPanel extends StatelessWidget {
     'todo': Icons.checklist,
     'countdown': Icons.timer_outlined,
     'precip': Icons.water_drop_outlined,
+    'wind': Icons.air,
+    'air': Icons.masks,
+    'traffic': Icons.speed,
+    'sun': Icons.wb_twilight,
+    'moon': Icons.nightlight_round,
+    'forecast': Icons.calendar_view_week,
   };
 
   @override

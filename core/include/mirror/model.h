@@ -23,6 +23,9 @@ extern "C" {
 #define ML_MAX_TODOS    12
 #define ML_TITLE_LEN    48
 #define ML_PRECIP_HOURS 12   /* hourly precipitation slots, next 12 hours */
+#define ML_FORECAST_DAYS 3   /* daily forecast slots, index 0 = today */
+#define ML_POLLEN_TYPES  3   /* alder, birch, grass */
+#define ML_TRAFFIC_LABEL 16  /* room for "MORNING COMMUTE" and a terminator */
 
 /* The degree sign lives in the unused DEL slot every font carries. Written as
  * its own string literal because a hex escape would otherwise swallow a
@@ -57,6 +60,15 @@ typedef enum {
     ML_WX_THUNDERSTORM  = 95
 } ml_wx_code;
 
+/* One day of the multi-day forecast. Index 0 is today, so its range matches
+ * the "current conditions" temp_min_c/temp_max_c above; the strip widget draws
+ * whatever days[] holds rather than re-reading the current block. */
+typedef struct {
+    int   code;         /* WMO code, see ml_wx_code */
+    float temp_max_c;
+    float temp_min_c;
+} ml_day;
+
 typedef struct {
     bool  valid;
     float temp_c;
@@ -76,7 +88,52 @@ typedef struct {
      * confident flat zero. */
     int   precip_hourly[ML_PRECIP_HOURS];
     bool  precip_hourly_valid;
+
+    /* Wind direction the air blows *from*, in degrees, meteorological. Only
+     * meaningful when wind_dir_valid, because a provider that reports no
+     * direction would otherwise render as a confident North. */
+    float wind_dir_deg;
+    bool  wind_dir_valid;
+    float wind_gust_kph;
+
+    /* Sunrise and sunset as minutes since local midnight, -1 when unknown.
+     * The same convention ml_event.start_min uses, so a layout bound to it
+     * gets a placeholder rather than a midnight it never saw. */
+    int   sunrise_min;
+    int   sunset_min;
+
+    /* Daily forecast, index 0 = today upwards. day_count is how many leading
+     * entries are filled, so a strip never pairs one day's icon with another
+     * day's range. */
+    ml_day days[ML_FORECAST_DAYS];
+    int    day_count;
 } ml_weather;
+
+/* Outdoor air quality and pollen. aqi is the European AQI and aqi_us the US
+ * one, because the two scales disagree about what counts as bad and a layout
+ * may reasonably show either. */
+typedef struct {
+    bool  valid;
+    int   aqi;          /* European AQI */
+    int   aqi_us;       /* US AQI */
+    float pm2_5;        /* ug/m3 */
+    float pm10;         /* ug/m3 */
+    float uv_index;
+    /* Alder, birch, grass in grains/m3; -1 when that plant's field was absent
+     * (the pollen series is Europe-only). pollen_valid is true when at least
+     * one of the three parsed. */
+    float pollen[ML_POLLEN_TYPES];
+    bool  pollen_valid;
+} ml_air;
+
+/* A commute route's travel time, as reported by a routing service. */
+typedef struct {
+    bool valid;
+    int  travel_s;      /* with current traffic */
+    int  delay_s;       /* extra seconds against free flow; may be negative */
+    int  free_flow_s;   /* without traffic */
+    char label[ML_TRAFFIC_LABEL];   /* owner's name for the route, may be empty */
+} ml_traffic;
 
 typedef struct {
     bool valid;
@@ -100,6 +157,8 @@ typedef struct {
 typedef struct {
     ml_time    now;
     ml_weather weather;
+    ml_air     air;
+    ml_traffic traffic;
 
     ml_event   events[ML_MAX_EVENTS];
     int        event_count;
@@ -138,6 +197,33 @@ bool ml_model_lookup(const ml_model *m, const char *path,
 
 /* Human-readable short label for a WMO code, e.g. "Rain". Never NULL. */
 const char *ml_wx_label(int code);
+
+/* Band name for an air-quality index: the European scale when us is false,
+ * the U.S. one when true. Title case, never NULL. */
+const char *ml_aqi_label(int aqi, bool us);
+
+/* Name of the 16-point compass sector the wind blows *from*, e.g. "NW".
+ * Never NULL; deg_from is taken modulo the circle. */
+const char *ml_wind_cardinal(float deg_from);
+
+/*
+ * Moon phase as a 0.0..1.0 fraction of the synodic month (0 = new, 0.5 =
+ * full), from the model's clock. -1.0f when the clock has not synced, so a
+ * widget can draw a placeholder rather than a phase it invented.
+ */
+float ml_moon_phase(const ml_model *m);
+
+/* Phase name for a value from ml_moon_phase, or "--" for the -1 placeholder. */
+const char *ml_moon_label(float phase);
+
+/*
+ * The two fixed-point helpers the moon widget and the moon.illum binding
+ * share, so the drawn disc and the printed percentage cannot disagree:
+ * ml_cos_q15 is cos(2*pi*phase) in q15, ml_moon_illum the lit fraction of the
+ * disc in percent, 0..100.
+ */
+int ml_cos_q15(float phase);
+int ml_moon_illum(float phase);
 
 #ifdef __cplusplus
 }

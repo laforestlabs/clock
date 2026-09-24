@@ -59,7 +59,15 @@ typedef enum {
     ML_W_AGENDA,
     ML_W_TODO,
     ML_W_COUNTDOWN,
-    ML_W_PRECIP
+    ML_W_PRECIP,
+    /* Appended, never inserted: the designer's Add menu and the FFI type
+     * table both map this enum by index. */
+    ML_W_WIND,
+    ML_W_AIR,
+    ML_W_TRAFFIC,
+    ML_W_SUN,
+    ML_W_MOON,
+    ML_W_FORECAST
 } ml_widget_type;
 
 typedef enum {
@@ -146,6 +154,7 @@ typedef struct {
     int            line_gap;    /* extra pixels between rows */
     bool           show_time;   /* agenda: prefix each row with its time */
     bool           hide_done;   /* todo: skip completed entries */
+    bool           us_aqi;      /* air: US AQI scale instead of the EU one */
     int64_t        until_s;     /* countdown deadline, UTC epoch seconds; 0 = unset */
 } ml_widget;
 

@@ -36,16 +36,23 @@ typedef enum {
     NETLOG_EVT_CLOCK_SYNCED = 10,
     NETLOG_EVT_OTA_BEGIN = 11,
     NETLOG_EVT_OTA_OK = 12,
+    NETLOG_EVT_AIR_FETCH_OK = 13,
+    NETLOG_EVT_AIR_FETCH_FAIL = 14,
+    NETLOG_EVT_AIR_STALE = 15,
+    NETLOG_EVT_TRAFFIC_FETCH_OK = 16,
+    NETLOG_EVT_TRAFFIC_FETCH_FAIL = 17,
+    NETLOG_EVT_TRAFFIC_STALE = 18,
     NETLOG_EVT_COUNT
 } netlog_evt_t;
 
-/* Detail classes for NETLOG_EVT_WEATHER_FETCH_FAIL, so the persisted byte is
- * a project enum rather than a raw esp_err that could drift between builds. */
+/* Detail classes for the FETCH_FAIL events, so the persisted byte is a
+ * project enum rather than a raw esp_err that could drift between builds. */
 typedef enum {
     NETLOG_ERR_CONNECT = 1,   /* transport/DNS: no route, no answer, timeout */
     NETLOG_ERR_HTTP = 2,      /* service answered non-2xx, or a read error */
     NETLOG_ERR_PARSE = 3,     /* payload did not parse, or a field was absent */
     NETLOG_ERR_NOMEM = 4,     /* response larger than the fetch buffer */
+    NETLOG_ERR_AUTH = 5,      /* the service rejected the credential */
 } netlog_err_class_t;
 
 /* On-disk sizes, in bytes. A 16-byte header plus 4096 eight-byte entries. */

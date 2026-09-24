@@ -1619,7 +1619,7 @@ static void test_ffi(void)
     }
     CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
     CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
-    CHECK(ml_sim_type_count() == 11, "all widget types enumerated");
+    CHECK(ml_sim_type_count() == 17, "all widget types enumerated");
     CHECK(ml_sim_bind_count() > 10, "bind paths enumerated");
 
     /* Every advertised bind path must actually resolve, or the inspector would
@@ -1947,6 +1947,533 @@ static void test_precip(void)
     ml_canvas_free(&c);
 }
 
+/*
+ * Ink statistics for a rectangle of the canvas: the count and the summed
+ * coordinates. Enough to ask "which way does that point?" and "is anything
+ * drawn here at all?" without reading the draw code back.
+ */
+typedef struct {
+    int count;
+    int sum_x;
+    int sum_y;
+} ink_stat;
+
+static ink_stat ink_measure(const ml_canvas *c, int x0, int y0, int w, int h)
+{
+    ink_stat s = {0, 0, 0};
+    for (int y = y0; y < y0 + h; y++) {
+        if (y < 0 || y >= c->h) continue;
+        for (int x = x0; x < x0 + w; x++) {
+            if (x < 0 || x >= c->w) continue;
+            if (px_black(ml_canvas_get(c, x, y))) continue;
+            s.count++;
+            s.sum_x += x - x0;
+            s.sum_y += y - y0;
+        }
+    }
+    return s;
+}
+
+/* Brightest channel anywhere in the rectangle. Tells full-colour content from
+ * the dimmed placeholder a widget draws when its data has not arrived. */
+static int max_channel(const ml_canvas *c, int x0, int y0, int w, int h)
+{
+    int most = 0;
+    for (int y = y0; y < y0 + h; y++) {
+        if (y < 0 || y >= c->h) continue;
+        for (int x = x0; x < x0 + w; x++) {
+            if (x < 0 || x >= c->w) continue;
+            const ml_rgb p = ml_canvas_get(c, x, y);
+            if (p.r > most) most = p.r;
+            if (p.g > most) most = p.g;
+            if (p.b > most) most = p.b;
+        }
+    }
+    return most;
+}
+
+/*
+ * The wind widget: the arrow it draws has to say which way the wind is going,
+ * and the compass text has to round to the right sector. Both are things a
+ * plausible off-by-one gets wrong in opposite directions, so both are checked
+ * directly.
+ */
+static void test_wind(void)
+{
+    group("wind widget");
+
+    const char *doc =
+        "{\"name\":\"w\",\"canvas\":{\"width\":32,\"height\":24},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"wind\",\"rect\":[0,0,32,24],"
+        "\"font\":\"display-thin\",\"fit\":true,\"line_gap\":1,"
+        "\"color\":\"#FFFFFF\",\"accent\":\"#66D9EF\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "wind layout parses");
+    CHECK(diag.count == 0, "wind layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "wind canvas allocates");
+
+    /* The graphic on the left is a square of side min(24, 32/2) = 16, with the
+     * text taking the rest. */
+    const int S = 16;
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+
+    /* A north-westerly (315) blows towards the south-east, so the arrow's
+     * weight sits down and to the right of the pivot. The convention is worth
+     * stating: the arrow points downwind, the text names the direction the
+     * wind comes from. */
+    m.weather.wind_dir_deg   = 315.0f;
+    m.weather.wind_dir_valid = true;
+    ml_render(&l, &m, &c);
+
+    const ink_stat se = ink_measure(&c, 0, 0, S, S);
+    CHECK(se.count > 0, "the 315 degree arrow draws ink");
+    CHECK(se.sum_x * 2 > se.count * S, "315 points downwind, to the right");
+    CHECK(se.sum_y * 2 > se.count * S, "315 points downwind, downwards");
+
+    /* The text column holds the speed and the cardinal. */
+    CHECK(ink_measure(&c, S, 0, l.w - S, l.h).count > 0,
+          "the wind text is drawn beside the arrow");
+
+    /* The reciprocal wind reverses both components: if it did not, the arrow
+     * would be direction-blind and the test above could pass on a blob. */
+    m.weather.wind_dir_deg = 135.0f;
+    ml_render(&l, &m, &c);
+    const ink_stat nw = ink_measure(&c, 0, 0, S, S);
+    CHECK(nw.count > 0, "the 135 degree arrow draws ink");
+    CHECK(nw.sum_x * 2 < nw.count * S, "135 points downwind, to the left");
+    CHECK(nw.sum_y * 2 < nw.count * S, "135 points downwind, upwards");
+    CHECK(se.sum_x * nw.count > nw.sum_x * se.count,
+          "the two arrows point opposite ways");
+
+    /* No direction: the gust line still draws, without a cardinal and without
+     * an arrow (an arrow with no direction would be a confident lie). */
+    m.weather.wind_dir_valid = false;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, S, S).count == 0, "no direction draws no arrow");
+    CHECK(ink_measure(&c, S, 0, l.w - S, l.h).count > 0, "the gust row remains");
+
+    /* Nothing fetched: the placeholder, and nothing bright at all. */
+    ml_model_mock(&m, ML_MOCK_COLD);
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, l.h).count > 0, "the cold placeholder draws");
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) <= 95,
+          "the placeholder is dimmed, not full colour");
+    ml_canvas_free(&c);
+
+    /* The compass rounding, at the sector boundaries and the wrap. */
+    CHECK(strcmp(ml_wind_cardinal(0.0f), "N") == 0, "0 is N");
+    CHECK(strcmp(ml_wind_cardinal(350.0f), "N") == 0, "350 wraps back to N");
+    CHECK(strcmp(ml_wind_cardinal(45.0f), "NE") == 0, "45 is NE");
+    CHECK(strcmp(ml_wind_cardinal(90.0f), "E") == 0, "90 is E");
+    CHECK(strcmp(ml_wind_cardinal(135.0f), "SE") == 0, "135 is SE");
+    CHECK(strcmp(ml_wind_cardinal(315.0f), "NW") == 0, "315 is NW");
+    CHECK(strcmp(ml_wind_cardinal(11.0f), "N") == 0, "11 still rounds to N");
+    CHECK(strcmp(ml_wind_cardinal(12.0f), "NNE") == 0, "12 rounds to NNE");
+}
+
+/*
+ * The air widget: which scale is shown, and the pollen bars that stand on a
+ * separate availability flag because pollen is a Europe-only series.
+ *
+ * The box is 20px tall on purpose. A fitted widget sizes its first row to the
+ * box, so a taller one draws a second text row and leaves the bars no room;
+ * this is the size at which the chart is the thing under test.
+ */
+static void test_air(void)
+{
+    group("air widget");
+
+    const char *doc =
+        "{\"name\":\"a\",\"canvas\":{\"width\":40,\"height\":20},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"air\",\"rect\":[0,0,40,20],"
+        "\"font\":\"display-thin\",\"fit\":true,\"line_gap\":1,"
+        "\"color\":\"#FFFFFF\",\"accent\":\"#66D9EF\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "air layout parses");
+    CHECK(diag.count == 0, "air layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "air canvas allocates");
+
+    /* The fixture's two scales disagree by design: 32 European, 61 American.
+     * Same data, different number and band, so the frame must differ. */
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    ml_render(&l, &m, &c);
+    const int eu_max = max_channel(&c, 0, 0, l.w, l.h);
+    CHECK(eu_max > 200, "the air reading is drawn at full colour");
+
+    /* Bars: the baseline sits on the widget's bottom row and the columns rise
+     * from it. Turning pollen off must take the whole chart with it. */
+    CHECK(!px_black(ml_canvas_get(&c, 1, l.h - 1)), "the pollen baseline is drawn");
+    const ink_stat bars = ink_measure(&c, 0, l.h - 7, l.w, 7);
+    CHECK(bars.count > 0, "pollen bars draw in the space below the text");
+
+    m.air.pollen_valid = false;
+    ml_render(&l, &m, &c);
+    CHECK(px_black(ml_canvas_get(&c, 1, l.h - 1)),
+          "no pollen means no baseline");
+    CHECK(ink_measure(&c, 0, l.h - 7, l.w, 7).count == 0,
+          "no pollen means no bars");
+
+    /* The scale is a widget field, not a device setting: the same model drawn
+     * with us_aqi on is a different frame. */
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    ml_render(&l, &m, &c);
+    uint8_t *rgb = (uint8_t *)malloc((size_t)l.w * (size_t)l.h * 3);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    const uint64_t eu = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+
+    l.widgets[0].us_aqi = true;
+    ml_render(&l, &m, &c);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb);
+    const uint64_t us = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+    free(rgb);
+    CHECK(eu != us, "the US scale draws differently from the European one");
+
+    /* Nothing fetched: the placeholder, dimmed. */
+    ml_model_mock(&m, ML_MOCK_COLD);
+    ml_render(&l, &m, &c);
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) <= 95,
+          "the cold placeholder is dimmed");
+    ml_canvas_free(&c);
+
+    /* The published band edges, both scales: this is the whole content of the
+     * helper, and an off-by-one here mislabels every reading. */
+    CHECK(strcmp(ml_aqi_label(19, false), "Good") == 0, "EU 19 is Good");
+    CHECK(strcmp(ml_aqi_label(20, false), "Fair") == 0, "EU 20 is Fair");
+    CHECK(strcmp(ml_aqi_label(40, false), "Moderate") == 0, "EU 40 is Moderate");
+    CHECK(strcmp(ml_aqi_label(60, false), "Poor") == 0, "EU 60 is Poor");
+    CHECK(strcmp(ml_aqi_label(80, false), "Very poor") == 0, "EU 80 is Very poor");
+    CHECK(strcmp(ml_aqi_label(100, false), "Extremely poor") == 0,
+          "EU 100 is Extremely poor");
+    CHECK(strcmp(ml_aqi_label(49, true), "Good") == 0, "US 49 is Good");
+    CHECK(strcmp(ml_aqi_label(50, true), "Moderate") == 0, "US 50 is Moderate");
+    CHECK(strcmp(ml_aqi_label(100, true), "Sensitive") == 0, "US 100 is Sensitive");
+    CHECK(strcmp(ml_aqi_label(150, true), "Unhealthy") == 0, "US 150 is Unhealthy");
+    CHECK(strcmp(ml_aqi_label(200, true), "Very unhealthy") == 0,
+          "US 200 is Very unhealthy");
+    CHECK(strcmp(ml_aqi_label(300, true), "Hazardous") == 0, "US 300 is Hazardous");
+}
+
+/*
+ * The traffic widget's second row has three shapes - on time, ahead, behind -
+ * and the minute rounding is what decides between them. The boundary is the
+ * test: two delays inside the "on time" band must render identically, and the
+ * first one outside it must not.
+ */
+static void test_traffic(void)
+{
+    group("traffic widget");
+
+    const char *doc =
+        "{\"name\":\"t\",\"canvas\":{\"width\":24,\"height\":32},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"traffic\",\"rect\":[0,0,24,32],"
+        "\"font\":\"display-thin\",\"fit\":true,\"line_gap\":1,"
+        "\"color\":\"#FFFFFF\",\"accent\":\"#FF9F43\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "traffic layout parses");
+    CHECK(diag.count == 0, "traffic layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "traffic canvas allocates");
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    uint8_t *rgb = (uint8_t *)malloc((size_t)l.w * (size_t)l.h * 3);
+    CHECK(rgb != NULL, "digest buffer allocates");
+
+    uint64_t frame[5];
+    const int delays[5] = {0, 59, 60, 120, -60};
+    for (int i = 0; i < 5; i++) {
+        m.traffic.delay_s = delays[i];
+        ml_render(&l, &m, &c);
+        ml_canvas_export_rgb888(&c, l.brightness, rgb);
+        frame[i] = fnv1a(rgb, (size_t)l.w * (size_t)l.h * 3);
+    }
+    free(rgb);
+
+    /* 0 and 59 seconds of delay are both "on time", and so is a minute early:
+     * the row is a word, not a rounded number. */
+    CHECK(frame[0] == frame[1], "0s and 59s of delay read the same");
+    m.traffic.delay_s = -59;
+    ml_render(&l, &m, &c);
+    uint8_t *rgb2 = (uint8_t *)malloc((size_t)l.w * (size_t)l.h * 3);
+    ml_canvas_export_rgb888(&c, l.brightness, rgb2);
+    const uint64_t early = fnv1a(rgb2, (size_t)l.w * (size_t)l.h * 3);
+    free(rgb2);
+    CHECK(early == frame[0], "a minute ahead is on time too");
+
+    /* A minute either way is not, and the two directions are visibly
+     * different from each other and from the neutral row. */
+    CHECK(frame[2] != frame[0], "+1 min differs from on time");
+    CHECK(frame[4] != frame[0], "-1 min differs from on time");
+    CHECK(frame[4] != frame[2], "ahead and behind are not the same row");
+    CHECK(frame[3] != frame[0], "2 minutes of delay differs from on time");
+
+    /* The travel time is the row the widget is sized against, and it is
+     * unaffected by the delay: the difference above is on the second row. */
+    m.traffic.delay_s = 120;
+    m.traffic.travel_s = 1380;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, 8).count > 0, "the travel row draws");
+
+    /* The label row: dropping it changes the frame, so it is really drawn. */
+    m.traffic.delay_s = 120;
+    m.traffic.travel_s = 1080;
+    snprintf(m.traffic.label, sizeof(m.traffic.label), "%s", "");
+    ml_render(&l, &m, &c);
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) > 0, "the label-less block still draws");
+
+    /* Nothing fetched: placeholder only, and dim. */
+    ml_model_mock(&m, ML_MOCK_COLD);
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, l.h).count > 0, "the cold placeholder draws");
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) <= 95,
+          "the cold placeholder is dimmed");
+    ml_canvas_free(&c);
+}
+
+/*
+ * The sun widget: a day track whose filled fraction is where the clock sits
+ * between sunrise and sunset. The two ends of that range and the middle are
+ * what the arithmetic has to get right.
+ */
+static void test_sun(void)
+{
+    group("sun widget");
+
+    const char *doc =
+        "{\"name\":\"s\",\"canvas\":{\"width\":64,\"height\":12},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"sun\",\"rect\":[0,0,64,12],"
+        "\"font\":\"display-thin\",\"fit\":true,"
+        "\"color\":\"#FFD24D\",\"accent\":\"#2A3B4D\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "sun layout parses");
+    CHECK(diag.count == 0, "sun layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "sun canvas allocates");
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    m.weather.sunrise_min = 360;    /* 06:00 */
+    m.weather.sunset_min  = 1080;   /* 18:00 */
+    m.now.hour   = 12;
+    m.now.minute = 0;
+
+    /* Noon is exactly half way, so the fill is half the 64px track. */
+    ml_render(&l, &m, &c);
+    const int half = ink_measure(&c, 0, 0, l.w, 1).count;
+    CHECK(half >= 31 && half <= 33, "noon fills half the bar");
+
+    /* The bar is 4px tall in a 12px box, so the track is its own row. */
+    CHECK(ink_measure(&c, 0, 3, l.w, 1).count == l.w, "the track spans the box");
+    CHECK(ink_measure(&c, 0, 4, l.w, l.h - 4).count > 0,
+          "the sunrise and sunset times are drawn under it");
+
+    /* Before sunrise: nothing filled, track and times still there. Not a
+     * negative width and not a panic, which is what an unclamped fraction
+     * would produce. */
+    m.now.hour = 2;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, 1).count == 0, "02:00 fills nothing");
+    CHECK(ink_measure(&c, 0, 3, l.w, 1).count == l.w, "the track still draws");
+    CHECK(ink_measure(&c, 0, 4, l.w, l.h - 4).count > 0, "the times still draw");
+
+    /* After sunset clamps to a full bar rather than overrunning the box. */
+    m.now.hour = 23;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, 1).count == l.w, "23:00 fills the bar");
+
+    /* No sun times - a provider that gave none, or a place that does not have
+     * them - leaves the track alone, with no text to mislead. */
+    m.weather.sunrise_min = -1;
+    m.weather.sunset_min  = -1;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, l.w, 1).count == 0, "no times fill nothing");
+    CHECK(ink_measure(&c, 0, 3, l.w, 1).count == l.w, "no times still draw a track");
+    CHECK(ink_measure(&c, 0, 4, l.w, l.h - 4).count == 0,
+          "no times draw no text");
+    ml_canvas_free(&c);
+
+    /* The phase helpers behind the widget and the moon.illum binding. */
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    m.now.valid   = false;
+    CHECK(ml_moon_phase(&m) < 0.0f, "no clock means no phase");
+    m.now.valid    = true;
+    m.now.epoch_s  = 947182440LL;          /* the reference new moon */
+    CHECK(ml_moon_phase(&m) < 0.01f, "the epoch is a new moon");
+    m.now.epoch_s  = 947182440LL + 1275721;   /* half a synodic month on */
+    const float full = ml_moon_phase(&m);
+    CHECK(full > 0.49f && full < 0.51f, "half a month is a full moon");
+}
+
+/*
+ * The moon widget draws the terminator the moon.illum binding reports, so the
+ * percentages are checked through the picture: a new moon must ink nothing, a
+ * full one the whole row, and a quarter exactly half of it.
+ */
+static void test_moon(void)
+{
+    group("moon widget");
+
+    const char *doc =
+        "{\"name\":\"mo\",\"canvas\":{\"width\":24,\"height\":24},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"moon\",\"rect\":[0,0,24,24],"
+        "\"font\":\"display-thin\",\"fit\":true,"
+        "\"color\":\"#E8EEF4\"}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "moon layout parses");
+    CHECK(diag.count == 0, "moon layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "moon canvas allocates");
+
+    /* Disc box side min(24, 12) = 12, so the disc has radius 5 centred at
+     * (6,6) and spans x=1..11, with the text column from x=13. */
+    const int R = 5, CX = 6, CY = 6;
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    m.now.valid = true;
+
+    /* Full moon: the centre row is lit edge to edge. */
+    m.now.epoch_s = 947182440LL + (int64_t)(0.5f * 2551443.0f);
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, CX - R, CY, 2 * R + 1, 1).count == 2 * R + 1,
+          "a full moon lights the disc's whole centre row");
+    CHECK(ink_measure(&c, 13, 0, l.w - 13, l.h).count > 0,
+          "the phase text is drawn beside the disc");
+
+    /* First quarter: the waxing limb is the right half, and only that. */
+    m.now.epoch_s = 947182440LL + (int64_t)(0.25f * 2551443.0f);
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, CX, CY, R + 1, 1).count == R + 1,
+          "a first quarter lights the right half of that row");
+    CHECK(ink_measure(&c, CX - R, CY, R, 1).count == 0,
+          "and nothing left of the terminator");
+
+    /* New moon: the terminator sits on the limb, so the disc is empty. */
+    m.now.epoch_s = 947182440LL;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, 0, 0, 13, l.h).count == 0,
+          "a new moon inks nothing in the disc box");
+    CHECK(ink_measure(&c, 13, 0, l.w - 13, l.h).count > 0,
+          "and still prints its 0%");
+
+    /* Unsynced clock: the placeholder, drawn in the widget's own corner. */
+    m.now.valid = false;
+    ml_render(&l, &m, &c);
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) <= 95,
+          "the unsynced placeholder is dimmed");
+    ml_canvas_free(&c);
+
+    /* The two helpers the picture and the percentage share. */
+    CHECK(ml_moon_illum(0.5f) == 100, "a full moon is 100% lit");
+    CHECK(ml_moon_illum(0.0f) == 0, "a new moon is 0% lit");
+    CHECK(ml_moon_illum(0.25f) >= 49 && ml_moon_illum(0.25f) <= 51,
+          "a quarter moon is half lit");
+    CHECK(ml_moon_illum(0.75f) >= 49 && ml_moon_illum(0.75f) <= 51,
+          "and so is the waning quarter");
+    CHECK(ml_cos_q15(0.5f) == -32768, "cos is -1 at the full moon");
+    CHECK(ml_cos_q15(0.0f) == 32767, "and +1 at the new one");
+    CHECK(strcmp(ml_moon_label(0.0f), "New") == 0, "0.0 is New");
+    CHECK(strcmp(ml_moon_label(0.5f), "Full") == 0, "0.5 is Full");
+    CHECK(strcmp(ml_moon_label(-1.0f), "--") == 0, "the placeholder has a label");
+}
+
+/*
+ * The forecast strip: one column per day, the icon over the day's range, and
+ * slots that do not move when a provider has fewer days than the strip holds.
+ */
+static void test_forecast(void)
+{
+    group("forecast strip");
+
+    const char *doc =
+        "{\"name\":\"f\",\"canvas\":{\"width\":64,\"height\":32},"
+        "\"background\":\"#000000\",\"widgets\":["
+        "{\"type\":\"forecast\",\"rect\":[0,8,64,24],"
+        "\"icon_set\":\"wx16\",\"font\":\"display-thin\",\"fit\":true,"
+        "\"color\":\"#FFFFFF\","
+        "\"colors\":[\"#C9CDD6\",\"#5AA0E0\",\"#E8EEF4\"]}]}";
+
+    ml_layout l;
+    ml_diag   diag;
+    ml_model  m;
+    ml_canvas c;
+
+    CHECK(ml_layout_parse(doc, strlen(doc), &l, &diag), "forecast layout parses");
+    CHECK(diag.count == 0, "forecast layout parses clean");
+    CHECK(ml_canvas_init(&c, l.w, l.h, NULL), "forecast canvas allocates");
+
+    ml_model_mock(&m, ML_MOCK_TYPICAL);
+    CHECK(m.weather.day_count == ML_FORECAST_DAYS, "the fixture has three days");
+    ml_render(&l, &m, &c);
+
+    /* Three slots of 21px with a one-pixel gutter each side: the icon sits in
+     * the top 14 rows (14 = the strip's 3/5 of 24) and the day's range under
+     * it, so ink in both bands is what "the hi/lo row sits below the icon"
+     * means. The gutters themselves stay empty, which is what keeps the three
+     * ranges apart. */
+    const int slot_x[3]  = {1, 22, 43};
+    const int slot_w[3]  = {19, 19, 19};
+    const int gutters[6] = {0, 20, 21, 41, 42, 63};
+
+    for (int i = 0; i < ML_FORECAST_DAYS; i++) {
+        char what[96];
+        snprintf(what, sizeof(what), "column %d draws its icon", i);
+        CHECK(ink_measure(&c, slot_x[i], 8, slot_w[i], 14).count > 0, what);
+        snprintf(what, sizeof(what), "column %d draws its range under the icon", i);
+        CHECK(ink_measure(&c, slot_x[i], 22, slot_w[i], 10).count > 0, what);
+    }
+
+    for (int i = 0; i < 6; i++) {
+        char what[96];
+        snprintf(what, sizeof(what), "the gutter at x=%d stays empty", gutters[i]);
+        CHECK(ink_measure(&c, gutters[i], 8, 1, 24).count == 0, what);
+    }
+
+    /* Fewer days than slots: the unused slots draw nothing at all, so a
+     * half-filled strip cannot look like a forecast that was clipped. */
+    m.weather.day_count = 2;
+    ml_render(&l, &m, &c);
+    CHECK(ink_measure(&c, slot_x[0], 8, slot_w[0], 24).count > 0,
+          "the first column still draws");
+    CHECK(ink_measure(&c, slot_x[1], 8, slot_w[1], 24).count > 0,
+          "the second column still draws");
+    CHECK(ink_measure(&c, slot_x[2], 8, slot_w[2], 24).count == 0,
+          "the third column is left empty");
+
+    /* No weather yet: the placeholder at the widget's origin, dimmed. */
+    ml_model_mock(&m, ML_MOCK_COLD);
+    ml_render(&l, &m, &c);
+    CHECK(max_channel(&c, 0, 0, l.w, l.h) <= 95,
+          "the cold placeholder is dimmed");
+    CHECK(ink_measure(&c, 0, 8, l.w, 24).count > 0, "and it is drawn in the box");
+    ml_canvas_free(&c);
+}
+
 /* Non-black channel count of an exported frame: enough to tell "something was
  * drawn" from "the box stayed empty" without reaching into the canvas. */
 static int ink_channels(const ml_canvas *c, int w, int h)
@@ -2091,7 +2618,8 @@ static void test_golden(void)
 {
     group("golden images");
 
-    const char *layouts[] = {"mini", "dual", "single", "quad", "precip"};
+    const char *layouts[] = {"mini", "dual", "single", "quad", "precip",
+                             "wind", "air", "traffic", "sky", "forecast"};
     bool update = getenv("MIRROR_UPDATE_GOLDEN") != NULL;
 
     golden_load();
@@ -2221,6 +2749,12 @@ int main(void)
     test_display_settings();
     test_countdown();
     test_precip();
+    test_wind();
+    test_air();
+    test_traffic();
+    test_sun();
+    test_moon();
+    test_forecast();
     test_hostile_layout();
     test_golden();
 

@@ -150,6 +150,59 @@ const Map<String, List<FieldSpec>> _byType = <String, List<FieldSpec>>{
   'precip': <FieldSpec>[
     _accent,
   ],
+  // The six composite widgets below draw their own multi-row layout against a
+  // box: they scale fitted text and take a secondary colour, and none of them
+  // reads `valign`, because their rows fill the box from the top.
+  'wind': <FieldSpec>[
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _lineGap,
+    _align,
+  ],
+  'air': <FieldSpec>[
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _lineGap,
+    _align,
+    FieldSpec('us_aqi', 'US AQI scale', FieldKind.boolean,
+        help: 'Show the U.S. AQI and its bands instead of the European AQI'),
+  ],
+  'traffic': <FieldSpec>[
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _lineGap,
+    _align,
+  ],
+  'sun': <FieldSpec>[
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _align,
+  ],
+  'moon': <FieldSpec>[
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _align,
+  ],
+  // `colors` is deliberately absent: the icon widget's palette is JSON-only
+  // and the forecast widget inherits that.
+  'forecast': <FieldSpec>[
+    FieldSpec('icon_set', 'Icon set', FieldKind.iconSet),
+    _font,
+    _scale,
+    _fit,
+    _accent,
+    _align,
+  ],
 };
 
 List<FieldSpec> fieldsFor(String type) => _byType[type] ?? const <FieldSpec>[];

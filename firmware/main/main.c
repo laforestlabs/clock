@@ -43,8 +43,10 @@
 #include "net/ble.h"
 #endif
 #include "panel.h"
+#include "providers/air.h"
 #include "providers/openmeteo.h"
 #include "providers/provider.h"
+#include "providers/traffic.h"
 
 static const char *TAG = "mirror";
 
@@ -367,13 +369,30 @@ void app_main(void)
      * marking their data stale rather than blocking, so there is no need to
      * wait for an association before starting them.
      */
-    static ml_provider providers[1];
+    static ml_provider providers[3];
     int provider_count = 0;
 
     if (openmeteo_init() == ESP_OK) {
         providers[provider_count++] = *openmeteo_provider();
     } else {
         ESP_LOGE(TAG, "weather disabled: buffers could not be allocated");
+    }
+
+    if (air_init() == ESP_OK) {
+        providers[provider_count++] = *air_provider();
+    } else {
+        ESP_LOGE(TAG, "air quality disabled: buffers could not be allocated");
+    }
+
+    /*
+     * Traffic is registered even when no route is configured: it costs one
+     * comparison per interval and, unlike the other two, the owner can supply
+     * the missing half at any time without a reboot.
+     */
+    if (traffic_init() == ESP_OK) {
+        providers[provider_count++] = *traffic_provider();
+    } else {
+        ESP_LOGE(TAG, "traffic disabled: buffers could not be allocated");
     }
 
     if (provider_count > 0) {

@@ -36,6 +36,12 @@ EVENTS = {
     10: "CLOCK_SYNCED",
     11: "OTA_BEGIN",
     12: "OTA_OK",
+    13: "AIR_FETCH_OK",
+    14: "AIR_FETCH_FAIL",
+    15: "AIR_STALE",
+    16: "TRAFFIC_FETCH_OK",
+    17: "TRAFFIC_FETCH_FAIL",
+    18: "TRAFFIC_STALE",
 }
 
 ERR_CLASS = {
@@ -43,6 +49,7 @@ ERR_CLASS = {
     2: "http",
     3: "parse",
     4: "nomem",
+    5: "auth",
 }
 
 RESET_REASON = {
@@ -79,7 +86,7 @@ def detail_str(evt, detail, rssi):
         return RESET_REASON.get(detail, str(detail))
     if evt == "WIFI_DISCONNECTED":
         return f"reason {detail} ({WIFI_REASON.get(detail, '?')})"
-    if evt == "WEATHER_FETCH_FAIL":
+    if evt in ("WEATHER_FETCH_FAIL", "AIR_FETCH_FAIL", "TRAFFIC_FETCH_FAIL"):
         return ERR_CLASS.get(detail, str(detail))
     if evt == "WIFI_CONNECTING":
         return f"attempt {detail}"

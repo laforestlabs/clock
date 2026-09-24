@@ -145,6 +145,60 @@ menu "Smart Mirror"
 
     endmenu
 
+    menu "Air quality"
+
+        config MIRROR_AIR_INTERVAL_S
+            int "Refresh interval (seconds)"
+            default 1800
+            range 600 21600
+            help
+                Air quality is a slow signal: the AQI and pollen series move
+                over hours, not minutes. Half an hour keeps the device to 48
+                calls a day against the same keyless Open-Meteo service the
+                weather comes from, and it is deliberately out of step with the
+                weather interval so the two fetches do not share a TLS
+                handshake's worth of internal DRAM at the same moment.
+
+                Data is marked stale after three missed intervals.
+
+    endmenu
+
+    menu "Commute"
+
+        config MIRROR_TRAFFIC_INTERVAL_S
+            int "Refresh interval (seconds)"
+            default 300
+            range 60 3600
+            help
+                Travel time is the one reading here that goes out of date in
+                minutes, so it polls five times as often as the weather. Five
+                minutes is 288 calls a day, inside TomTom's free tier; if the
+                owner's plan is smaller or the service answers 429, 600 (144 a
+                day) is the next sensible value.
+
+                Data is marked stale after three missed intervals. A route
+                change invalidates the current reading immediately, so the
+                previous route's travel time is never shown as the new one's.
+
+        config MIRROR_ROUTE_LABEL
+            string "Commute label"
+            default "COMMUTE"
+            help
+                Printed by the traffic widget under the travel time, at most 15
+                characters (it has to fit ml_traffic.label).
+
+                Factory default only; the owner sets the live value from the
+                phone app (Bluetooth) and it is stored in NVS, along with the
+                route itself.
+
+                There is deliberately no Kconfig entry for the routing API key:
+                a credential in sdkconfig is a credential in every build of the
+                firmware. The owner pushes it over Bluetooth and it lives in
+                NVS only, and the traffic provider makes no request at all
+                until both a route and a key are stored.
+
+    endmenu
+
     menu "Panel"
 
         config MIRROR_NO_PANEL
