@@ -16,6 +16,7 @@ if(ESP_PLATFORM)
         SRCS
             src/runtime.c
             src/net_loopback.c
+            src/seats.c
             src/view.c
             examples/rally/game_rally.c
             examples/snake/game_snake.c

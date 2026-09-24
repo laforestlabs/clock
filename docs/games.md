@@ -10,8 +10,8 @@ player on a phone or several players on several phones?
 
 This document records the design for `gamekit/`: its deterministic simulation,
 panel geometry, and multiplayer architecture. The app now runs the shared native
-simulation locally or controls one player on the ESP32 over BLE. The LAN and
-multi-phone architecture described below remains design material, not a claim
+simulation locally or controls one or two players on the ESP32 over BLE. The LAN
+and multi-phone architecture described below remains design material, not a claim
 that those transports are shipped. See [Games in the app](../designer/README.md#games)
 for choosing, controlling, pausing, and replaying the ten playable games and Probe.
 
@@ -24,10 +24,18 @@ terminal and watchdog notifications remain visible to other listeners.
 | Command | Successful reply |
 |---|---|
 | `game list` | `games` followed by space-separated IDs; bare `games` is supported-empty |
-| `game start <id>` | `game ok <id>` followed by declared controls |
+| `game start <id> [1\|2]` | `game ok <id>` followed by declared controls |
+| `game join` | `game joined <player> <id>` followed by declared controls; also the answer for a link that already holds a seat |
+| `game session` | `game session <id> <seats> <need> <state> <me>`, or `game session none`. `state` is `waiting`, `playing`, `paused` or `over`; `me` is this link's player id, 0 when it holds no seat |
 | `game stop` | `game stopped`; `game error no game` also means already stopped |
 | `game pause` | `game paused` |
 | `game resume` | `game resumed` |
+
+The device also pushes, with no command behind it: `game players <seats> <need>`
+whenever the seat count changes, `game stopped` / `game paused` / `game resumed`
+when the shared round changes state, and `game over <id>` when it reaches its
+end. A command's reply goes to the link that asked; a state change goes to every
+link, because it changes what every phone shows.
 
 Pause/Resume are idempotent in their respective states. Without a session they
 return `game error no game`; resuming a terminal session returns
@@ -35,6 +43,34 @@ return `game error no game`; resuming a terminal session returns
 Other device rejections retain the last acknowledged state. A ten-second
 transition timeout, malformed acknowledgment, or transport failure disconnects
 the app because the remote state is unknown.
+
+### The two-phone round
+
+A round is started with the seats it needs. `game start rally` is a solo round:
+one seat, the computer on the other paddle, exactly the behaviour that shipped
+before two phones were possible. `game start rally 2` holds the board until a
+second phone joins. Until then the panel shows the board the round will start
+from, dimmed, with the missing seat's `P2?` over it, and the starter's phone
+shows a waiting view instead of a gamepad: the round is served, not played.
+`game join` from the other phone fills the seat and the `game players 2 2` push
+tells every phone the round is on; only then does the panel step.
+
+Seats are assigned in join order: the starter is player 1 (Rally's left, cyan
+paddle), the joiner player 2 (the right one). The device stamps every input
+frame with the player id of the seat the sending link holds, so neither phone can
+steer the other's paddle, and a frame from a link that holds no seat is dropped
+whole. A third phone cannot join: the Bluetooth controller accepts two
+connections and refuses the rest, so with both links up the mirror is not
+connectable at all - not for a third gamepad, and not for a settings change or a
+firmware update either.
+
+A dropout freezes the round for whoever is left. The runner gives up the seat,
+detaches that player from the session, broadcasts `game paused` and the new
+`game players` line, and a human's paddle is never quietly handed to the
+computer: `game resume` is refused with `game error waiting` until both seats are
+filled again, at which point the resume is the players' decision rather than an
+automatic restart. The solo round has none of this: one seat, the AI on the far
+paddle, and losing its only controller ends it as it always did.
 
 The firmware runner owns pause, not the individual game implementations. Paused
 and terminal boards remain displayed without simulation updates. Pause feeds
@@ -376,12 +412,15 @@ Both, behind one interface, chosen by the session not by the game:
   join with no pairing ceremony: discovery is mDNS/Bonjour, control is a small
   UDP flow, and a snapshot fits comfortably in a few packets. Two or more players
   is what WiFi is here for.
-- **Bluetooth (BLE) is the default for exactly one player and for pairing.** A
-  single phone, a single mirror, no router needed: BLE GATT is enough for one
-  controller's input stream and keeps the bar to a working game as low as a
-  clock. Pairing over BLE also hands the phone the WiFi credentials, the same
-  way the project will provision the mirror, so BLE is the on-ramp even when the
-  game itself runs over WiFi.
+- **Bluetooth (BLE) carries two controllers on this hardware, and is the on-ramp
+  for pairing.** A phone and a mirror, no router needed: BLE GATT carries the
+  input streams of both game controllers and keeps the bar to a working game as
+  low as a clock. The Bluetooth controller is configured for
+  `CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2`, which is exactly two game controllers; a
+  third phone is refused by the controller itself, so more than two players
+  remains the WiFi transport's job. Pairing over BLE also hands the phone the
+  WiFi credentials, the same way the project will provision the mirror, so BLE is
+  the on-ramp even when the game itself runs over WiFi.
 
 The game never chooses and never knows. Transports implement `ml_net` (next); the
 session picks one at hello time from what both ends advertise. For simulation,

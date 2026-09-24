@@ -87,6 +87,17 @@ import '../services/tilt_sensor.dart';
 /// How the mirror game is controlled: the on-screen gamepad or phone tilt.
 enum _InputMode { manual, motion }
 
+/// How many phones a mirror round is started with, chosen at Start.
+///
+/// Only offered where this build's catalogue says the game takes a second
+/// player; the default is two, because a two-phone round is the point of the
+/// feature and the solo one is one tap away. A solo round is exactly what the
+/// screen did before two phones were possible.
+enum _PlayerMode {
+  solo,
+  two,
+}
+
 /// The actions behind the screen's overflow menu. They all apply to the round
 /// on screen, so they are disabled when there is none.
 enum _MenuAction { diagnostics, restart, choose }
@@ -107,6 +118,12 @@ enum _PlayPhase {
 
   /// A round is live and this screen is feeding it input.
   playing,
+
+  /// The mirror is holding a round that has not started yet: this phone holds
+  /// its first seat and the second one is still free. The panel shows the
+  /// served board waiting for the second controller, and this screen sends no
+  /// input until the round is actually running.
+  waiting,
 
   /// A pause request is in flight (mirror rounds only).
   pausing,
@@ -180,10 +197,16 @@ final class _SemanticSource extends _InputSource {
 /// of any controls whose wire label names a code rather than an action.
 class _GameCopy {
   const _GameCopy(
-      {required this.goal, this.aliases = const <String, String>{}});
+      {required this.goal,
+      this.aliases = const <String, String>{},
+      this.sides = const <String>[]});
 
   final String goal;
   final Map<String, String> aliases;
+
+  /// What each player's half is called, by seat: seat N is `sides[N - 1]`.
+  /// Empty for a game with a single seat, which has no second half to name.
+  final List<String> sides;
 }
 
 /// How the phone is currently reading tilt, for a round that is steered by it.
@@ -334,6 +357,12 @@ class _GameScreenState extends State<GameScreen>
   /// rejected.
   static const String _gameOverReason = 'game over';
 
+  /// The reason a mirror gives when a round cannot resume because it is short
+  /// of a seat (`game error waiting`). That is a two-player round that lost a
+  /// phone, not a rejected command: the round is still there, and it needs the
+  /// other phone back before it can continue.
+  static const String _gameWaitingReason = 'waiting';
+
   /// The lowest side a pad button may shrink to. A play surface that cannot
   /// give every button this much room is refused, not clipped.
   static const double _minPadSide = 48;
@@ -372,6 +401,9 @@ class _GameScreenState extends State<GameScreen>
   static const Map<String, _GameCopy> _gameCopy = <String, _GameCopy>{
     'rally': _GameCopy(
       goal: 'Move your paddle up and down. Get the ball past the computer.',
+      // The two halves of the board, so a two-phone round can name the paddle
+      // the player actually steers instead of leaving them to work it out.
+      sides: <String>['left paddle (cyan)', 'right paddle (pink)'],
     ),
     'snake': _GameCopy(
       goal: 'Eat the food and avoid the walls and your tail. '
@@ -513,6 +545,30 @@ class _GameScreenState extends State<GameScreen>
   /// is lost, so a late terminal notification can still be matched to it.
   String? _mirrorGameId;
   MirrorGame? _mirrorGame;
+
+  /// What the device says about the round it is running: its id, how many
+  /// seats it was started with, how many are filled, its state, and which
+  /// seat this phone holds. Null when the device does not know `game session`
+  /// (an older build), when nothing is running, or when the reply could not be
+  /// requested; the setup view then offers no join, exactly as before two
+  /// phones were possible.
+  MirrorSessionInfo? _mirrorSession;
+
+  /// This phone's seat in the mirror round, 0 when it holds none. Kept
+  /// separately from [_mirrorSession] because it survives a reply this build
+  /// could not parse, and because every frame the screen sends is stamped with
+  /// it by the device: the app only has to know whose paddle it is.
+  int _playerId = 0;
+
+  /// How many seats the round on screen was started with, 1 for a solo round.
+  /// This is what tells a two-phone round from a solo one when the device's
+  /// own session reply never arrives.
+  int _mirrorNeed = 1;
+
+  /// Whether a fresh Start asks for one seat or two. Two is the default: the
+  /// two-phone round is what this screen is for, and the chips make the solo
+  /// round one tap away.
+  _PlayerMode _playerMode = _PlayerMode.two;
 
   /// Whether the mirror paused the round while `game start` was still in
   /// flight: `game ok <id>` must then leave the round paused, not running.
@@ -825,6 +881,27 @@ class _GameScreenState extends State<GameScreen>
     if (!mounted) return;
     _gameplayFocus.requestFocus();
   }
+
+  /// Whether this build knows [id] to be a game with a second seat. Only the
+  /// catalogue can say - the mirror lists ids, not player counts - so an id
+  /// this build does not compile is treated as solo-only and the round is
+  /// started exactly as it was before two phones were possible.
+  bool _mirrorTakesTwo(String? id) {
+    if (id == null) return false;
+    for (final game in _games) {
+      if (game.id == id) return game.maxPlayers > 1;
+    }
+    return false;
+  }
+
+  /// How many seats a fresh Start asks the mirror for. Two only for a game
+  /// this build knows to take a second player and only in two-phone mode, so
+  /// the count and the chips can never disagree.
+  int get _mirrorStartPlayers =>
+      _playerMode == _PlayerMode.two &&
+              _mirrorTakesTwo(_mirrorPlayableSelection)
+          ? 2
+          : 1;
 
   /// Start the game the picker shows.
   void _startGame() {
@@ -1485,11 +1562,16 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// Drop everything this screen tracks about the mirror's round: the game id
-  /// and controls, the pending transition flags, the status subscription, the
-  /// tilt mapper, the diagnostic numbers, the input sources, and the phase.
-  /// The link itself is left alone, so a replacement session can be adopted
-  /// right after, and the open diagnostics sheet is not closed here - it
-  /// simply stops having numbers to show.
+  /// and controls, the pending transition flags, the tilt mapper, the
+  /// diagnostic numbers, the input sources, and the phase. The link itself is
+  /// left alone, so a replacement session can be adopted right after, and the
+  /// open diagnostics sheet is not closed here - it simply stops having
+  /// numbers to show.
+  ///
+  /// The status subscription is deliberately *not* dropped: it belongs to the
+  /// link, not to the round. Clearing the round leaves every handler with
+  /// nothing to act on, and keeping the subscription is what lets the setup
+  /// view notice a round another phone starts or stops without a reconnect.
   void _clearMirrorPlay() {
     final owned = _mirrorGameId != null || _mirrorGame != null;
     // Release while the game is still known: the zero packet is sized from
@@ -1497,12 +1579,13 @@ class _GameScreenState extends State<GameScreen>
     _releaseMirrorInput();
     _mirrorGameId = null;
     _mirrorGame = null;
+    _mirrorSession = null;
+    _playerId = 0;
+    _mirrorNeed = 1;
     _pendingPaused = false;
     _pendingOver = false;
     _pendingInterruption = false;
     _pendingInterruptionAutomatic = true;
-    _gameOverSub?.cancel();
-    _gameOverSub = null;
     // The diagnostics poll is not stopped here: it belongs to the open
     // Display & diagnostics sheet, and this only forgets the numbers.
     // The round's tilt mapper and its calibration end with the round, though:
@@ -1592,7 +1675,13 @@ class _GameScreenState extends State<GameScreen>
       if (stale) {
         _showMessage('Mirror disconnected; the game ended.', dismissible: true);
       }
-      if (!unsupported) unawaited(_loadMirrorGames());
+      if (!unsupported) {
+        // Listen for the link's whole life, not from the first start: a seat
+        // count, a stop or a resume another phone causes has to reach this
+        // screen while it is still only offering a join.
+        _attachStatusListener(session);
+        unawaited(_loadMirrorGames());
+      }
       return;
     }
 
@@ -1696,7 +1785,9 @@ class _GameScreenState extends State<GameScreen>
       case _PlayPhase.paused:
       case _PlayPhase.stopping:
       case _PlayPhase.over:
-        // Not running, already frozen, or already being frozen.
+      case _PlayPhase.waiting:
+        // Not running, already frozen, already being frozen, or a round the
+        // mirror is holding before its first tick: nothing to pause.
         break;
     }
   }
@@ -1768,8 +1859,14 @@ class _GameScreenState extends State<GameScreen>
         builder: (context) => AlertDialog(
           key: const ValueKey<String>('discard-round-dialog'),
           title: const Text('Discard round?'),
-          content: const Text(
-            'The round on screen is thrown away and cannot be resumed.',
+          content: Text(
+            // A two-phone round belongs to the shared panel: leaving ends it
+            // for the other player too, which is worth saying before it is
+            // thrown away rather than after.
+            _isControllerMode && _mirrorNeed > 1
+                ? 'The round is thrown away for both players and cannot be '
+                    'resumed.'
+                : 'The round on screen is thrown away and cannot be resumed.',
           ),
           actions: <Widget>[
             TextButton(
@@ -1896,6 +1993,7 @@ class _GameScreenState extends State<GameScreen>
         case _PlayPhase.resuming:
         case _PlayPhase.stopping:
         case _PlayPhase.over:
+        case _PlayPhase.waiting:
           break;
       }
       return;
@@ -1971,6 +2069,12 @@ class _GameScreenState extends State<GameScreen>
           }
         }
       });
+      // The catalogue and the round are separate questions, and the answer to
+      // the second decides whether the setup view is a picker or a join
+      // block. Asked here so the view is right on the first build, and never
+      // fatal: a device that does not know the command answers `unknown
+      // command`, which leaves the screen exactly as it was before.
+      unawaited(_refreshMirrorSession(session));
     } on BlePushException catch (e) {
       // The device answered and refused: show its reason and offer a retry.
       if (!_opStillValid(session, generation)) return;
@@ -2012,8 +2116,9 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// The mirror pushed a status line. Only a terminal notification for the
-  /// round this screen started, or the pause the mirror applies when input
-  /// stops arriving, changes the phase.
+  /// round this screen started, the pause the mirror applies when input stops
+  /// arriving, or a seat count that changed - which is how a two-phone round
+  /// starts - changes the phase.
   void _onMirrorStatus(String line) {
     if (!mounted) return;
     final over = parseGameOver(line);
@@ -2023,9 +2128,126 @@ class _GameScreenState extends State<GameScreen>
       _onMirrorTerminal();
       return;
     }
+    final seats = parseGamePlayers(line);
+    if (seats != null) {
+      _onMirrorPlayers(seats.seats, seats.need);
+      return;
+    }
+    if (line == 'game stopped') {
+      _onMirrorStopped();
+      return;
+    }
+    if (line == 'game resumed' && _mirrorGameId != null) {
+      _onMirrorResumed();
+      return;
+    }
     if (line == 'game paused' && _mirrorGameId != null) {
       _onMirrorPaused();
     }
+  }
+
+  /// Another phone ended the shared round. The panel has gone back to its
+  /// layout, so this screen goes back to its picker: a gamepad - or a seat
+  /// offer - for a round the device is no longer running is a control surface
+  /// for nothing.
+  ///
+  /// A stop this screen asked for is not handled here: that command's own
+  /// acknowledgment owns the transition, and acting on the push as well would
+  /// race it.
+  void _onMirrorStopped() {
+    if (!mounted || _phase == _PlayPhase.stopping) return;
+    if (_mirrorGameId == null && _mirrorGame == null) {
+      // A round this phone was only watching: it holds no seat to clear, so
+      // the session view is the only thing that has to go.
+      if (_mirrorSession != null) setState(() => _mirrorSession = null);
+      return;
+    }
+    setState(_clearMirrorPlay);
+    _showMessage('The round was stopped on the other phone.');
+  }
+
+  /// Another phone continued the shared round. This phone holds a seat in it,
+  /// so its silence would freeze the round all over again: it starts playing
+  /// from the state it was frozen in, with every control released.
+  void _onMirrorResumed() {
+    if (_phase != _PlayPhase.paused) return;
+    setState(() {
+      _phase = _PlayPhase.playing;
+      _releaseAllInput();
+      _lastMirrorSendMs = 0;
+      _ticks = 0;
+    });
+    _gameplayFocus.requestFocus();
+    _startMirrorSources();
+  }
+
+  /// Ask the mirror what round it is running and record the answer. Never
+  /// fatal: an older firmware answers `unknown command`, a link that went away
+  /// throws, and both leave the screen with no session rather than a broken
+  /// one. The reply is applied only while it is still this screen's link.
+  Future<void> _refreshMirrorSession(BleSession session) async {
+    // The round on screen is not what the device reports as "a session this
+    // phone is in" while a start is in flight, so the ask is skipped then.
+    MirrorSessionInfo? info;
+    try {
+      info = await session.gameSession();
+    } catch (_) {
+      info = null;
+    }
+    if (!mounted || !identical(_connection.session, session)) return;
+    setState(() {
+      _mirrorSession = info;
+      // The round the device reports is the authority on how many seats it
+      // holds: a start or a join this screen did not perform still lands.
+      if (info != null && info.id == _mirrorGameId && info.me != 0) {
+        _playerId = info.me;
+        _mirrorNeed = info.need;
+      }
+    });
+  }
+
+  /// A `game players <seats> <need>` push: the round's seat count changed.
+  /// The id, the state and this phone's own seat are not part of that push, so
+  /// they come from what the screen already knows.
+  void _onMirrorPlayers(int seats, int need) {
+    final previous = _mirrorSession;
+    final started = _phase == _PlayPhase.waiting && _playerId != 0 &&
+        seats >= need;
+    setState(() {
+      _mirrorSession = MirrorSessionInfo(
+        id: previous?.id ?? _mirrorGameId,
+        seats: seats,
+        need: need,
+        state: started ? 'playing' : (previous?.state ?? 'waiting'),
+        me: previous?.me ?? _playerId,
+      );
+      if (started) {
+        _mirrorNeed = need;
+        _playerId = _playerId == 0 ? 1 : _playerId;
+      }
+    });
+    if (!started) return;
+    // The last seat is filled, so the round this phone already holds a seat in
+    // is running: the mirror opened its grace window when the seat was taken,
+    // so a frame goes out at once rather than waiting for the first heartbeat.
+    _enterMirrorPlaying(sendFirstFrame: true);
+  }
+
+  /// Move a two-phone round from waiting to running, starting the sources that
+  /// keep it alive and - on the seat that just completed it - putting one
+  /// input frame on the wire immediately, because the round's grace window
+  /// opened when the last seat was filled.
+  void _enterMirrorPlaying({required bool sendFirstFrame}) {
+    if (_phase != _PlayPhase.waiting || _mirrorGame == null) return;
+    setState(() {
+      _phase = _PlayPhase.playing;
+      _releaseAllInput();
+      _lastMirrorSendMs = 0;
+      _ticks = 0;
+    });
+    _gameplayFocus.requestFocus();
+    _startMirrorSources();
+    if (sendFirstFrame) _sendMirrorInput();
   }
 
   void _onMirrorTerminal() {
@@ -2077,10 +2299,14 @@ class _GameScreenState extends State<GameScreen>
   /// terminal screen, Restart, and the diagnostic button all pass the id of
   /// the round they belong to); a fresh Start uses the picker's selection.
   ///
+  /// [players] overrides the mode the screen is in, which is how "Play solo
+  /// instead" starts the one seat it needs without changing what the mode row
+  /// says for the next round.
+  ///
   /// Nothing starts until the diagnostics sheet is closed and, in motion mode,
   /// until neutral has been established: a round nothing can steer is worse
   /// than a refused start.
-  Future<void> _startMirrorGame([String? requestedId]) async {
+  Future<void> _startMirrorGame([String? requestedId, int? players]) async {
     final session = _connection.session;
     if (session == null || _mirrorBusy) return;
     final id = requestedId ?? _mirrorPlayableSelection;
@@ -2091,6 +2317,9 @@ class _GameScreenState extends State<GameScreen>
     if (!await _motionAllowsPlay()) return;
     if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
     final generation = ++_opGeneration;
+    // Decided before the command goes out, so the phase below and the count
+    // the device was asked for are the same decision.
+    final seats = players ?? _mirrorStartPlayers;
     _releaseMirrorInput();
     setState(() {
       _phase = _PlayPhase.starting;
@@ -2108,7 +2337,7 @@ class _GameScreenState extends State<GameScreen>
     _attachStatusListener(session);
     final MirrorGame game;
     try {
-      game = await session.startGame(id);
+      game = await session.startGame(id, players: seats);
     } on BlePushException catch (e) {
       // A named rejection: the device is alive and the round never started,
       // so the acknowledged state stays as it was.
@@ -2140,13 +2369,28 @@ class _GameScreenState extends State<GameScreen>
     final interrupted = _pendingInterruption;
     setState(() {
       _mirrorGame = game;
+      // The starter is player 1: the device seats the asking link at the
+      // lowest free player id, and a fresh round has none taken.
+      _playerId = 1;
+      _mirrorNeed = seats;
+      _mirrorSession = MirrorSessionInfo(
+        id: id,
+        seats: 1,
+        need: seats,
+        state: seats > 1 ? 'waiting' : 'playing',
+        me: 1,
+      );
       // Sources from the round this replaces must not hold anything in the
       // new one: a key that was down when Start was tapped is not a press.
       _releaseAllInput();
       _held = List<int>.filled(game.controls.length, 0);
-      _phase = _pendingOver
-          ? _PlayPhase.over
-          : (_pendingPaused ? _PlayPhase.paused : _PlayPhase.playing);
+      // A two-phone round does not run until its second seat is filled, so
+      // the screen waits instead of playing into a round that is on hold.
+      _phase = seats > 1
+          ? _PlayPhase.waiting
+          : (_pendingOver
+              ? _PlayPhase.over
+              : (_pendingPaused ? _PlayPhase.paused : _PlayPhase.playing));
       _pendingOver = false;
       _pendingPaused = false;
       _pendingInterruption = false;
@@ -2168,6 +2412,14 @@ class _GameScreenState extends State<GameScreen>
     // The round exists now; keys belong to the pad rather than to whatever
     // button started it.
     _gameplayFocus.requestFocus();
+    // Whatever the device's own view of the round is, it is worth recording:
+    // this is where a resumed seat count after a dropout comes from.
+    unawaited(_refreshMirrorSession(session));
+    if (_phase == _PlayPhase.waiting) {
+      // The device is holding the round until the second phone joins. There
+      // is nothing to drive yet: no heartbeat goes out until it starts.
+      return;
+    }
     if (_phase != _PlayPhase.playing) {
       // The round is already over or paused: no heartbeat, no motion.
       _releaseMirrorInput();
@@ -2181,6 +2433,124 @@ class _GameScreenState extends State<GameScreen>
       return;
     }
     _startMirrorSources();
+  }
+
+  /// Join the round the mirror is already running, taking the free seat.
+  ///
+  /// `game join` is idempotent on the device, so this is also how a phone that
+  /// lost its link rejoins the round it was in. The seat number and the
+  /// round's own state come from the `game session` the join is followed by,
+  /// so this lands in waiting, playing, paused or over without guessing.
+  Future<void> _joinMirrorGame() async {
+    final session = _connection.session;
+    if (session == null || _mirrorBusy) return;
+    final preparingGeneration = _opGeneration;
+    await _closeDiagnostics();
+    if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
+    if (!await _motionAllowsPlay()) return;
+    if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
+    final generation = ++_opGeneration;
+    _releaseMirrorInput();
+    setState(() {
+      _phase = _PlayPhase.starting;
+      _mirrorGame = null;
+      _pendingOver = false;
+      _pendingPaused = false;
+      _pendingInterruption = false;
+      _pendingInterruptionAutomatic = true;
+      _latency = null;
+      _roundTripMs = 0;
+      _ticks = 0;
+    });
+    _attachStatusListener(session);
+    final MirrorGame game;
+    try {
+      game = await session.joinGame();
+    } on BlePushException catch (e) {
+      // The device answered and refused: the round never became this phone's,
+      // so the acknowledged state stays as it was.
+      if (!_opStillValid(session, generation)) return;
+      setState(() => _phase = _PlayPhase.idle);
+      _showMessage('Could not join the game: ${e.message}');
+      return;
+    } on TimeoutException {
+      if (!_opStillValid(session, generation)) return;
+      await _loseConnection();
+      return;
+    } on FormatException {
+      if (!_opStillValid(session, generation)) return;
+      await _loseConnection();
+      return;
+    } catch (_) {
+      if (!_opStillValid(session, generation)) return;
+      await _loseConnection();
+      return;
+    }
+    MirrorSessionInfo? info;
+    try {
+      info = await session.gameSession();
+    } catch (_) {
+      // The seat is taken either way; without the round's own state the only
+      // honest reading of a successful join is that it is running.
+      info = null;
+    }
+    if (!_opStillValid(session, generation)) return;
+    final interrupted = _pendingInterruption;
+    setState(() {
+      _mirrorGame = game;
+      _playerId = info?.me ?? 0;
+      _mirrorNeed = info?.need ?? 1;
+      _mirrorSession = info;
+      // Sources from whatever was on screen must hold nothing in this round.
+      _releaseAllInput();
+      _held = List<int>.filled(game.controls.length, 0);
+      _phase = switch (info?.state) {
+        'waiting' => _PlayPhase.waiting,
+        'paused' => _PlayPhase.paused,
+        'over' => _PlayPhase.over,
+        _ => _PlayPhase.playing,
+      };
+      _pendingOver = false;
+      _pendingPaused = false;
+      _pendingInterruption = false;
+    });
+    _recomputeHeld();
+    if (_inputMode == _InputMode.motion && !_tiltDrivesAxes) {
+      _discardMotion();
+      setState(() => _inputMode = _InputMode.manual);
+      _showMessage("This mirror's firmware does not support tilt control; "
+          'update the firmware to play with motion');
+    }
+    _gameplayFocus.requestFocus();
+    if (_phase == _PlayPhase.waiting) {
+      // A seat in a round that is still short of one: no heartbeat yet.
+      return;
+    }
+    if (_phase != _PlayPhase.playing) {
+      // Already over or paused: nothing to drive.
+      _releaseMirrorInput();
+      return;
+    }
+    if (interrupted) {
+      unawaited(_pauseMirrorGame(automatic: _pendingInterruptionAutomatic));
+      return;
+    }
+    _startMirrorSources();
+  }
+
+  /// Give up waiting and play this round alone: stop the held round and start
+  /// it again with the one seat, so the round that was waiting for a partner
+  /// becomes an ordinary solo round against the computer's paddle.
+  Future<void> _playMirrorSolo() async {
+    final session = _connection.session;
+    final id = _mirrorGame?.id ?? _mirrorGameId;
+    if (session == null || id == null || _mirrorBusy) return;
+    final generation = _opGeneration + 1;
+    final stopped = await _stopMirrorGame();
+    if (!stopped || !_opStillValid(session, generation)) return;
+    if (_phase != _PlayPhase.idle) return;
+    if (!identical(_connection.session, session)) return;
+    await _startMirrorGame(id, 1);
   }
 
   /// Stop the mirror's game. The local round is cleared only once the device
@@ -2365,6 +2735,16 @@ class _GameScreenState extends State<GameScreen>
       if (e.message == _gameOverReason) {
         // A terminal session cannot be resumed.
         _mirrorTerminalFromReply();
+        return;
+      }
+      if (e.message == _gameWaitingReason) {
+        // The round is short of a seat. The device is holding it, so the
+        // frozen board stays and the way forward is named rather than left as
+        // a generic refusal.
+        if (!_opStillValid(session, generation)) return;
+        setState(() => _phase = _PlayPhase.paused);
+        _showMessage('This round needs both phones. The other phone must join '
+            'again before it can continue.');
         return;
       }
       // Still paused on the device: keep the frozen view and say why.
@@ -3728,7 +4108,8 @@ class _GameScreenState extends State<GameScreen>
   /// picker and the details scroll, this does not. An action that has to be
   /// scrolled to looks unavailable, and on a phone held sideways the setup is
   /// taller than the screen it has to fit on.
-  Widget _buildStartFooter(String hint, VoidCallback? onStart) {
+  Widget _buildStartFooter(String hint, VoidCallback? onStart,
+      {Widget? above}) {
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: SafeArea(
@@ -3746,6 +4127,13 @@ class _GameScreenState extends State<GameScreen>
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // A start decision that is not a button - how many
+                      // phones the round is for - belongs with the button it
+                      // decides, above the action it changes.
+                      if (above != null) ...<Widget>[
+                        Center(child: above),
+                        const SizedBox(height: 8),
+                      ],
                       FilledButton.icon(
                         key: const ValueKey<String>('start-game'),
                         onPressed: onStart,
@@ -4031,6 +4419,13 @@ class _GameScreenState extends State<GameScreen>
       return _buildMirrorPaused(game);
     }
 
+    // The round is on the mirror but has not started: a two-phone round holds
+    // the board until its second seat is filled, and there is nothing to drive
+    // until it does.
+    if (_phase == _PlayPhase.waiting) {
+      return _buildMirrorWaiting(game);
+    }
+
     // The mirror pushed "game over <id>", or answered that the round it was
     // asked about had finished. The panel holds the result; this screen keeps
     // the ways to play it again or choose another.
@@ -4060,9 +4455,45 @@ class _GameScreenState extends State<GameScreen>
       return _buildMirrorSetup();
     }
 
-    return _inputMode == _InputMode.motion
+    return _buildMirrorPlaying(game);
+  }
+
+  /// The live mirror round: the seat this phone holds, when there is more than
+  /// one, above the same play surface a solo round uses. The header is the only
+  /// thing a two-phone round adds here, and it is what tells the two players
+  /// apart on a panel that shows both paddles at once.
+  Widget _buildMirrorPlaying(MirrorGame game) {
+    final surface = _inputMode == _InputMode.motion
         ? _buildMotionGamepad()
         : _buildPlaySurface(preview: null);
+    final header = _mirrorSeatHeader(game);
+    if (header == null) return surface;
+    return Column(
+      children: <Widget>[
+        header,
+        Expanded(child: surface),
+      ],
+    );
+  }
+
+  /// "Player 2 of 2" and, where this build can name it, which half of the
+  /// board that is. Null for a solo round and for a seat the device never
+  /// confirmed: a wrong seat number is worse than none.
+  Widget? _mirrorSeatHeader(MirrorGame game) {
+    if (_mirrorNeed <= 1 || _playerId <= 0) return null;
+    final sides = _gameCopy[game.id]?.sides ?? const <String>[];
+    final side = _playerId <= sides.length ? sides[_playerId - 1] : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Text(
+        side == null
+            ? 'Player $_playerId of $_mirrorNeed'
+            : 'Player $_playerId of $_mirrorNeed · $side',
+        key: const ValueKey<String>('player-seat'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 13, color: Colors.grey),
+      ),
+    );
   }
 
   /// No Bluetooth link to the device this route belongs to.
@@ -4177,6 +4608,12 @@ class _GameScreenState extends State<GameScreen>
   /// unsupported firmware, and a retryable listing error are four different
   /// answers and must not all read "Loading games...".
   Widget _buildMirrorSetup() {
+    // A round the device is already running is not something the picker can
+    // offer to replace: starting one would be refused, and the only thing this
+    // screen can usefully do is take the free seat.
+    final running = _mirrorSession;
+    if (running?.id != null) return _buildMirrorJoin(running!);
+
     final ids = _mirrorGameIds;
     final error = _mirrorListError;
     final playable = _mirrorPlayableIds;
@@ -4243,8 +4680,178 @@ class _GameScreenState extends State<GameScreen>
           ? _buildStartFooter(
               _setupHint(_copyGameId),
               _mirrorBusy || _motionBusy ? null : () => _startMirrorGame(),
+              // The mode row is a start decision, so it sits with the start
+              // action. Drawn only where the catalogue knows the game takes a
+              // second player: a chip that cannot do anything is worse than no
+              // chip.
+              above: _mirrorTakesTwo(_copyGameId)
+                  ? _buildPlayerModePicker()
+                  : null,
             )
           : null,
+    );
+  }
+
+  /// A round is already on the mirror and this phone is not driving it, or
+  /// holds a seat it is not currently feeding. Shown in place of the picker:
+  /// the running game's name, how full the round is, and the one action that
+  /// changes either - a join, which is idempotent on the device and therefore
+  /// also the way back into a round this phone dropped out of.
+  Widget _buildMirrorJoin(MirrorSessionInfo running) {
+    final id = running.id!;
+    final seated = running.me > 0;
+    final open = running.seats < running.need;
+    final String summary;
+    final Widget? join;
+    if (seated) {
+      summary = 'This phone is in the round as player ${running.me}.';
+      join = _buildJoinButton('Rejoin the round');
+    } else if (running.state == 'over') {
+      // The round is over and its board stays on the panel: a seat in it can
+      // never be played, so offering one would be a lie about the button.
+      summary = 'The round on the mirror has finished.';
+      join = null;
+    } else if (running.need <= 1) {
+      summary = 'A solo round is running, and its one seat is taken.';
+      join = null;
+    } else if (open) {
+      summary = '${running.seats} of ${running.need} players are in.';
+      join = _buildJoinButton('Join as Player ${running.seats + 1}');
+    } else {
+      summary = 'This round already has both players.';
+      join = null;
+    }
+
+    return _buildSetupView(
+      destination: Text(
+        'Playing on ${_connection.deviceName ?? 'the mirror'}',
+        key: const ValueKey<String>('game-destination'),
+        style: Theme.of(context).textTheme.titleMedium,
+      ),
+      picker: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            _gameLabel(id),
+            key: const ValueKey<String>('game-name'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(summary, key: const ValueKey<String>('join-summary')),
+          if (join != null) ...<Widget>[
+            const SizedBox(height: 16),
+            join,
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The one button a join block offers. Disabled while a transition is in
+  /// flight, exactly like Start: a second join into a round that is being
+  /// taken would be answered by the device with a busy line.
+  Widget _buildJoinButton(String label) {
+    return FilledButton.icon(
+      key: const ValueKey<String>('join-round'),
+      onPressed:
+          _mirrorBusy || _motionBusy ? null : () => unawaited(_joinMirrorGame()),
+      icon: const Icon(Icons.login),
+      label: Text(label),
+    );
+  }
+
+  /// How many phones the round is for, as two chips. The default is two: the
+  /// two-phone round is what the mode is for, and the solo round - exactly
+  /// what this screen did before it - is one tap away.
+  Widget _buildPlayerModePicker() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: <Widget>[
+        ChoiceChip(
+          key: const ValueKey<String>('players-solo'),
+          label: const Text('Solo vs computer'),
+          selected: _playerMode == _PlayerMode.solo,
+          onSelected: (_) => _setPlayerMode(_PlayerMode.solo),
+        ),
+        ChoiceChip(
+          key: const ValueKey<String>('players-two'),
+          label: const Text('Two phones'),
+          selected: _playerMode == _PlayerMode.two,
+          onSelected: (_) => _setPlayerMode(_PlayerMode.two),
+        ),
+      ],
+    );
+  }
+
+  void _setPlayerMode(_PlayerMode mode) {
+    if (_playerMode == mode) return;
+    setState(() => _playerMode = mode);
+  }
+
+  /// The round is on the mirror but holding for its second phone: the panel
+  /// shows the served board, and this screen says what is missing, how full
+  /// the table is, and the two ways out - wait, or stop waiting and play the
+  /// round alone.
+  Widget _buildMirrorWaiting(MirrorGame game) {
+    final session = _mirrorSession;
+    final need = session?.need ?? _mirrorNeed;
+    final seats = session?.seats ?? (_playerId > 0 ? 1 : 0);
+    return Center(
+      key: const ValueKey<String>('mirror-waiting'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.phonelink_ring, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              'Waiting for the second phone',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${_gameLabel(game.id)} is holding the board. Open Games on the '
+              'other phone and tap Join as Player ${seats < need ? seats + 1 : need}.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$seats of $need players are in.',
+              key: const ValueKey<String>('waiting-seats'),
+              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              alignment: WrapAlignment.center,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  key: const ValueKey<String>('waiting-stop'),
+                  onPressed: _mirrorBusy
+                      ? null
+                      : () => unawaited(_stopMirrorGame()),
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Stop'),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey<String>('waiting-solo'),
+                  onPressed: _mirrorBusy
+                      ? null
+                      : () => unawaited(_playMirrorSolo()),
+                  icon: const Icon(Icons.person),
+                  label: const Text('Play solo instead'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 

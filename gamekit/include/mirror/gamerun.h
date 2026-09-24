@@ -69,13 +69,26 @@ typedef struct ml_peer_session ml_peer_session;
 ml_peer_session *ml_host_attach_peer(ml_host_session *h);
 
 /* Attach a controller. The host calls the game's join and returns a net endpoint
- * the harness drives to push that player's inputs onto the session. */
+ * the harness drives to push that player's inputs onto the session. Returns NULL
+ * - and calls no join - when the session already holds ML_BUS_MAX_PEERS players,
+ * when player_id is already attached, or when it already holds the game's
+ * max_players. */
 ml_net          *ml_host_attach_controller(ml_host_session *h,
                                           uint16_t player_id, const char *name,
                                           uint8_t caps);
 
+/* Detach a controller attached with ml_host_attach_controller: the game's leave
+ * callback fires and the player stops counting. Inputs from a detached player
+ * are dropped, so a frame already in the session's queue cannot steer the round
+ * the player left. False when that player was not attached, so calling it twice
+ * is harmless. */
+bool             ml_host_detach_controller(ml_host_session *h,
+                                          uint16_t player_id);
+
 /* Inject a local player's input straight into the host. Used for single-player
- * and for keyboard-driven multi-player on one machine; also journalled. */
+ * and for keyboard-driven multi-player on one machine; also journalled. The
+ * event's player_id must belong to an attached controller: an event from a
+ * player the session does not hold is dropped, exactly as one off the net is. */
 void             ml_host_local_input(ml_host_session *h, const ml_input_event *e);
 
 /* Advance the session by wall_ms of real time: drain the bus for incoming

@@ -4,6 +4,8 @@
 #ifndef MIRROR_BLE_H
 #define MIRROR_BLE_H
 
+#include <stdint.h>
+
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -30,8 +32,21 @@ esp_err_t ble_init(void);
  * Send one status line from any task (locks internally; no-ops with no
  * connection). The game runner sends its replies through this, from the
  * render task, so it must be safe off the BLE host task.
+ *
+ * With two links up, a command's reply belongs to the link that asked and a
+ * state change belongs to everyone: the two wrappers below say which is
+ * which. The read-back cache keeps the newest line either way, so a client
+ * that reads the characteristic after missing a notification still sees the
+ * most recent answer.
  */
 void ble_send_status_line(const char *line);
+
+/*
+ * Send one status line to one link only (a no-op when that link is gone).
+ * Used for a reply an asker alone should see, so one phone's answer never
+ * appears on the other phone's screen.
+ */
+void ble_send_status_line_to(uint16_t conn, const char *line);
 
 #ifdef __cplusplus
 }

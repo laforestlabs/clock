@@ -11,8 +11,12 @@
  * single ATT write within the negotiated MTU; the server is MTU-agnostic and
  * just appends.
  *
- * Trust model: one connection, no pairing or security, same as the open
- * setup portal. It is a home device on a home network.
+ * Trust model: up to two connections, no pairing or security, same as the
+ * open setup portal. It is a home device on a home network. Two links exist
+ * because a two-player game is one phone per player; the controller is
+ * configured for exactly that many (CONFIG_BT_NIMBLE_MAX_CONNECTIONS), so a
+ * third central is refused and cannot reach the mirror's config, WiFi or OTA
+ * surface while both seats are taken.
  *
  * Commits (the actual NVS/SPIFFS writes, tzset, provider refreshes) run on a
  * dedicated "ble_commit" task with its own 8KB stack, not on the BLE host
@@ -91,6 +95,11 @@ static const ble_uuid128_t s_chr_game_in = BLE_UUID128_INIT(0x05, UUID_TAIL);
 #define MAX_STATUS_LEN   256
 #define MAX_DEV_NAME     32
 
+/* Simultaneous links. This must match CONFIG_BT_NIMBLE_MAX_CONNECTIONS in
+ * sdkconfig.defaults - raise both together. The controller refuses a third
+ * central at that limit, so this table can never overflow. */
+#define MAX_CONNS        2
+
 /* The display transfer carries a two-member mode object, and the LAN endpoint
  * caps the same document at 64 bytes, so a "begin display" larger than this is
  * a protocol error rather than something to stage. */
@@ -114,6 +123,10 @@ typedef struct {
     char           *buf;        /* NULL when idle */
     size_t          declared;   /* len from "begin" */
     size_t          received;
+    /* The link that opened the transfer. Only it may write into it, commit
+     * it, or abort it: with two phones connected, one phone's chunk must
+     * never land in the other's payload. */
+    uint16_t        conn;
 } transfer_t;
 
 static transfer_t      s_xfer;
@@ -123,12 +136,17 @@ static char            s_dev_name[MAX_DEV_NAME];
 static char            s_last_status[MAX_STATUS_LEN];
 static size_t          s_last_status_len;
 static uint16_t        s_status_handle;
-static uint16_t        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+/* Connected links, in connect order. Guarded by s_lock. */
+static uint16_t        s_conns[MAX_CONNS];
+static int             s_conn_count;
 static uint8_t         s_adv_addr_type;
 /* Set by the "wifi scan" command and cleared when the results are streamed,
  * so scan-done notifications from the portal's own scans do not emit an
  * unsolicited network list. Guarded by s_lock. */
 static bool s_wifi_scan_awaiting = false;
+/* The link that asked for that scan: the portal's results belong to it alone,
+ * since the other phone never asked. Guarded by s_lock. */
+static uint16_t s_wifi_scan_conn = BLE_HS_CONN_HANDLE_NONE;
 
 
 /*
@@ -137,9 +155,10 @@ static bool s_wifi_scan_awaiting = false;
  * stack than the host task has, and holding the host task on a flash write
  * delays the link. cmd_commit detaches the staging buffer and hands it over
  * through this queue; the commit task owns it from there and sends the
- * commit's status line itself. The phone pushes one transfer at a time, so
- * the queue only ever has a single job in practice; the depth is defensive
- * and a full queue is rejected rather than blocking the host task.
+ * commit's status line itself. One transfer is open at a time - a second
+ * link's begin is refused while another's is - so the queue only ever has a
+ * single job in practice; the depth is defensive and a full queue is
+ * rejected rather than blocking the host task.
  */
 #define COMMIT_Q_DEPTH      2
 #define COMMIT_STACK_BYTES  8192
@@ -148,6 +167,9 @@ typedef struct {
     transfer_kind_t kind;
     char           *buf;
     size_t          len;
+    /* The link that queued the job: its status line ("commit ok ...",
+     * "factory reset ok", an error) goes back to it and nowhere else. */
+    uint16_t        conn;
 } commit_job_t;
 
 static QueueHandle_t s_commit_q;
@@ -156,6 +178,43 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg);
 
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
+
+/*
+ * The link table. Callers hold s_lock: the BLE host task adds and removes
+ * links in the GAP callback while the render and commit tasks broadcast
+ * status lines, so the table is only ever touched under it.
+ */
+static bool conn_has(uint16_t conn)
+{
+    for (int i = 0; i < s_conn_count; i++) {
+        if (s_conns[i] == conn) return true;
+    }
+    return false;
+}
+
+static int conn_count(void)
+{
+    return s_conn_count;
+}
+
+static void conn_add(uint16_t conn)
+{
+    /* The controller refuses a third central (MAX_CONNS), so this cannot
+     * overflow; the guard is defensive. */
+    if (conn_count() >= MAX_CONNS || conn_has(conn)) return;
+    s_conns[s_conn_count++] = conn;
+}
+
+static void conn_remove(uint16_t conn)
+{
+    for (int i = 0; i < s_conn_count; i++) {
+        if (s_conns[i] == conn) {
+            /* Order carries no meaning, so the last link fills the gap. */
+            s_conns[i] = s_conns[--s_conn_count];
+            return;
+        }
+    }
+}
 
 static void advertise(void);
 
@@ -174,6 +233,7 @@ static void transfer_clear_locked(void)
     s_xfer.kind = TRANSFER_NONE;
     s_xfer.declared = 0;
     s_xfer.received = 0;
+    s_xfer.conn = BLE_HS_CONN_HANDLE_NONE;
 }
 
 /* Frees any staging buffer. Called on abort, commit, and disconnect. */
@@ -193,19 +253,24 @@ static void *alloc_payload_buffer(void)
 
 /* ------------------------------------------------------------ status */
 
-static void send_status(const char *fmt, ...)
+/*
+ * Format one status line into the shared read-back cache and notify it.
+ * `all` sends it to every connected link; otherwise `conn` is the one link
+ * that gets it, and a handle that is gone by now - or was never in the link
+ * table, BLE_HS_CONN_HANDLE_NONE included - simply notifies nobody. The line
+ * lands in the cache either way, so a client that reads the characteristic
+ * instead of listening sees the newest answer.
+ */
+static void send_status_v(bool all, uint16_t conn, const char *fmt, va_list ap)
 {
     /*
-     * Serialized: the host task and the commit task both write the shared
-     * status buffer and notify from it. The lock is never held by a caller
-     * (no send_status call runs under s_lock), so taking it here cannot
-     * deadlock.
+     * Serialized: the host task, the commit task and the render task all
+     * write the shared status buffer and notify from it. No caller holds
+     * s_status_lock, and no caller of this runs under s_lock, so taking the
+     * two locks here (in this order) cannot deadlock.
      */
     xSemaphoreTake(s_status_lock, portMAX_DELAY);
-    va_list ap;
-    va_start(ap, fmt);
     const int len = vsnprintf(s_last_status, sizeof(s_last_status), fmt, ap);
-    va_end(ap);
     if (len < 0) {
         xSemaphoreGive(s_status_lock);
         return;
@@ -215,25 +280,61 @@ static void send_status(const char *fmt, ...)
         s_last_status_len = sizeof(s_last_status) - 1;
     }
 
-    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+    /* Snapshot the targets under s_lock, then notify with it released: the
+     * notify can block on the stack, and the link table must stay available
+     * to the GAP callback that maintains it. */
+    uint16_t targets[MAX_CONNS];
+    int n = 0;
+    lock();
+    if (all) {
+        for (int i = 0; i < s_conn_count; i++) targets[n++] = s_conns[i];
+    } else if (conn_has(conn)) {
+        targets[n++] = conn;
+    }
+    unlock();
+
+    for (int i = 0; i < n; i++) {
         struct os_mbuf *om = ble_hs_mbuf_from_flat(s_last_status,
                                                    s_last_status_len);
         if (om != NULL) {
             /* Consumed by the stack regardless of the outcome. Notifications
              * only reach the client once it has subscribed (CCCD); until
              * then the READ path returns the same buffer. */
-            ble_gatts_notify_custom(s_conn_handle, s_status_handle, om);
+            ble_gatts_notify_custom(targets[i], s_status_handle, om);
         }
     }
     xSemaphoreGive(s_status_lock);
 }
 
-/* Public one-line wrapper for send_status: the game runner replies through
- * this from the render task. The %s keeps the line verbatim (a label could
- * contain a %). */
+/* A command's reply goes to the link that asked, and to nobody else. */
+static void send_status_to(uint16_t conn, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    send_status_v(false, conn, fmt, ap);
+    va_end(ap);
+}
+
+/* A state change goes to every link. */
+static void send_status_all(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    send_status_v(true, BLE_HS_CONN_HANDLE_NONE, fmt, ap);
+    va_end(ap);
+}
+
+/* Public one-line wrappers for the game runner and the provisioning
+ * callbacks: they reply from the render task and the event-loop task. The %s
+ * keeps the line verbatim (a label could contain a %). */
 void ble_send_status_line(const char *line)
 {
-    send_status("%s", line);
+    send_status_all("%s", line);
+}
+
+void ble_send_status_line_to(uint16_t conn, const char *line)
+{
+    send_status_to(conn, "%s", line);
 }
 
 static void json_escape(char *out, size_t outsz, const char *in)
@@ -257,7 +358,7 @@ static void json_escape(char *out, size_t outsz, const char *in)
 
 /* -------------------------------------------------------------- cmd */
 
-static void cmd_ping(void)
+static void cmd_ping(uint16_t conn)
 {
     /* Static: ml_layout is ~6.6KB, too big for a stack buffer on either the
      * host task or this one, and only the host task touches it. */
@@ -269,30 +370,30 @@ static void cmd_ping(void)
      * firmware update, and an OTA must be verifiable. The app uses the pong's
      * IP for the WiFi OTA upload, and its width/height as the panel geometry,
      * so those must be the hardware size, not the stored layout's. */
-    send_status("pong %s %s %s %d %d",
-                esp_app_get_description()->version, wifi_ip(),
-                layout.name, panel_width(), panel_height());
+    send_status_to(conn, "pong %s %s %s %d %d",
+                         esp_app_get_description()->version, wifi_ip(),
+                         layout.name, panel_width(), panel_height());
 }
 
-static void cmd_get_config(void)
+static void cmd_get_config(uint16_t conn)
 {
     char esc_name[50], esc_tz[128], esc_place[64];
     json_escape(esc_name, sizeof(esc_name), mirror_config_device_name());
     json_escape(esc_tz, sizeof(esc_tz), mirror_config_timezone());
     json_escape(esc_place, sizeof(esc_place), mirror_config_place());
 
-    send_status("config {\"name\":\"%s\",\"timezone\":\"%s\",\"latitude\":\"%s\","
-                "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
-                "\"clock12h\":%s,\"temp_unit\":\"%c\",\"flip180\":%s}",
-                esc_name, esc_tz, mirror_config_latitude(),
-                mirror_config_longitude(), esc_place,
-                mirror_config_brightness(),
-                mirror_config_clock_12h() ? "true" : "false",
-                mirror_config_temp_unit(),
-                mirror_config_flip180() ? "true" : "false");
+    send_status_to(conn, "config {\"name\":\"%s\",\"timezone\":\"%s\",\"latitude\":\"%s\","
+                         "\"longitude\":\"%s\",\"place\":\"%s\",\"brightness\":%d,"
+                         "\"clock12h\":%s,\"temp_unit\":\"%c\",\"flip180\":%s}",
+                         esc_name, esc_tz, mirror_config_latitude(),
+                         mirror_config_longitude(), esc_place,
+                         mirror_config_brightness(),
+                         mirror_config_clock_12h() ? "true" : "false",
+                         mirror_config_temp_unit(),
+                         mirror_config_flip180() ? "true" : "false");
 }
 
-static void cmd_get_device(void)
+static void cmd_get_device(uint16_t conn)
 {
     /*
      * The compact identity/display reply, read by the phone when it activates
@@ -319,55 +420,59 @@ static void cmd_get_device(void)
                    "get device reply must fit the status buffer");
 
     const mirror_display_mode_t base_mode = display_store_base_mode();
-    send_status("device {\"id\":\"%s\",\"display_api\":%d,\"mode\":\"%s\","
-                "\"base_mode\":\"%s\",\"picture_ready\":%s}",
-                mirror_config_device_id(),
-                panel_supports_picture() ? 1 : 0,
-                game_runner_active() ? "games" : display_mode_name(base_mode),
-                display_mode_name(base_mode),
-                display_store_picture_ready() ? "true" : "false");
+    send_status_to(conn, "device {\"id\":\"%s\",\"display_api\":%d,\"mode\":\"%s\","
+                         "\"base_mode\":\"%s\",\"picture_ready\":%s}",
+                         mirror_config_device_id(),
+                         panel_supports_picture() ? 1 : 0,
+                         game_runner_active() ? "games" : display_mode_name(base_mode),
+                         display_mode_name(base_mode),
+                         display_store_picture_ready() ? "true" : "false");
 }
 
-static void cmd_begin_firmware(int len, int offset)
+static void cmd_begin_firmware(uint16_t conn, int len, int offset)
 {
     if (len < 1 || offset < 0) {
-        send_status("begin error bad offset");
+        send_status_to(conn, "begin error bad offset");
         return;
     }
     lock();
-    if (offset == 0 && transfer_open_locked()) {
+    /* One transfer at a time, owned by the link that opened it: another
+     * phone's begin is refused even for the offset > 0 OTA resume, so a
+     * second phone can never append into the first phone's image. */
+    if (transfer_open_locked() && (offset == 0 || s_xfer.conn != conn)) {
         unlock();
-        send_status("begin error busy");
+        send_status_to(conn, "begin error busy");
         return;
     }
     const esp_err_t err = ota_session_begin((size_t)len, (size_t)offset);
     if (err != ESP_OK) {
         unlock();
-        send_status("begin error %s",
-                    err == ESP_ERR_INVALID_ARG
-                        ? (offset > 0 ? "bad offset" : "too large")
-                        : "unavailable");
+        send_status_to(conn, "begin error %s",
+                             err == ESP_ERR_INVALID_ARG
+                                 ? (offset > 0 ? "bad offset" : "too large")
+                                 : "unavailable");
         return;
     }
     s_xfer.kind = TRANSFER_FIRMWARE;
     s_xfer.declared = (size_t)len;
     s_xfer.received = (size_t)offset;
+    s_xfer.conn = conn;
     unlock();
     ESP_LOGI(TAG, "begin firmware, %d bytes at offset %d", len, offset);
-    send_status("begin ok");
+    send_status_to(conn, "begin ok");
 }
 
-static void cmd_begin(const char *arg)
+static void cmd_begin(uint16_t conn, const char *arg)
 {
     char kind[16];
     int len = 0, offset = 0;
     const int fields = sscanf(arg, "%15s %d %d", kind, &len, &offset);
     if (fields < 2) {
-        send_status("begin error bad kind");
+        send_status_to(conn, "begin error bad kind");
         return;
     }
     if (strcmp(kind, "firmware") == 0) {
-        cmd_begin_firmware(len, fields < 3 ? 0 : offset);
+        cmd_begin_firmware(conn, len, fields < 3 ? 0 : offset);
         return;
     }
     transfer_kind_t k;
@@ -375,38 +480,47 @@ static void cmd_begin(const char *arg)
     else if (strcmp(kind, "wifi") == 0) k = TRANSFER_WIFI;
     else if (strcmp(kind, "config") == 0) k = TRANSFER_CONFIG;
     else if (strcmp(kind, "display") == 0) k = TRANSFER_DISPLAY;
-    else { send_status("begin error bad kind"); return; }
+    else { send_status_to(conn, "begin error bad kind"); return; }
     if (len < 1 || len > MAX_PAYLOAD ||
         (k == TRANSFER_DISPLAY && len > DISPLAY_MODE_JSON_MAX)) {
-        send_status("begin error too large");
+        send_status_to(conn, "begin error too large");
         return;
     }
     lock();
     if (transfer_open_locked()) {
         unlock();
-        send_status("begin error busy");
+        send_status_to(conn, "begin error busy");
         return;
     }
     s_xfer.buf = alloc_payload_buffer();
     if (s_xfer.buf == NULL) {
         unlock();
-        send_status("begin error out of memory");
+        send_status_to(conn, "begin error out of memory");
         return;
     }
     s_xfer.kind = k;
     s_xfer.declared = (size_t)len;
     s_xfer.received = 0;
+    s_xfer.conn = conn;
     unlock();
     ESP_LOGI(TAG, "begin %s, %d bytes", kind, len);
-    send_status("begin ok");
+    send_status_to(conn, "begin ok");
 }
 
-static void cmd_commit(void)
+static void cmd_commit(uint16_t conn)
 {
     lock();
     if (!transfer_open_locked()) {
         unlock();
-        send_status("commit error no transfer");
+        send_status_to(conn, "commit error no transfer");
+        return;
+    }
+    /* The transfer belongs to the link that began it. The other phone's
+     * commit is refused with the same wording a begin gets for the same
+     * reason: the mirror is already busy with someone else's payload. */
+    if (s_xfer.conn != conn) {
+        unlock();
+        send_status_to(conn, "begin error busy");
         return;
     }
     if (s_xfer.kind == TRANSFER_FIRMWARE) {
@@ -417,13 +531,13 @@ static void cmd_commit(void)
              * released here as well: otherwise the next begin is answered
              * "busy" and the phone cannot retry the image at all. */
             transfer_reset();
-            send_status("ota error %s", err == ESP_ERR_INVALID_STATE
-                                            ? "incomplete" : "rejected");
+            send_status_to(conn, "ota error %s", err == ESP_ERR_INVALID_STATE
+                                                     ? "incomplete" : "rejected");
             return;
         }
         transfer_reset();
         netlog_record(NETLOG_EVT_OTA_OK, 0, 0);
-        send_status("ota ok");
+        send_status_to(conn, "ota ok");
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
         return;
@@ -431,7 +545,7 @@ static void cmd_commit(void)
     if (s_xfer.received != s_xfer.declared) {
         transfer_clear_locked();
         unlock();
-        send_status("commit error length mismatch");
+        send_status_to(conn, "commit error length mismatch");
         return;
     }
     const transfer_kind_t kind = s_xfer.kind;
@@ -441,15 +555,17 @@ static void cmd_commit(void)
     s_xfer.kind = TRANSFER_NONE;
     s_xfer.declared = 0;
     s_xfer.received = 0;
+    s_xfer.conn = BLE_HS_CONN_HANDLE_NONE;
     unlock();
     if (s_commit_q == NULL) {
-        send_status("commit error busy");
+        send_status_to(conn, "commit error busy");
         heap_caps_free((void *)buf);
         return;
     }
-    const commit_job_t job = { .kind = kind, .buf = buf, .len = len };
+    const commit_job_t job = { .kind = kind, .buf = buf, .len = len,
+                               .conn = conn };
     if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
-        send_status("commit error busy");
+        send_status_to(conn, "commit error busy");
         heap_caps_free((void *)buf);
         return;
     }
@@ -461,10 +577,10 @@ static void cmd_commit(void)
  * layout re-parse together need more stack than the BLE host task has, and
  * blocking the host task on a flash write would stall the link, so commits
  * arrive detached here through s_commit_q and the task owns them. Status
- * lines go back over the same notification as always, so the phone sees no
- * difference from a synchronous commit. A disconnect while a commit is
- * queued does not cancel it: the payload is already detached, and send_status
- * simply no-ops once there is no connection.
+ * lines go back over the same notification as always, to the link that
+ * queued the job, so the phone sees no difference from a synchronous commit.
+ * A disconnect while a commit is queued does not cancel it: the payload is
+ * already detached, and send_status_to simply no-ops once that link is gone.
  */
 static void commit_task(void *arg)
 {
@@ -490,7 +606,7 @@ static void commit_task(void *arg)
              * stored picture: the setup portal opens and the panel draws
              * the embedded layout. */
             if (layout_store_clear() != ESP_OK) {
-                send_status("factory reset error stored layout could not be cleared");
+                send_status_to(job.conn, "factory reset error stored layout could not be cleared");
                 continue;
             }
             /* The saved picture and its display state live outside the config
@@ -500,15 +616,15 @@ static void commit_task(void *arg)
              * phone can retry with the picture still intact; what must never
              * happen is the owner's picture reappearing after a reset. */
             if (display_store_clear() != ESP_OK) {
-                send_status("factory reset error stored picture could not be cleared");
+                send_status_to(job.conn, "factory reset error stored picture could not be cleared");
                 continue;
             }
             wifi_forget();
             if (mirror_config_factory_reset() != ESP_OK) {
-                send_status("factory reset error config storage could not be erased");
+                send_status_to(job.conn, "factory reset error config storage could not be erased");
                 continue;
             }
-            send_status("factory reset ok");
+            send_status_to(job.conn, "factory reset ok");
             /* Same notification flush as cmd_reboot: the chip is gone
              * right after, taking the link with it. */
             vTaskDelay(pdMS_TO_TICKS(300));
@@ -522,7 +638,7 @@ static void commit_task(void *arg)
             if (layout_store_apply(job.buf, job.len, &diag) == ESP_ERR_INVALID_ARG) {
                 const char *msg = diag.count > 0 ? diag.msg[0] : "layout rejected";
                 ESP_LOGW(TAG, "layout commit rejected: %s", msg);
-                send_status("commit error %s", msg);
+                send_status_to(job.conn, "commit error %s", msg);
                 heap_caps_free((void *)job.buf);
                 continue;
             }
@@ -539,16 +655,16 @@ static void commit_task(void *arg)
                 }
                 heap_caps_free(parsed);
             }
-            send_status("commit ok %d widgets", count);
+            send_status_to(job.conn, "commit ok %d widgets", count);
         } else if (job.kind == TRANSFER_WIFI) {
             char err[96];
             if (provision_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
                 ESP_LOGW(TAG, "wifi commit rejected: %s", err);
-                send_status("commit error %s", err);
+                send_status_to(job.conn, "commit error %s", err);
                 heap_caps_free((void *)job.buf);
                 continue;
             }
-            send_status("commit ok");
+            send_status_to(job.conn, "commit ok");
         } else if (job.kind == TRANSFER_DISPLAY) {
             /* The saved base display, committed here and not on the NimBLE
              * host task: the state byte lands in NVS through flash_write_run.
@@ -560,16 +676,16 @@ static void commit_task(void *arg)
             if (display_store_apply_mode_json(job.buf, job.len, err,
                                               sizeof(err)) != ESP_OK) {
                 ESP_LOGW(TAG, "display commit rejected: %s", err);
-                send_status("commit error %s", err);
+                send_status_to(job.conn, "commit error %s", err);
                 heap_caps_free((void *)job.buf);
                 continue;
             }
-            send_status("commit ok");
+            send_status_to(job.conn, "commit ok");
         } else {   /* TRANSFER_CONFIG */
             char err[96];
             if (mirror_config_apply_json(job.buf, job.len, err, sizeof(err)) != ESP_OK) {
                 ESP_LOGW(TAG, "config commit rejected: %s", err);
-                send_status("commit error %s", err);
+                send_status_to(job.conn, "commit error %s", err);
                 heap_caps_free((void *)job.buf);
                 continue;
             }
@@ -579,7 +695,7 @@ static void commit_task(void *arg)
              * or a discovered device keeps its previous name for the rest of
              * the boot. */
             api_server_mdns_refresh_name();
-            send_status("commit ok");
+            send_status_to(job.conn, "commit ok");
         }
 
         ESP_LOGI(TAG, "committed %u bytes", (unsigned)job.len);
@@ -587,47 +703,53 @@ static void commit_task(void *arg)
     }
 }
 
-static void cmd_abort(void)
+static void cmd_abort(uint16_t conn)
 {
     lock();
+    /* Only the owner may abort. A link with nothing open still gets "abort
+     * ok": there is no one else's transfer for it to have disturbed. */
+    if (transfer_open_locked() && s_xfer.conn != conn) {
+        unlock();
+        send_status_to(conn, "abort error busy");
+        return;
+    }
     const bool firmware = s_xfer.kind == TRANSFER_FIRMWARE;
     unlock();
     transfer_reset();
     if (firmware) ota_session_abort();
-    send_status("abort ok");
+    send_status_to(conn, "abort ok");
 }
 
-static void cmd_get_ota(void)
+static void cmd_get_ota(uint16_t conn)
 {
     const size_t total = ota_session_total();
-    send_status("ota %u %u %s", (unsigned)ota_session_written(),
-                (unsigned)total, total == 0 ? "idle" : "active");
+    send_status_to(conn, "ota %u %u %s", (unsigned)ota_session_written(),
+                         (unsigned)total, total == 0 ? "idle" : "active");
 }
 
-static void cmd_get_brightness(void)
+static void cmd_get_brightness(uint16_t conn)
 {
-    send_status("brightness %u %s", panel_get_brightness(),
-                mirror_config_brightness() >= 0 ? "manual" : "auto");
+    send_status_to(conn, "brightness %u %s", panel_get_brightness(),
+                         mirror_config_brightness() >= 0 ? "manual" : "auto");
 }
 
-static void cmd_get_latency(void)
+static void cmd_get_latency(uint16_t conn)
 {
     struct ble_gap_conn_desc desc;
     uint32_t conn_itvl_ms = 0;
-    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE &&
-        ble_gap_conn_find(s_conn_handle, &desc) == 0) {
+    if (ble_gap_conn_find(conn, &desc) == 0) {
         /* conn_itvl is in 1.25 ms units. */
         conn_itvl_ms = (uint32_t)desc.conn_itvl * 5u / 4u;
     }
     /* input_to_render is the render task's measured input-to-pixel delta;
      * conn_itvl_ms is the negotiated radio interval. Both are diagnostics
      * for the phone's latency readout. */
-    send_status("latency %lu %lu",
-                (unsigned long)game_runner_input_to_render_us(),
-                (unsigned long)conn_itvl_ms);
+    send_status_to(conn, "latency %lu %lu",
+                         (unsigned long)game_runner_input_to_render_us(),
+                         (unsigned long)conn_itvl_ms);
 }
 
-static void cmd_set_brightness(const char *arg)
+static void cmd_set_brightness(uint16_t conn, const char *arg)
 {
     if (strcmp(arg, "auto") == 0) {
         mirror_config_clear_brightness();
@@ -635,17 +757,17 @@ static void cmd_set_brightness(const char *arg)
         static ml_layout layout;
         layout_store_snapshot(&layout);
         panel_set_brightness(layout.brightness);
-        send_status("brightness ok auto");
+        send_status_to(conn, "brightness ok auto");
         return;
     }
 
     int n;
     if (sscanf(arg, "%d", &n) != 1) {
-        send_status("brightness error not a number");
+        send_status_to(conn, "brightness error not a number");
         return;
     }
     if (n < 0 || n > 255) {
-        send_status("brightness error out of range");
+        send_status_to(conn, "brightness error out of range");
         return;
     }
 
@@ -655,15 +777,15 @@ static void cmd_set_brightness(const char *arg)
     char json[32];
     snprintf(json, sizeof(json), "{\"brightness\":%d}", n);
     if (mirror_config_apply_json(json, strlen(json), err, sizeof(err)) != ESP_OK) {
-        send_status("brightness error %s", err);
+        send_status_to(conn, "brightness error %s", err);
         return;
     }
-    send_status("brightness ok %u", panel_get_brightness());
+    send_status_to(conn, "brightness ok %u", panel_get_brightness());
 }
 
-static void cmd_reboot(void)
+static void cmd_reboot(uint16_t conn)
 {
-    send_status("reboot ok");
+    send_status_to(conn, "reboot ok");
     /* The notification is queued by the stack; a short delay on the host
      * task lets it go out before the chip restarts, so the phone sees the
      * status line instead of a hung request. */
@@ -676,65 +798,70 @@ static void cmd_reboot(void)
  * commit task; this only queues a buffer-less job. The caller gets no
  * immediate answer: "factory reset ok/error ..." arrives as the job's
  * status line, and the link dies with the reboot right after the ok. */
-static void cmd_factory_reset(void)
+static void cmd_factory_reset(uint16_t conn)
 {
     if (s_commit_q == NULL) {
         /* ble_commit_init() failing at boot is the only way to get here. */
-        send_status("factory reset error busy");
+        send_status_to(conn, "factory reset error busy");
         return;
     }
-    const commit_job_t job = { .kind = TRANSFER_RESET, .buf = NULL, .len = 0 };
+    const commit_job_t job = { .kind = TRANSFER_RESET, .buf = NULL, .len = 0,
+                               .conn = conn };
     if (xQueueSend(s_commit_q, &job, 0) != pdTRUE) {
-        send_status("factory reset error busy");
+        send_status_to(conn, "factory reset error busy");
         return;
     }
     ESP_LOGW(TAG, "factory reset queued");
 }
 
-static void cmd_get_wifi(void)
+static void cmd_get_wifi(uint16_t conn)
 {
     char esc_ssid[96];
     json_escape(esc_ssid, sizeof(esc_ssid), provision_saved_ssid());
-    send_status("wifi {\"saved\":%s,\"ssid\":\"%s\",\"ip\":\"%s\","
-                "\"connected\":%s}",
-                provision_has_creds() ? "true" : "false",
-                esc_ssid, wifi_ip(),
-                wifi_is_connected() ? "true" : "false");
+    send_status_to(conn, "wifi {\"saved\":%s,\"ssid\":\"%s\",\"ip\":\"%s\","
+                         "\"connected\":%s}",
+                         provision_has_creds() ? "true" : "false",
+                         esc_ssid, wifi_ip(),
+                         wifi_is_connected() ? "true" : "false");
 }
 
-static void cmd_wifi_scan(void)
+static void cmd_wifi_scan(uint16_t conn)
 {
     lock();
     s_wifi_scan_awaiting = true;
+    s_wifi_scan_conn = conn;
     unlock();
 
     if (provision_scan_start() != ESP_OK) {
         lock();
         s_wifi_scan_awaiting = false;
+        s_wifi_scan_conn = BLE_HS_CONN_HANDLE_NONE;
         unlock();
-        send_status("wifi-scan error could not start");
+        send_status_to(conn, "wifi-scan error could not start");
         return;
     }
-    send_status("wifi-scan start");
+    send_status_to(conn, "wifi-scan start");
 }
 
-static void cmd_wifi_forget(void)
+static void cmd_wifi_forget(uint16_t conn)
 {
     if (provision_forget() != ESP_OK) {
-        send_status("wifi forget error");
+        send_status_to(conn, "wifi forget error");
         return;
     }
-    send_status("wifi forget ok");
+    send_status_to(conn, "wifi forget ok");
 }
 
-/* provision.c invokes these on the event-loop task. send_status locks
+/* provision.c invokes these on the event-loop task. send_status_to locks
  * internally, so both are safe to call off the BLE host task. */
 
 static void ble_wifi_scan_done_cb(void)
 {
     lock();
     const bool awaiting = s_wifi_scan_awaiting;
+    const uint16_t conn = s_wifi_scan_conn;
     s_wifi_scan_awaiting = false;
+    s_wifi_scan_conn = BLE_HS_CONN_HANDLE_NONE;
     unlock();
     if (!awaiting) return;
 
@@ -744,61 +871,64 @@ static void ble_wifi_scan_done_cb(void)
     provision_scan_result_t *results = heap_caps_malloc(
         24 * sizeof(provision_scan_result_t), MALLOC_CAP_SPIRAM);
     if (results == NULL) {
-        send_status("wifi-scan done 0");
+        send_status_to(conn, "wifi-scan done 0");
         return;
     }
     const int n = provision_scan_results(results, 24);
     for (int i = 0; i < n; i++) {
         char esc[96];
         json_escape(esc, sizeof(esc), results[i].ssid);
-        send_status("wifi-net {\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s,"
-                    "\"auth\":\"%s\"}",
-                    esc, results[i].rssi,
-                    results[i].security == PROVISION_SEC_OPEN ? "true" : "false",
-                    provision_security_name(results[i].security));
+        send_status_to(conn, "wifi-net {\"ssid\":\"%s\",\"rssi\":%d,"
+                             "\"open\":%s,\"auth\":\"%s\"}",
+                             esc, results[i].rssi,
+                             results[i].security == PROVISION_SEC_OPEN
+                                 ? "true" : "false",
+                             provision_security_name(results[i].security));
     }
     heap_caps_free(results);
 }
 static void ble_wifi_result_cb(bool connected, const char *arg)
 {
-    send_status(connected ? "wifi connect ok %s" : "wifi connect error %s",
-                arg);
+    /* No link asked for this: it is the outcome of a credential apply from
+     * the setup portal or the LAN API, so every phone learns it. */
+    send_status_all(connected ? "wifi connect ok %s" : "wifi connect error %s",
+                    arg);
 }
 
 /* Parse and run one command line. Commands are the ASCII protocol described
  * at the top of the file. */
-static void handle_cmd(char *line)
+static void handle_cmd(uint16_t conn, char *line)
 {
     if (strcmp(line, "ping") == 0) {
-        cmd_ping();
+        cmd_ping(conn);
     } else if (strcmp(line, "get config") == 0) {
-        cmd_get_config();
+        cmd_get_config(conn);
     } else if (strcmp(line, "get device") == 0) {
-        cmd_get_device();
+        cmd_get_device(conn);
     } else if (strcmp(line, "get ota") == 0) {
-        cmd_get_ota();
+        cmd_get_ota(conn);
     } else if (strcmp(line, "get brightness") == 0) {
-        cmd_get_brightness();
+        cmd_get_brightness(conn);
     } else if (strcmp(line, "get wifi") == 0) {
-        cmd_get_wifi();
+        cmd_get_wifi(conn);
     } else if (strcmp(line, "wifi scan") == 0) {
-        cmd_wifi_scan();
+        cmd_wifi_scan(conn);
     } else if (strcmp(line, "wifi forget") == 0) {
-        cmd_wifi_forget();
+        cmd_wifi_forget(conn);
     } else if (strcmp(line, "get latency") == 0) {
-        cmd_get_latency();
+        cmd_get_latency(conn);
     } else if (strncmp(line, "set brightness ", 15) == 0) {
-        cmd_set_brightness(line + 15);
+        cmd_set_brightness(conn, line + 15);
     } else if (strcmp(line, "reboot") == 0) {
-        cmd_reboot();
+        cmd_reboot(conn);
     } else if (strcmp(line, "factory reset") == 0) {
-        cmd_factory_reset();
+        cmd_factory_reset(conn);
     } else if (strncmp(line, "begin ", 6) == 0) {
-        cmd_begin(line + 6);
+        cmd_begin(conn, line + 6);
     } else if (strcmp(line, "commit") == 0) {
-        cmd_commit();
+        cmd_commit(conn);
     } else if (strcmp(line, "abort") == 0) {
-        cmd_abort();
+        cmd_abort(conn);
     } else if (strcmp(line, "game list") == 0) {
         /* Answered synchronously: the registry is static and the render task
          * is not involved. Format "games <id>[,<id>...]", empty list
@@ -815,26 +945,36 @@ static void handle_cmd(char *line)
             n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%s%s",
                           i == 0 ? " " : ",", g->id);
         }
-        send_status("%s", buf);
+        send_status_to(conn, "%s", buf);
     } else if (strncmp(line, "game start ", 11) == 0) {
         /* Queued, not run here: opening a session allocates and must not run
          * on the NimBLE host task. The render task answers "game ok ..." or
-         * "game error ..."; queue saturation is answered by the request. */
-        game_runner_request_start(line + 11);
+         * "game error ..."; queue saturation is answered by the request. The
+         * whole argument (id, plus the optional player count) is passed
+         * through as written. */
+        game_runner_request_start(line + 11, conn);
+    } else if (strcmp(line, "game join") == 0) {
+        /* Take the free seat in the round the other phone started; the
+         * render task answers "game joined ..." or "game error ...". */
+        game_runner_request_join(conn);
+    } else if (strcmp(line, "game session") == 0) {
+        /* Ask what round is live and which seat this link holds; the render
+         * task answers "game session ..." or "game error ...". */
+        game_runner_request_session(conn);
     } else if (strcmp(line, "game stop") == 0) {
         /* Queued like start; the render task answers "game stopped" or
          * "game error no game". */
-        game_runner_request_stop();
+        game_runner_request_stop(conn);
     } else if (strcmp(line, "game pause") == 0) {
         /* Queued like start; the render task freezes the round and answers
          * "game paused", or "game error no game" when none is live. */
-        game_runner_request_pause();
+        game_runner_request_pause(conn);
     } else if (strcmp(line, "game resume") == 0) {
         /* Queued like start; the render task answers "game resumed", "game
          * error no game", or "game error game over" for a finished round. */
-        game_runner_request_resume();
+        game_runner_request_resume(conn);
     } else {
-        send_status("unknown command");
+        send_status_to(conn, "unknown command");
     }
 }
 
@@ -842,28 +982,31 @@ static void handle_cmd(char *line)
 static int cmd_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                         struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    (void)conn_handle; (void)attr_handle; (void)arg;
+    (void)attr_handle; (void)arg;
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len == 0) return 0;
     char line[MAX_CMD_LEN + 1];
     if (len > MAX_CMD_LEN) {
-        send_status("cmd too long");
+        send_status_to(conn_handle, "cmd too long");
         return 0;
     }
     os_mbuf_copydata(ctxt->om, 0, len, line);
     line[len] = '\0';
-    handle_cmd(line);
+    handle_cmd(conn_handle, line);
     return 0;
 }
 
 static int data_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                          struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    (void)conn_handle; (void)attr_handle; (void)arg;
+    (void)attr_handle; (void)arg;
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len == 0) return 0;
     lock();
-    if (!transfer_open_locked()) {
+    /* A write from a link that does not own the open transfer is dropped
+     * whole: with two phones up, the other one's chunks must never land in
+     * this payload. */
+    if (!transfer_open_locked() || s_xfer.conn != conn_handle) {
         unlock();
         return 0;
     }
@@ -874,7 +1017,7 @@ static int data_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         os_mbuf_copydata(ctxt->om, 0, take, chunk);
         unlock();
         if (ota_session_append(chunk, take) != ESP_OK) {
-            send_status("ota error write");
+            send_status_to(conn_handle, "ota error write");
             return BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         lock();
@@ -909,13 +1052,15 @@ static int status_read_cb(uint16_t conn_handle, uint16_t attr_handle,
  * rather than trusted from a byte on the wire. Max packet 49 bytes. Any
  * other shape is a protocol violation and is dropped, matching the Dart
  * writer in mirror_ble_game.dart. The whole frame then goes to the runner in
- * one call: it is validated against the running game's control list there,
- * and only an accepted frame counts as the controller still being there.
+ * one call, with the writing link: the runner resolves that link's seat and
+ * stamps the frame's player, so a phone cannot claim another player's paddle.
+ * It is validated against the running game's control list there, and only an
+ * accepted frame counts as the controller still being there.
  */
 static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
                             struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    (void)conn_handle; (void)attr_handle; (void)arg;
+    (void)attr_handle; (void)arg;
 
     const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
     if (len < 1) return 0;
@@ -954,9 +1099,9 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         const ml_input_type type = game_runner_control_type(code);
         const int16_t value = (type == ML_INPUT_AXIS) ? raw : (raw ? 1 : 0);
         /* seq/tick left 0: the runtime stamps the host tick and games never
-         * read seq. */
+         * read seq. player_id is left 0 as well: the runner stamps the seat
+         * that owns this link. */
         events[i] = (ml_input_event){
-            .player_id = 1,
             .seq = 0,
             .code = code,
             .value = value,
@@ -965,9 +1110,10 @@ static int game_in_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         };
     }
     /* Best effort by design: a frame the runner rejects (no session, a code
-     * from another game's table) or a saturated queue drops this packet, and
-     * the phone's next heartbeat carries the same held state again. */
-    (void)game_runner_request_input_frame(events, count);
+     * from another game's table, a link with no seat) or a saturated queue
+     * drops this packet, and the phone's next heartbeat carries the same
+     * held state again. */
+    (void)game_runner_request_input_frame(conn_handle, events, count);
     return 0;
 }
 
@@ -1105,24 +1251,42 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
-            s_conn_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "connected (handle %u)", s_conn_handle);
-            request_fast_conn_params(s_conn_handle);
+            const uint16_t conn = event->connect.conn_handle;
+            lock();
+            conn_add(conn);
+            const int links = conn_count();
+            unlock();
+            ESP_LOGI(TAG, "connected (handle %u, %d/%d links)", conn, links,
+                     MAX_CONNS);
+            request_fast_conn_params(conn);
+            /* The controller stops advertising when a central attaches, so
+             * it has to be restarted here or the second phone never finds
+             * the mirror. It stays up alongside both links; a third phone's
+             * connect is refused by the controller's own limit. */
+            advertise();
         } else {
             /* Connect attempt failed; keep advertising. */
             advertise();
         }
         return 0;
 
-    case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "disconnected");
-        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        transfer_reset();
+    case BLE_GAP_EVENT_DISCONNECT: {
+        const uint16_t conn = event->disconnect.conn.conn_handle;
+        ESP_LOGI(TAG, "disconnected (handle %u)", conn);
+        lock();
+        conn_remove(conn);
+        /* Only the link that opened the transfer may discard it: another
+         * phone's half-sent image must not be reset by this one leaving. */
+        const bool owned = transfer_open_locked() && s_xfer.conn == conn;
+        unlock();
+        if (owned) transfer_reset();
         /* Disconnect is mandatory teardown, not a droppable game command.
-         * The render task discards queued commands and ends the session. */
-        game_runner_request_disconnect();
+         * The render task releases that link's seat and, once no seat is
+         * left, ends the session. */
+        game_runner_request_link_lost(conn);
         advertise();
         return 0;
+    }
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
         /* Undirected advertising does not normally complete, but if it does

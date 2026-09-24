@@ -53,14 +53,31 @@ class _Session extends Fake implements BleSession {
   Object? listFailure;
   Object? pauseFailure;
   Object? stopFailure;
+  Object? resumeFailure;
+  Object? joinFailure;
   int pauses = 0;
   int stops = 0;
   int resumes = 0;
+  int joins = 0;
   int latencyCalls = 0;
   Completer<BleLatency?>? pendingLatency;
   Completer<void>? pendingPause;
   final started = <String>[];
+
+  /// The player count each start asked the device for, in order: a two-phone
+  /// round is one `game start <id> 2` on the wire.
+  final startCounts = <int>[];
   final inputs = <List<int>>[];
+
+  /// The round the device reports from `game session`, and what it reports
+  /// once this phone has joined. Both null by default, which is what firmware
+  /// that does not know the command answers.
+  MirrorSessionInfo? sessionInfo;
+  MirrorSessionInfo? joinInfo;
+
+  /// The controls a join comes back with.
+  MirrorGame joinResult = const MirrorGame('rally', _buttonsOnly);
+
   @override
   BluetoothCharacteristic get gameIn => _Characteristic();
   @override
@@ -72,10 +89,22 @@ class _Session extends Fake implements BleSession {
   }
 
   @override
-  Future<MirrorGame> startGame(String id) {
+  Future<MirrorGame> startGame(String id, {int players = 1}) {
     started.add(id);
+    startCounts.add(players);
     return start.future;
   }
+
+  @override
+  Future<MirrorGame> joinGame() async {
+    joins++;
+    if (joinFailure != null) throw joinFailure!;
+    return joinResult;
+  }
+
+  @override
+  Future<MirrorSessionInfo?> gameSession() async =>
+      joins > 0 ? joinInfo : sessionInfo;
 
   @override
   Future<void> stopGame() async {
@@ -94,6 +123,7 @@ class _Session extends Fake implements BleSession {
   @override
   Future<void> resumeGame() async {
     resumes++;
+    if (resumeFailure != null) throw resumeFailure!;
   }
 
   @override
@@ -1351,6 +1381,207 @@ void main() {
     expect(find.byKey(const ValueKey<String>('control-Up')), findsNothing);
     expect(decoded, isFalse, reason: 'no local engine was opened');
     expect(find.text('Preview'), findsNothing);
+  });
+
+  // ------------------------------------------------ two phones, one round
+
+  /// Start the round the picker shows, with the device's acknowledgment still
+  /// in flight: the caller decides what the round's controls come back as.
+  Future<void> startRound(WidgetTester tester, _Session session) async {
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('start-game')));
+    await tester.tap(find.byKey(const ValueKey<String>('start-game')));
+    await tester.pump();
+  }
+
+  testWidgets('a two-phone start holds the round until the second seat is in',
+      (tester) async {
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    expect(find.byKey(const ValueKey<String>('players-two')), findsOneWidget);
+    await startRound(tester, session);
+    // Two is the default, and Rally is the only game this build knows to take
+    // a second player, so the round is asked for two seats on the wire.
+    expect(session.started, <String>['rally']);
+    expect(session.startCounts, <int>[2]);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+    expect(find.text('1 of 2 players are in.'), findsOneWidget);
+    expect(session.inputs, isEmpty,
+        reason: 'a round that has not started is not fed a heartbeat');
+  });
+
+  testWidgets('the solo chip asks for the one seat a solo round needs',
+      (tester) async {
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    await tester.ensureVisible(find.byKey(const ValueKey<String>('players-solo')));
+    await tester.tap(find.byKey(const ValueKey<String>('players-solo')));
+    await tester.pump();
+    await startRound(tester, session);
+    expect(session.startCounts, <int>[1]);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    // Solo is the round this screen always had: straight to the pads against
+    // the computer, with no waiting view in between.
+    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsOneWidget);
+  });
+
+  testWidgets('the second seat completes the round and the board starts',
+      (tester) async {
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    await startRound(tester, session);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+
+    // The other phone takes the free seat and the device pushes the new count.
+    // The wait is over: the round is running, its grace window opened with the
+    // seat, and this phone's first frame goes out at once rather than after a
+    // heartbeat interval.
+    session.statuses.add('game players 2 2');
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsNothing);
+    expect(find.text('Player 1 of 2 · left paddle (cyan)'), findsOneWidget);
+    expect(session.inputs, isNotEmpty);
+  });
+
+  testWidgets('a running round offers its free seat instead of the picker',
+      (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = <String>['rally'];
+      s.sessionInfo = const MirrorSessionInfo(
+          id: 'rally', seats: 1, need: 2, state: 'waiting', me: 0);
+    });
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('game-picker')), findsNothing);
+    expect(find.text('1 of 2 players are in.'), findsOneWidget);
+    expect(find.text('Join as Player 2'), findsOneWidget);
+
+    // The seat and the round's own state come back together, so the screen
+    // lands where the device says the round is.
+    session.joinInfo = const MirrorSessionInfo(
+        id: 'rally', seats: 2, need: 2, state: 'playing', me: 2);
+    await tester.tap(find.byKey(const ValueKey<String>('join-round')));
+    await tester.pump();
+    await tester.pump();
+    expect(session.joins, 1);
+    expect(find.text('Player 2 of 2 · right paddle (pink)'), findsOneWidget);
+  });
+
+  testWidgets('a two-phone round refuses to resume while a seat is empty',
+      (tester) async {
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    await startRound(tester, session);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    session.statuses.add('game players 2 2');
+    await tester.pump();
+    await tester.pump();
+    // The other phone goes away mid-round: the device freezes the shared board
+    // and says so on both links.
+    session.statuses.add('game paused');
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('round-resume')), findsOneWidget);
+
+    session.resumeFailure = BlePushException('waiting');
+    await tester.tap(find.byKey(const ValueKey<String>('round-resume')));
+    await tester.pump();
+    await tester.pump();
+    expect(session.resumes, 1);
+    expect(find.textContaining('needs both phones'), findsOneWidget);
+    expect(find.text('Paused'), findsOneWidget,
+        reason: 'the refused resume leaves the board frozen');
+
+    // The other phone takes its seat back. Filling the seat does not resume the
+    // round - that stays the players' decision - so the board is still frozen.
+    session.statuses.add('game players 2 2');
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Paused'), findsOneWidget,
+        reason: 'a seat filled is not a round resumed');
+
+    // The other phone resumes the shared round. This phone holds a seat in it,
+    // so it plays too: a phone that stayed frozen would silence the round back
+    // into a pause.
+    session.statuses.add('game resumed');
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Paused'), findsNothing);
+    expect(find.text('Player 1 of 2 · left paddle (cyan)'), findsOneWidget);
+    expect(session.inputs, isNotEmpty);
+  });
+
+  testWidgets('a round stopped on the other phone returns this one to setup',
+      (tester) async {
+    final (session, connection) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    await startRound(tester, session);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    session.statuses.add('game players 2 2');
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsOneWidget);
+
+    // A round belongs to the shared panel, so a stop from either phone ends it
+    // for both: the picker comes back here rather than a dead gamepad.
+    session.statuses.add('game stopped');
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('control-Up')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('game-picker')), findsOneWidget);
+    expect(connection.session, isNotNull,
+        reason: 'the round ended, not the link');
+  });
+
+  testWidgets('a round stopped elsewhere clears the seat offer too',
+      (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = <String>['rally'];
+      s.sessionInfo = const MirrorSessionInfo(
+          id: 'rally', seats: 1, need: 2, state: 'waiting', me: 0);
+    });
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('join-round')), findsOneWidget);
+
+    // This phone never held a seat, so there is no round of its own to clear -
+    // but the offer is stale the moment the device stops the round, and a seat
+    // offered in a round that is gone is a dead end.
+    session.statuses.add('game stopped');
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('join-round')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('game-picker')), findsOneWidget);
+  });
+
+  testWidgets('leaving a waiting round ends it on the mirror', (tester) async {
+    final (session, _) = await boot(tester,
+        configure: (s) => s.catalogue = <String>['rally']);
+    await startRound(tester, session);
+    session.acknowledge();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+
+    // The round belongs to the shared panel, so leaving this screen ends it -
+    // including a round still waiting for its second phone.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(session.stops, 1);
   });
 }
 

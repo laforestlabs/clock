@@ -130,8 +130,22 @@ struct ml_host_session {
     uint8_t            snap_buf[ML_SNAPSHOT_MAX];
     size_t             last_snap_len;
 
+    /* The ids of the controllers currently attached, in attach order. Keeping
+     * the ids (not just a count) is what lets a dropped link be detached from
+     * the session it belonged to, and lets an input frame from a seat that
+     * just left be dropped instead of steering the round it left. */
+    uint16_t           player_ids[ML_BUS_MAX_PEERS];
     int                player_count;
 };
+
+/* Whether player_id currently holds a controller slot. */
+static bool player_attached(const struct ml_host_session *h, uint16_t player_id)
+{
+    for (int i = 0; i < h->player_count; i++) {
+        if (h->player_ids[i] == player_id) return true;
+    }
+    return false;
+}
 
 void ml_host_set_journal(ml_host_session *h, ml_journal *j)
 {
@@ -171,6 +185,12 @@ static void host_emit(void *user, uint16_t code, int32_t value)
 
 static void route_one_input(struct ml_host_session *h, const ml_input_event *e)
 {
+    /* A frame from a player the session does not hold is dropped whole, and
+     * never journalled: a packet queued for a seat that just left must not
+     * steer the round it left, and a replay of the journal must reproduce
+     * only the events the round actually saw. */
+    if (!player_attached(h, e->player_id)) return;
+
     ml_input_event stamped = *e;
     stamped.tick = h->tick;        /* host stamps, never trusts the peer clock */
     h->game->input(h->state, &stamped, &h->ctx);
@@ -234,6 +254,14 @@ ml_net *ml_host_attach_controller(ml_host_session *h, uint16_t player_id,
                                   const char *name, uint8_t caps)
 {
     if (!h) return NULL;
+    /* Refuse before taking a bus end: a refused attach must not consume one.
+     * The game's own max_players is enforced here so every caller gets the
+     * same answer, not just the ones that clamp it themselves. */
+    if (h->player_count >= ML_BUS_MAX_PEERS) return NULL;
+    if (h->game->max_players > 0 && h->player_count >= h->game->max_players)
+        return NULL;
+    if (player_attached(h, player_id)) return NULL;
+
     ml_net *link = ml_bus_join(h->bus);
     if (!link) return NULL;
 
@@ -244,8 +272,27 @@ ml_net *ml_host_attach_controller(ml_host_session *h, uint16_t player_id,
     p.caps = caps;
     snprintf(p.name, sizeof(p.name), "%s", name ? name : "p");
     if (h->game->join) h->game->join(h->state, &p, &h->ctx);
+    h->player_ids[h->player_count] = player_id;
     h->player_count++;
     return link;
+}
+
+bool ml_host_detach_controller(ml_host_session *h, uint16_t player_id)
+{
+    if (!h) return false;
+    int idx = -1;
+    for (int i = 0; i < h->player_count; i++) {
+        if (h->player_ids[i] == player_id) { idx = i; break; }
+    }
+    if (idx < 0) return false;
+
+    /* Same order as a BYE off the bus: the game hears about the leave before
+     * the slot is gone. The tail entry fills the hole, so attach order is the
+     * only order this array claims. */
+    if (h->game->leave) h->game->leave(h->state, player_id, &h->ctx);
+    h->player_ids[idx] = h->player_ids[h->player_count - 1];
+    h->player_count--;
+    return true;
 }
 
 void ml_host_local_input(ml_host_session *h, const ml_input_event *e)
@@ -267,8 +314,7 @@ void ml_host_step(ml_host_session *h, uint32_t wall_ms)
             memcpy(&e, f.payload, sizeof(e));
             route_one_input(h, &e);
         } else if (f.kind == ML_NET_BYE) {
-            if (h->game->leave) h->game->leave(h->state, f.player_id, &h->ctx);
-            if (h->player_count > 0) h->player_count--;
+            ml_host_detach_controller(h, f.player_id);
         }
     }
 

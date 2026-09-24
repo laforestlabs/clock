@@ -83,18 +83,23 @@ CONFIG_SPIFFS_USE_MAGIC_LENGTH=y
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # Bluetooth: NimBLE in peripheral-only mode for the phone's config + layout
-# push. One connection, no pairing. Explicit chunking on the client means
-# data writes are always within the negotiated MTU; the preferred MTU just
-# sets how big a chunk can be.
+# push and for its game controllers. Two connections, no pairing: a
+# two-player game is one phone per player, so two links must be up at once.
+# The controller enforces the limit itself, which is also the security
+# boundary: while both phones hold a link a third central is refused, so it
+# cannot reach the mirror's config, WiFi or OTA surface. Explicit chunking on
+# the client means data writes are always within the negotiated MTU; the
+# preferred MTU just sets how big a chunk can be.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
-CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
 # The controller's per-activity state is internal DRAM and cannot move to
 # PSRAM. The default of 6 activities is sized for a device that scans,
-# advertises and hosts several links at once; this mirror has exactly one
-# connection (above) plus its advertising, so 3 leaves a spare for a scan and
+# advertises and hosts several links at once; this mirror has exactly the two
+# connections above plus its advertising, which stays up alongside them so a
+# second phone can still discover the device, so 3 is exactly enough and
 # returns several KB to the internal pool that the weather TLS handshake has
 # to fit into. Measured on the bench: see the "internal RAM" note below.
 CONFIG_BT_CTRL_BLE_MAX_ACT=3
@@ -119,9 +124,12 @@ CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
 # Living in PSRAM is not free: the hardware AES path cannot read a PSRAM record
 # buffer, so it stages each one through an internal DMA-capable buffer. That
 # allocation is what fails when the internal pool is exhausted, which is why
-# the WiFi and BLE budgets above matter to a TLS handshake. Measured with them
-# as they now stand: 28KB free and a 20KB largest block after the BT stack
-# comes up, against 5KB/1.6KB at the ESP-IDF defaults.
+# the WiFi and BLE budgets above matter to a TLS handshake. Measured with
+# those budgets and one BLE link: 28KB free and a 20KB largest block after the
+# BT stack comes up, against 5KB/1.6KB at the ESP-IDF defaults. The second
+# link spends more of the same margin, and that figure is not yet measured on
+# a board: watch the boot line, and see the "internal RAM" note in
+# firmware/README.md for what it has to stay above.
 CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=4096
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096

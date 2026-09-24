@@ -285,8 +285,19 @@ leaves out.
 Choose Rally, Snake, Tetris, Breakout, Invaders, **Probe**, **Tilt Racer**,
 **Cave Flyer**, **Maze Collector**, **Target Gallery**, or **Jumpman**, read its
 goal and controls, then press **Start Game**. The eleven compact tiles scroll
-while Start Game stays pinned. This screen has one player; Rally is
-solo against the computer. Probe is the tilt visualiser rather than a round: a
+while Start Game stays pinned. Rally is the one game that takes two players, and
+the row above Start decides how it is played: **Solo vs computer** is one seat
+with the computer on the other paddle, and **Two phones** (the default) is the
+shared round. A two-phone round is *served* rather than started - the panel shows
+the board it will start from, dimmed under `P2?`, and this phone shows a waiting
+view that names what is missing - until the second phone opens Games on the same
+mirror and taps **Join as Player 2**. Opening Games on a mirror that is already
+running a round offers that join in place of the picker, so nobody has to guess
+what the device is doing. Seats go in join order, the two phones are told which
+paddle they steer, and Stop or **Play solo instead** ends the wait. If one phone
+drops out the round freezes for both, and it will not resume until the missing
+seat is filled again: a human's paddle is never quietly handed to the computer.
+Probe is the tilt visualiser rather than a round: a
 red dot that sits where the phone points, which is how you see what motion
 control is doing - and how you check the sign of a tilt - before a round depends
 on it. It is never picked for you: Start uses a game played for score.

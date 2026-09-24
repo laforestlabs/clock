@@ -282,7 +282,15 @@ already are. A TLS handshake needs roughly 4 KB of contiguous internal RAM
 (2 × 1600-byte staging buffers plus descriptors), so the current 18–20 KB block
 is about five times what it needs. Connecting the phone over BLE does not move
 the figure measurably (28,743 free before and after a live connection: the
-controller's buffers are allocated at init, the host's in PSRAM).
+controller's buffers are allocated at init, the host's in PSRAM). Two links do
+spend more of the same margin — the controller's connection state is internal
+and cannot move — so a build carrying `CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2`
+should have its boot line read before it is trusted with an OTA: the figure to
+keep is the 18–20 KB contiguous block above, five times the handshake's need.
+If it drops below roughly 24 KB free / 16 KB largest, lower
+`CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU` from 512 to 256 first, and if that does not
+restore the margin the second connection does not ship. The two-connection
+figure itself is not measured yet; this note is the one to record it in.
 
 The sizing decisions that keep it there are commented in `sdkconfig.defaults`
 (WiFi RX/TX buffer counts, BLE activity count, mbedTLS buffers in PSRAM).

@@ -44,7 +44,8 @@ TEST_BIN := $(BUILD)/game_ffi_test $(BUILD)/held_input_test $(BUILD)/tetris_inpu
             $(BUILD)/tetris_preview_test \
             $(BUILD)/racer_behavior_test $(BUILD)/cave_behavior_test \
             $(BUILD)/maze_behavior_test $(BUILD)/gallery_behavior_test \
-            $(BUILD)/jumpman_behavior_test
+            $(BUILD)/jumpman_behavior_test \
+            $(BUILD)/seats_test $(BUILD)/session_seats_test
 
 .PHONY: all clean cli core check
 

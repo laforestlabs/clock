@@ -1,5 +1,6 @@
-// parseGameList / parseGameOk / parseGameOver / encodeGameInput and the game
-// reply predicates + waitForGameReply: the BLE game protocol from
+// parseGameList / parseGameOk / parseGameJoined / parseGameSession /
+// parseGamePlayers / parseGameOver / encodeGameStart / encodeGameInput and the
+// game reply predicates + waitForGameReply: the BLE game protocol from
 // firmware/main/net/ble.c. Kept pure so the app's gamepad is testable without
 // a device.
 
@@ -69,6 +70,29 @@ void main() {
       expect(isGameStopReply(unknownCommandReply), isTrue);
       expect(isGameStopReply('game ok snake Up Down'), isFalse);
       expect(isGameStopReply('game over snake'), isFalse);
+    });
+
+    test('isGameSessionReply accepts both session shapes and failures', () {
+      expect(isGameSessionReply('game session none'), isTrue);
+      expect(isGameSessionReply('game session rally 1 2 waiting 1'), isTrue);
+      expect(isGameSessionReply('game error no game'), isTrue);
+      expect(isGameSessionReply(unknownCommandReply), isTrue);
+      // Broadcast pushes answer nothing, so they must never end this wait.
+      expect(isGameSessionReply('game players 1 2'), isFalse);
+      expect(isGameSessionReply('game joined 2 rally Up:b'), isFalse);
+      expect(isGameSessionReply('game paused'), isFalse);
+      expect(isGameSessionReply('game session'), isFalse);
+    });
+
+    test('isGameJoinReply accepts a seat, a rejection and old firmware', () {
+      expect(
+          isGameJoinReply('game joined 2 rally Up:b Down:b TiltY:a'), isTrue);
+      expect(isGameJoinReply('game error full'), isTrue);
+      expect(isGameJoinReply(unknownCommandReply), isTrue);
+      expect(isGameJoinReply('game ok rally Up:b'), isFalse);
+      expect(isGameJoinReply('game players 2 2'), isFalse);
+      expect(isGameJoinReply('game joined'), isFalse);
+      expect(isGameJoinReply('game stopped'), isFalse);
     });
 
     test('gameErrorReason strips the prefix, or keeps a bare line', () {
@@ -237,6 +261,105 @@ void main() {
     });
   });
 
+  group('parseGameSession', () {
+    test('parses a waiting round', () {
+      final s = parseGameSession('game session rally 1 2 waiting 1');
+      expect(s, isNotNull);
+      expect(s!.id, 'rally');
+      expect(s.seats, 1);
+      expect(s.need, 2);
+      expect(s.state, 'waiting');
+      expect(s.me, 1);
+    });
+
+    test('parses a round this phone holds seat 2 of', () {
+      final s = parseGameSession('game session rally 2 2 playing 2');
+      expect(s, isNotNull);
+      expect(s!.id, 'rally');
+      expect(s.seats, 2);
+      expect(s.need, 2);
+      expect(s.state, 'playing');
+      expect(s.me, 2);
+    });
+
+    test('parses a paused round and a link holding no seat', () {
+      final s = parseGameSession('game session rally 2 2 paused 0');
+      expect(s, isNotNull);
+      expect(s!.state, 'paused');
+      expect(s.me, 0);
+    });
+
+    test('parses the idle mirror', () {
+      final s = parseGameSession('game session none');
+      expect(s, isNotNull);
+      expect(s!.id, isNull);
+      expect(s.seats, 0);
+      expect(s.need, 0);
+      expect(s.state, 'none');
+      expect(s.me, 0);
+    });
+
+    test('rejects malformed and unrelated lines', () {
+      expect(parseGameSession('game session'), isNull);
+      expect(parseGameSession('game session '), isNull);
+      expect(parseGameSession('game session rally'), isNull);
+      expect(parseGameSession('game session rally 1 2 waiting'), isNull);
+      expect(parseGameSession('game session rally 1 2 waiting 1 3'), isNull);
+      expect(parseGameSession('game session rally x 2 waiting 1'), isNull);
+      expect(parseGameSession('game session rally 1 x waiting 1'), isNull);
+      expect(parseGameSession('game session rally 1 2 napping 1'), isNull);
+      expect(parseGameSession('game session rally 1 2 waiting -1'), isNull);
+      expect(parseGameSession('game session rally 1 2 waiting 1x'), isNull);
+      expect(parseGameSession('game error no game'), isNull);
+      expect(parseGameSession('game players 1 2'), isNull);
+      expect(parseGameSession('unknown command'), isNull);
+      expect(parseGameSession(''), isNull);
+    });
+  });
+
+  group('parseGameJoined', () {
+    List<String> labels(MirrorGame g) =>
+        g.controls.map((c) => c.label).toList();
+
+    test('parses the seat and the typed controls', () {
+      final j = parseGameJoined('game joined 2 rally Up:b Down:b TiltY:a');
+      expect(j, isNotNull);
+      expect(j!.playerId, 2);
+      expect(j.game.id, 'rally');
+      expect(labels(j.game), <String>['Up', 'Down', 'TiltY']);
+      expect(j.game.controls.last.type, MirrorControlType.axis);
+    });
+
+    test('parses old firmware labels with no type suffix', () {
+      final j = parseGameJoined('game joined 2 snake Up Down Left Right');
+      expect(j, isNotNull);
+      expect(j!.playerId, 2);
+      expect(labels(j.game), <String>['Up', 'Down', 'Left', 'Right']);
+    });
+
+    test('parses a joined line with no controls', () {
+      final j = parseGameJoined('game joined 1 rally');
+      expect(j, isNotNull);
+      expect(j!.playerId, 1);
+      expect(j.game.id, 'rally');
+      expect(j.game.controls, isEmpty);
+    });
+
+    test('rejects malformed, seatless and unrelated lines', () {
+      expect(parseGameJoined('game joined'), isNull);
+      expect(parseGameJoined('game joined rally Up'), isNull);
+      expect(parseGameJoined('game joined 0 rally Up'), isNull);
+      expect(parseGameJoined('game joined -1 rally Up'), isNull);
+      expect(parseGameJoined('game joined two rally Up'), isNull);
+      expect(parseGameJoined('game joined 2 rally Up:z'), isNull);
+      expect(parseGameJoined('game joined 2  Up'), isNull);
+      expect(parseGameJoined('game ok rally Up'), isNull);
+      expect(parseGameJoined('game error full'), isNull);
+      expect(parseGameJoined('unknown command'), isNull);
+      expect(parseGameJoined(''), isNull);
+    });
+  });
+
   group('parseGameOver', () {
     test('parses a game over line', () {
       expect(parseGameOver('game over tetris'), 'tetris');
@@ -253,6 +376,43 @@ void main() {
       expect(parseGameOver('game stopped'), isNull);
       expect(parseGameOver('unknown command'), isNull);
       expect(parseGameOver(''), isNull);
+    });
+  });
+
+  group('parseGamePlayers', () {
+    test('parses a partially filled round', () {
+      final p = parseGamePlayers('game players 1 2');
+      expect(p, isNotNull);
+      expect(p!.seats, 1);
+      expect(p.need, 2);
+    });
+
+    test('parses a full round', () {
+      final p = parseGamePlayers('game players 2 2');
+      expect(p, isNotNull);
+      expect(p!.seats, 2);
+      expect(p.need, 2);
+    });
+
+    test('rejects truncated, malformed and unrelated lines', () {
+      expect(parseGamePlayers('game players'), isNull);
+      expect(parseGamePlayers('game players 1'), isNull);
+      expect(parseGamePlayers('game players 1 2 3'), isNull);
+      expect(parseGamePlayers('game players x 2'), isNull);
+      expect(parseGamePlayers('game players 1 -2'), isNull);
+      expect(parseGamePlayers('game session none'), isNull);
+      expect(parseGamePlayers('game over rally'), isNull);
+      expect(parseGamePlayers(''), isNull);
+    });
+  });
+
+  group('encodeGameStart', () {
+    test('sends the line old firmware already knows for a solo round', () {
+      expect(encodeGameStart('rally', 1), 'game start rally');
+    });
+
+    test('names the seat count for a two-phone round', () {
+      expect(encodeGameStart('rally', 2), 'game start rally 2');
     });
   });
 

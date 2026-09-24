@@ -523,13 +523,17 @@ class BleSession {
   }
 
   /// Start a game on the mirror and return its control labels for the
-  /// gamepad. Throws [BlePushException] with the device's reason when the
-  /// mirror rejects the start, and [FormatException] when the mirror answers
-  /// for a different game — the device is then running something the app did
-  /// not ask for, so the caller has to treat the session as unknown.
-  Future<MirrorGame> startGame(String id) async {
-    final line =
-        await _gameCommand('game start $id', accepts: isGameStartReply);
+  /// gamepad. [players] above 1 asks for a round that waits for that many
+  /// seats before it runs, so the starter is seated as player 1 and the round
+  /// stays waiting until the other phone joins.
+  ///
+  /// Throws [BlePushException] with the device's reason when the mirror
+  /// rejects the start, and [FormatException] when the mirror answers for a
+  /// different game — the device is then running something the app did not
+  /// ask for, so the caller has to treat the session as unknown.
+  Future<MirrorGame> startGame(String id, {int players = 1}) async {
+    final line = await _gameCommand(encodeGameStart(id, players),
+        accepts: isGameStartReply);
     final g = parseGameOk(line);
     if (g != null) {
       if (g.id != id) {
@@ -545,6 +549,46 @@ class BleSession {
       throw BlePushException(gameErrorReason(line));
     }
     throw FormatException('unexpected game start reply: $line');
+  }
+
+  /// Take a seat in the round already running on the mirror and return its
+  /// control labels for the gamepad. Idempotent on the device: a link that
+  /// already holds a seat is answered with its own seat again, so joining
+  /// after a reconnect is harmless.
+  ///
+  /// Throws [BlePushException] with the device's reason when the mirror
+  /// refuses (no round, a full one, or old firmware's "unknown command") and
+  /// [FormatException] on an unparseable reply. The seat says nothing about
+  /// how far the round has got; [gameSession] answers that, one command
+  /// later, on the same serialized tail.
+  Future<MirrorGame> joinGame() async {
+    final line = await _gameCommand('game join', accepts: isGameJoinReply);
+    final joined = parseGameJoined(line);
+    if (joined != null) return joined.game;
+    if (line == unknownCommandReply) {
+      throw BlePushException(unknownCommandReply);
+    }
+    if (line.startsWith('$gameErrorPrefix ')) {
+      throw BlePushException(gameErrorReason(line));
+    }
+    throw FormatException('unexpected game join reply: $line');
+  }
+
+  /// The round the mirror is running, or null when there is none — including
+  /// when the firmware predates the command, which the caller reads as "this
+  /// device cannot tell me" and behaves like a mirror without sessions.
+  /// Throws [BlePushException] with the device's reason on a refusal and
+  /// [FormatException] on an unparseable reply.
+  Future<MirrorSessionInfo?> gameSession() async {
+    final line =
+        await _gameCommand('game session', accepts: isGameSessionReply);
+    final session = parseGameSession(line);
+    if (session != null) return session.id == null ? null : session;
+    if (line == unknownCommandReply) return null;
+    if (line.startsWith('$gameErrorPrefix ')) {
+      throw BlePushException(gameErrorReason(line));
+    }
+    throw FormatException('unexpected game session reply: $line');
   }
 
   /// Stop the running game. "game stopped" and "game error no game" both mean
