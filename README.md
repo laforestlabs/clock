@@ -387,7 +387,10 @@ flutter run -d linux
 The app opens on a remembered device dashboard with actual framebuffer previews,
 including timestamped images for offline mirrors. Mirrors that are answering now
 are highlighted, and the first render orders the tiles by how recently each one
-answered — an order that is then fixed, so a poll never moves a tile. Select a
+answered — an order that is then fixed, so a poll never moves a tile. While the
+app is in the foreground the dashboard holds one Bluetooth link, to the mirror
+used most recently, so a mirror reachable only over Bluetooth reads as reachable
+there instead of waiting for its page to be opened. Select a
 device for its clock, BLE games, or persisted PNG/JPEG picture display with
 aspect-locked pinch/drag cropping and Fit/Fill framing. Actions
 remain bound to that device. The layout designer/simulator is a separate app-menu

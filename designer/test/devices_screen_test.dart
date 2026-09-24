@@ -1250,6 +1250,59 @@ void main() {
         reason: 'a Bluetooth link cannot serve previews');
   });
 
+  testWidgets('a remembered Bluetooth mirror is linked by the dashboard alone',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      MirrorDevices.storeKey: jsonEncode(<String, Object>{
+        'version': 1,
+        'devices': <Object?>[
+          <String, Object?>{
+            'key': 'ble:REMOTE-1',
+            'name': 'Painting Finch',
+            'ble_id': 'REMOTE-1',
+            'port': 80,
+            'width': 64,
+            'height': 32,
+            'flip180': false,
+            'last_seen': '2026-09-24T03:19:11.000Z',
+          },
+        ],
+      }),
+    });
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    dashboard.identities['REMOTE-1'] = const MirrorDeviceInfo(
+      id: 'aaaa00000001',
+      displayApi: 1,
+      mode: DisplayMode.clock,
+      baseMode: DisplayMode.clock,
+      pictureReady: false,
+    );
+    await loadRegistry(tester, dashboard.registry);
+    expect(dashboard.registry.devices.single.bleConnected, isFalse,
+        reason: 'reading the list is not opening a radio');
+
+    await pumpHome(tester, dashboard.registry);
+    // The dashboard arms its link as it comes up; let that attempt land.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+
+    expect(dashboard.registry.devices.single.bleConnected, isTrue,
+        reason: 'a tile nobody tapped is still a reading');
+    expect(find.text('Bluetooth · Preview needs Wi-Fi'), findsOneWidget);
+    expect(find.text('Offline'), findsNothing);
+
+    // Leaving the app gives the radio back.
+    WidgetsBinding.instance
+        .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+
+    expect(dashboard.registry.devices.single.bleConnected, isFalse,
+        reason: 'a link nobody can see is a radio left on');
+    expect(find.text('Offline'), findsOneWidget);
+  });
+
   testWidgets('a mirror whose firmware is too old says so', (tester) async {
     final dashboard = _Dashboard();
     addTearDown(dashboard.registry.dispose);

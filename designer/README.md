@@ -2,22 +2,33 @@
 
 Device dashboard, layout designer and pixel-exact simulator for desktop and phone.
 
-The app opens on **Devices**, without loading the native simulator or connecting
-every remembered Bluetooth device. Tiles show actual framebuffer snapshots from
-each mirror. Offline devices remain selectable, with a timestamped last-known
-preview. A mirror that is answering now is highlighted — a tint over the card,
-a hairline and a filled status dot — while an absent one stays plain with a
-hollow dot. The first render orders the tiles by how recently each mirror
-answered, most recent first, and that order is fixed: a later poll never
-reshuffles a grid the owner is tapping. Add devices through LAN discovery, a
-manual host and port, or an explicit nearby Bluetooth scan. Android holds a
-multicast lock only during discovery. A tile is labelled with the mirror's own
-name — learned over Wi-Fi or Bluetooth, never the address it was added at or the
-mDNS name it was discovered under — and a mirror that has not reported a name
-yet is listed as unnamed until one of its transports does. A mirror that
-advertises the Bluetooth address it answers on (firmware 0.2.49 and later) is
-recognised as the same device as a record a Bluetooth scan made for it, so the
-two fold into one tile instead of standing side by side.
+The app opens on **Devices**, without loading the native simulator. Tiles show
+actual framebuffer snapshots from each mirror. Offline devices remain selectable,
+with a timestamped last-known preview. A mirror that is answering now is
+highlighted — a tint over the card, a hairline and a filled status dot — while an
+absent one stays plain with a hollow dot, and the status line names the paths
+that are actually up: `Wi-Fi`, `Bluetooth`, or `Offline`. The first render orders
+the tiles by how recently each mirror answered, most recent first, and that order
+is fixed: a later poll never reshuffles a grid the owner is tapping. Add devices
+through LAN discovery, a manual host and port, or an explicit nearby Bluetooth
+scan. Android holds a multicast lock only during discovery. A tile is labelled
+with the mirror's own name — learned over Wi-Fi or Bluetooth, never the address
+it was added at or the mDNS name it was discovered under — and a mirror that has
+not reported a name yet is listed as unnamed until one of its transports does. A
+mirror that advertises the Bluetooth address it answers on (firmware 0.2.49 and
+later) is recognised as the same device as a record a Bluetooth scan made for
+it, so the two fold into one tile instead of standing side by side.
+
+While the dashboard is in front of the owner, the app holds one Bluetooth link,
+to the mirror it was used with most recently, and drops it when the app leaves
+the foreground. That is what lets a mirror reachable only over Bluetooth read as
+reachable on the dashboard instead of as `Offline` until its page is opened, and
+why opening that page is instant: the link is already up, the page takes it over,
+and closing it hands the link back. Nothing beyond that one link is connected for
+being remembered; every other device is reached over Wi-Fi by the tile poll, or
+when its page is opened. A mirror that is switched off is retried every 30
+seconds while the dashboard is open, so switching it on brings its tile up
+without a tap.
 
 Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions

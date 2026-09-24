@@ -1161,6 +1161,117 @@ void main() {
     fixture.registry.dispose();
   });
 
+  test('the armed dashboard links the mirror used most recently', () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    fixture.radio.byRemoteId['REMOTE-2'] = 'bbbb00000002';
+    final older = await fixture.registry.addBle(fixture.entry('REMOTE-1'));
+    fixture.clock = fixture.clock.add(const Duration(minutes: 5));
+    final newer = await fixture.registry.addBle(fixture.entry('REMOTE-2'));
+    // Adding a scanned device necessarily connects it to read its identity;
+    // start from links that are closed so what is measured is the policy.
+    for (final connection in fixture.radio.created) {
+      await connection.disconnect();
+      connection.connects.clear();
+    }
+
+    await fixture.registry.setAutoConnect(true);
+
+    expect(identical(fixture.registry.autoConnected, newer), isTrue,
+        reason: 'the dashboard follows the mirror last worked with');
+    expect(newer.bleConnected, isTrue);
+    expect(older.bleConnected, isFalse,
+        reason: 'one link, not one per remembered device');
+    expect(fixture.radio.created[1].connects, <String>['REMOTE-2']);
+    expect(fixture.radio.created[0].connects, isEmpty);
+    fixture.registry.dispose();
+  });
+
+  test('disarming closes the dashboard link but never an open page’s',
+      () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    final device = await fixture.registry.addBle(fixture.entry('REMOTE-1'));
+    for (final connection in fixture.radio.created) {
+      await connection.disconnect();
+      connection.connects.clear();
+    }
+
+    await fixture.registry.setAutoConnect(true);
+    expect(device.bleConnected, isTrue);
+    await fixture.registry.setAutoConnect(false);
+    expect(device.bleConnected, isFalse,
+        reason: 'leaving the app stops holding a radio for nobody');
+    expect(fixture.registry.autoConnected, isNull);
+
+    await fixture.registry.setAutoConnect(true);
+    await fixture.registry.activate(device);
+    expect(device.bleConnected, isTrue);
+    await fixture.registry.setAutoConnect(false);
+    expect(device.bleConnected, isTrue,
+        reason: 'the route that opened it still owns it');
+    fixture.registry.dispose();
+  });
+
+  test('closing an armed device page hands the link back, not away',
+      () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    final device = await fixture.registry.addBle(fixture.entry('REMOTE-1'));
+    for (final connection in fixture.radio.created) {
+      await connection.disconnect();
+      connection.connects.clear();
+    }
+
+    await fixture.registry.setAutoConnect(true);
+    await fixture.registry.activate(device);
+    await fixture.registry.deactivate(device);
+
+    expect(device.bleConnected, isTrue,
+        reason: 'the tile still reads Bluetooth when the page closes');
+    expect(identical(fixture.registry.autoConnected, device), isTrue);
+    expect(fixture.radio.created.single.connects, <String>['REMOTE-1'],
+        reason: 'the handover did not close and reopen the link');
+
+    await fixture.registry.setAutoConnect(false);
+    expect(device.bleConnected, isFalse);
+    fixture.registry.dispose();
+  });
+
+  test('an absent mirror is retried on a cadence, not on every poll',
+      () async {
+    final fixture = _Fixture();
+    await fixture.registry.load();
+    fixture.radio.byRemoteId['REMOTE-1'] = 'aaaa00000001';
+    final device = await fixture.registry.addBle(fixture.entry('REMOTE-1'));
+    final link = fixture.radio.created.single;
+    await link.disconnect();
+    link.connects.clear();
+    link.connectError = BleUnavailableException('there is no radio');
+
+    await fixture.registry.setAutoConnect(true);
+    expect(link.connects, hasLength(1));
+    expect(device.bleConnected, isFalse);
+    expect(fixture.registry.autoConnected, isNull);
+
+    await fixture.registry.retryAutoConnect();
+    await fixture.registry.retryAutoConnect();
+    expect(link.connects, hasLength(1),
+        reason: 'the tile poll is seconds apart; the retry is not');
+
+    fixture.clock = fixture.clock.add(MirrorDevices.autoConnectRetry);
+    link.connectError = null;
+    await fixture.registry.retryAutoConnect();
+    expect(link.connects, hasLength(2),
+        reason: 'the mirror may have been switched on since');
+    expect(device.bleConnected, isTrue,
+        reason: 'powering it on brings the tile up without a tap');
+    fixture.registry.dispose();
+  });
+
   test('pairing a scandalous Bluetooth device to a LAN record is refused',
       () async {
     final fixture = _Fixture();

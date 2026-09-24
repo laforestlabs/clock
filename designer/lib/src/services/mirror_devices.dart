@@ -336,9 +336,10 @@ class MirrorDevice extends ChangeNotifier {
 /// every operation that touches a device's transports.
 ///
 /// The registry owns the records and their connections (it disposes them); a
-/// screen owns the widget lifecycle. Nothing here connects to a device on its
-/// own: at startup the remembered list is read from prefs and shown, and only
-/// an explicit [activate] or [addBle]/[connect] opens a radio.
+/// screen owns the widget lifecycle. At startup the remembered list is read
+/// from prefs and shown without contacting it; a radio opens for an explicit
+/// [activate], [addBle] or [connect], or for the single link the dashboard
+/// arms with [setAutoConnect].
 class MirrorDevices extends ChangeNotifier {
   MirrorDevices({
     MirrorConnectionFactory connectionFactory = _defaultConnectionFactory,
@@ -380,9 +381,16 @@ class MirrorDevices extends ChangeNotifier {
   /// throttle; structural changes are written at once.
   static const Duration _volatileInterval = Duration(seconds: 30);
 
-  /// How long a user-initiated BLE connect may take before it is reported as
-  /// failed. Short on purpose: a launch-time hang is worse than a retry.
+  /// How long a BLE connect may take before it is reported as failed. Short on
+  /// purpose: a launch-time hang is worse than a retry.
   static const Duration _bleConnectTimeout = Duration(seconds: 20);
+
+  /// How long the armed dashboard waits before trying an absent mirror again.
+  ///
+  /// Tiles poll on seconds; a mirror that is switched off must not cost a
+  /// connect attempt on every poll, and must not be given up on either — the
+  /// owner powers it on and expects the tile to come up on its own.
+  static const Duration autoConnectRetry = Duration(seconds: 30);
 
   /// How many device refreshes may be in flight at once. A screenful of
   /// tiles must not open every socket at the same moment.
@@ -412,6 +420,18 @@ class MirrorDevices extends ChangeNotifier {
   String? _discoveryError;
   String? _warning;
   String? _activeKey;
+
+  /// Whether the dashboard is holding a Bluetooth link open, and which record
+  /// that link belongs to.
+  ///
+  /// The one link here that no route owns: the dashboard is the surface that
+  /// reads it, and it survives the app opening and closing device pages.
+  bool _autoWanted = false;
+  String? _autoKey;
+
+  /// When the armed dashboard last tried to open its link, so a mirror that is
+  /// not there is retried on [autoConnectRetry] rather than on every poll.
+  DateTime? _autoAttemptAt;
   bool _loaded = false;
   bool _disposed = false;
   Directory? _previewDir;
@@ -468,6 +488,9 @@ class MirrorDevices extends ChangeNotifier {
     await _loadPreviews();
     await _healDuplicates();
     notifyListeners();
+    // A dashboard that armed while the document was still being read gets its
+    // link now, without waiting out a poll.
+    if (_autoWanted) unawaited(retryAutoConnect());
   }
 
   /// Folds records that share a confirmed identity.
@@ -1065,6 +1088,7 @@ class MirrorDevices extends ChangeNotifier {
     if (device._removed) return;
     _devices.remove(device);
     if (_activeKey == device.key) _activeKey = null;
+    if (_autoKey == device.key) _autoKey = null;
     device._removed = true;
     device._stopListening();
     try {
@@ -1087,12 +1111,20 @@ class MirrorDevices extends ChangeNotifier {
   // -------------------------------------------------------------- activation
 
   /// Binds the open route to [device] and connects its Bluetooth link when
-  /// the identity is known. Devices are never connected just because they are
-  /// remembered: only the chosen one.
+  /// the identity is known.
+  ///
+  /// The page takes the link over from the dashboard: a link the policy held
+  /// to another mirror is dropped, and the record this route holds stops being
+  /// the policy's, so the app never holds two links at once and [deactivate]
+  /// alone decides what happens to this one.
   Future<void> activate(MirrorDevice device) async {
     _require(device);
     await _serializeHandover(() async {
       if (_disposed || device._removed) return;
+      if (_autoKey != null && _autoKey != device.key) {
+        await _releaseAutoConnect();
+      }
+      _autoKey = null;
       _activeKey = device.key;
       notifyListeners();
       if (device._bleId == null) return;
@@ -1104,12 +1136,22 @@ class MirrorDevices extends ChangeNotifier {
   /// Releases a route. The BLE link the route owned is closed here, which is
   /// why handover goes through this and not through a blind disconnect: a
   /// route that has already exited cannot drop the link a newer route opened.
+  ///
+  /// An armed dashboard takes the link over rather than losing it, so closing
+  /// a device page returns to a tile that still reads Bluetooth instead of one
+  /// that has to open the radio again.
   Future<void> deactivate(MirrorDevice device) async {
     if (device._removed) return;
     await _serializeHandover(() async {
       if (_disposed || device._removed) return;
       if (_activeKey == device.key) _activeKey = null;
       device._bleAttempt++; // a connect landing after this is not adopted
+      if (_autoWanted && device._connection.session != null) {
+        _autoKey = device.key;
+        await saveMetadata(device);
+        if (!_disposed) notifyListeners();
+        return;
+      }
       await device._connection.disconnect();
       await saveMetadata(device);
       if (!_disposed) notifyListeners();
@@ -1121,6 +1163,135 @@ class MirrorDevices extends ChangeNotifier {
     final next = _handoverTail.then((_) => op());
     _handoverTail = next.catchError((Object _) {});
     return next;
+  }
+
+  // ---------------------------------------------------------- dashboard link
+
+  /// Whether the dashboard has asked for a Bluetooth link to be held open.
+  bool get autoConnectWanted => _autoWanted;
+
+  /// The record the dashboard's link is open to, null when there is none.
+  ///
+  /// A link whose session has dropped is not one: the record it was opened for
+  /// is still a candidate for the next attempt.
+  MirrorDevice? get autoConnected {
+    final key = _autoKey;
+    if (key == null) return null;
+    final device = _byKey(key);
+    if (device == null || device._connection.session == null) return null;
+    return device;
+  }
+
+  /// Arms or disarms the dashboard's own Bluetooth link.
+  ///
+  /// While armed the registry holds exactly one link: to the mirror the owner
+  /// has used most recently. That is what makes a tile a reading rather than a
+  /// memory — a mirror reachable only over Bluetooth says `Bluetooth` on the
+  /// dashboard instead of `Offline` until its page is opened, and the page
+  /// itself opens onto a link that is already up.
+  ///
+  /// Only the dashboard's surface arms this, and only while the app is in the
+  /// foreground: a link nobody is looking at is a radio left on.
+  Future<void> setAutoConnect(bool wanted) {
+    if (_disposed) return Future<void>.value();
+    if (wanted == _autoWanted) {
+      return wanted ? Future<void>.value() : _releaseAutoConnect();
+    }
+    _autoWanted = wanted;
+    if (!wanted) return _releaseAutoConnect();
+    _autoAttemptAt = null; // a fresh arm is not a retry
+    return _serializeHandover(_autoConnect);
+  }
+
+  /// Tries the armed link again, no more often than [autoConnectRetry].
+  ///
+  /// Called from the dashboard's poll, which is what brings a mirror up when
+  /// the owner powers it on with the app already open.
+  Future<void> retryAutoConnect() {
+    if (_disposed || !_autoWanted) return Future<void>.value();
+    return _serializeHandover(_autoConnect);
+  }
+
+  /// The mirror the dashboard's link should belong to.
+  ///
+  /// One link serves the whole dashboard, so it goes to the mirror that is
+  /// actually in play: an open page's device first (its route owns that link,
+  /// and nothing else may take it), then a record with a live session, then
+  /// the most recently seen — a launch reads the persisted recency, which is
+  /// the mirror the owner was last working with. Records with no Bluetooth
+  /// address are not candidates at all.
+  MirrorDevice? _autoTarget() {
+    MirrorDevice? best;
+    var bestRank = 0;
+    for (final device in _devices) {
+      if (device._removed || device._bleId == null) continue;
+      final rank = device.key == _activeKey
+          ? 3
+          : device._connection.session != null
+              ? 2
+              : 1;
+      if (best == null || rank > bestRank) {
+        best = device;
+        bestRank = rank;
+        continue;
+      }
+      if (rank < bestRank) continue;
+      // Equal rank: the most recent answer wins, and a tie keeps the record
+      // that came first, which is the order the document was loaded in.
+      final seen = device._lastSeen;
+      final bestSeen = best._lastSeen;
+      if (seen != null && (bestSeen == null || seen.isAfter(bestSeen))) {
+        best = device;
+      }
+    }
+    return best;
+  }
+
+  Future<void> _autoConnect() async {
+    if (_disposed || !_autoWanted) return;
+    final target = _autoTarget();
+    final held = autoConnected;
+    if (target == null) {
+      if (held != null) await _releaseAutoConnect();
+      return;
+    }
+    if (held != null && identical(held, target)) return;
+    if (held != null) await _releaseAutoConnect();
+    if (_disposed || !_autoWanted) return;
+    if (target._connection.session != null) {
+      // Already up, whether the armed policy or an open page opened it. The
+      // policy claims only what the page is not holding.
+      if (target.key != _activeKey) _autoKey = target.key;
+      notifyListeners();
+      return;
+    }
+    final at = _autoAttemptAt;
+    if (at != null && _now().difference(at) < autoConnectRetry) return;
+    _autoAttemptAt = _now();
+    final survivor = await _connectDevice(target);
+    if (_disposed || !_autoWanted) return;
+    final live = survivor ?? target;
+    if (live.key != _activeKey) {
+      _autoKey = live._connection.session != null ? live.key : null;
+    }
+    notifyListeners();
+  }
+
+  /// Closes the link the dashboard opened, and only that one: a link an open
+  /// route owns is closed by [deactivate], not from under it.
+  Future<void> _releaseAutoConnect() async {
+    final key = _autoKey;
+    _autoKey = null;
+    if (key == null || key == _activeKey) return;
+    final device = _byKey(key);
+    if (device == null || device._removed) return;
+    device._bleAttempt++; // a connect landing after this is not adopted
+    try {
+      await device._connection.disconnect();
+    } catch (_) {
+      // A link that will not close must not keep the policy stuck on it.
+    }
+    if (!_disposed) notifyListeners();
   }
 
   // ----------------------------------------------------------------- reading
@@ -1466,6 +1637,13 @@ class MirrorDevices extends ChangeNotifier {
     // session that was addressed to another record.
     if (wasLive && keep._bleId != null && keep._connection.session == null) {
       await _connectDevice(keep);
+    }
+    // A merge can fold away the record the dashboard's link belonged to: the
+    // dropped link was closed above, so the policy picks up the survivor on
+    // its next pass rather than waiting out the poll it did not change.
+    if (_autoKey == drop.key) {
+      _autoKey = null;
+      if (_autoWanted) unawaited(retryAutoConnect());
     }
   }
 

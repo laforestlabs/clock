@@ -52,6 +52,14 @@ class _DevicesScreenState extends State<DevicesScreen>
   bool _onTop = true;
   bool _subscribed = false;
 
+  /// Whether the registry is holding this screen's Bluetooth link open.
+  ///
+  /// Follows the app, not the route: a device page pushed on top of the
+  /// dashboard takes the link over, and coming back leaves the dashboard still
+  /// linked. Only leaving the app drops it — a radio nobody is watching costs
+  /// battery for a reading nobody can see.
+  bool _linkWanted = true;
+
   /// One key per record, so a poll can tell which tiles are actually on
   /// screen. The grid builds every tile (it is a `Wrap`, not a lazy list), so
   /// this is a viewport question — which is exactly what "visible" means here.
@@ -71,6 +79,10 @@ class _DevicesScreenState extends State<DevicesScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startTimers();
+    // The dashboard is a reading, not a list of memories: while it is the
+    // surface on screen it keeps one Bluetooth link open, so a mirror that is
+    // only reachable over Bluetooth reads as reachable here.
+    unawaited(widget.devices.setAutoConnect(true));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(widget.devices.refreshDiscovery());
@@ -91,6 +103,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   @override
   void dispose() {
+    unawaited(widget.devices.setAutoConnect(false));
     _visibleTimer?.cancel();
     _visibleTimer = null;
     _hiddenTimer?.cancel();
@@ -118,6 +131,10 @@ class _DevicesScreenState extends State<DevicesScreen>
   /// Refreshes the tiles the owner can actually see, frames included.
   void _pollVisible() {
     if (!mounted) return;
+    // The tiles are what the link is for, so the poll that keeps them current
+    // is also what brings an absent mirror's link up: the registry rate-limits
+    // its own attempts, so this costs nothing while one is already up.
+    unawaited(widget.devices.retryAutoConnect());
     for (final device in widget.devices.devices) {
       if (device.removed || !_tileIsVisible(device.key)) continue;
       unawaited(widget.devices.refresh(device, includeFrame: true));
@@ -146,6 +163,16 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The link follows the app; the tiles follow the route. `inactive` is a
+    // dialog or the app switcher rather than the owner leaving, so the link
+    // survives it — dropping it there would only buy a reconnect on the way
+    // back.
+    final linkWanted = state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    if (linkWanted != _linkWanted) {
+      _linkWanted = linkWanted;
+      unawaited(widget.devices.setAutoConnect(linkWanted));
+    }
     final foreground = state == AppLifecycleState.resumed;
     if (foreground == _foreground) return;
     _foreground = foreground;
