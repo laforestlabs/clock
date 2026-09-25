@@ -434,7 +434,7 @@ static void test_fonts(void)
 
     /* The rest of the catalogue. The cuts are what the designer's picker
      * groups into families: one text family from 6px up, one clock family,
-     * one icon set. */
+     * one 3x7 score face, one icon set. */
     CHECK(ml_font_find("sans8") != NULL, "sans8 registered");
     CHECK(ml_font_find("sans9") != NULL, "sans9 registered");
     CHECK(ml_font_find("digits10") != NULL, "digits10 registered");
@@ -444,7 +444,8 @@ static void test_fonts(void)
     CHECK(ml_font_find("display24") != NULL, "scalable display master registered");
     CHECK(ml_font_find("display-thin24") != NULL,
           "scalable thin display master registered");
-    CHECK(ml_font_count() == 25, "25 font cuts in the registry");
+    CHECK(ml_font_find("micro7") != NULL, "the narrow-margin score face registered");
+    CHECK(ml_font_count() == 26, "26 font cuts in the registry");
     CHECK(ml_font_find("display24")->downscale,
           "the display master supports continuous downscaling");
     CHECK(ml_font_find("display-thin24")->downscale,
@@ -453,11 +454,13 @@ static void test_fonts(void)
     /*
      * Families and smoothness. A layout naming a family gets the cut that
      * fills its box; a layout naming a cut pins that cut. Every text and
-     * clock cut anti-aliases between whole scales; only the icon set keeps
-     * hard pixels, and any widget can overrule its font with "smooth".
+     * clock cut anti-aliases between whole scales; the icon set and the 1px
+     * score face keep hard pixels, and any widget can overrule its font with
+     * "smooth".
      */
     CHECK(ml_font_is_family("sans"), "sans is a family");
     CHECK(ml_font_is_family("digits"), "digits is a family");
+    CHECK(ml_font_is_family("micro"), "micro is a family");
     CHECK(ml_font_is_family("display-thin"), "display-thin is a family");
     CHECK(ml_font_is_family("wx"), "wx is a family");
     CHECK(!ml_font_is_family("pixel"), "the pixel families are gone");
@@ -465,11 +468,27 @@ static void test_fonts(void)
     CHECK(!ml_font_is_family("nosuch"), "an unknown name is not a family");
     CHECK(strcmp(body->family, "sans") == 0, "sans9 is in the sans family");
     CHECK(strcmp(clock->family, "digits") == 0, "digits16 is in the digits family");
+    CHECK(strcmp(ml_font_find("micro7")->family, "micro") == 0,
+          "micro7 is in the micro family");
     CHECK(body->smooth == true, "sans anti-aliases");
     CHECK(ml_font_find("sans8")->smooth == true, "even the smallest cut anti-aliases");
     CHECK(clock->smooth == true, "the digits face anti-aliases");
+    CHECK(ml_font_find("micro7")->smooth == false,
+          "the 1px score face asks for whole-pixel steps instead");
     CHECK(icons->smooth == true, "wx16 scales smoothly");
     CHECK(icons->downscale == true, "wx16 supports boxes below its master size");
+
+    /*
+     * The score face carries the ten figures and nothing else. That is not
+     * only a matter of taste: auto_font hands a widget the font whose scaled
+     * ink fills its box best, out of every font that covers the string, and a
+     * 7px face beats every cut of the digits family in a narrow box. Leaving
+     * the separator out is what keeps a clock from being restyled by it.
+     */
+    CHECK(ml_font_covers(ml_font_find("micro7"), "65535"),
+          "the score face draws every figure");
+    CHECK(!ml_font_covers(ml_font_find("micro7"), "09:41"),
+          "and no clock string, so auto_font can never fit a clock with it");
 
     /*
      * Roles. Coverage cannot separate a clock face from an icon set, because the
@@ -484,6 +503,7 @@ static void test_fonts(void)
     CHECK(ml_font_find("sans24")->role == ML_FONT_TEXT, "sans24 is a text font");
     CHECK(ml_font_find("digits10")->role == ML_FONT_DIGITS, "digits10 is a clock face");
     CHECK(ml_font_find("digits32")->role == ML_FONT_DIGITS, "digits32 is a clock face");
+    CHECK(ml_font_find("micro7")->role == ML_FONT_DIGITS, "micro7 is a numerals face");
     CHECK(ml_font_covers(icons, "23"),
           "an icon set covers the digits, which is why coverage alone cannot judge");
 
@@ -1610,13 +1630,21 @@ static void test_ffi(void)
     CHECK(ml_sim_font_height(0) > 0, "font heights available");
 
     /* The role the designer filters its pickers on. Crosses as an int, so the
-     * enumerator order is part of the contract. */
-    CHECK(ml_sim_font_role(0) == (int)ML_FONT_TEXT, "the shortest font reads as text");
-    bool saw_icons = false;
+     * enumerator order is part of the contract. Read by name rather than by
+     * position: the registry is sorted by height, so which cut lands first is
+     * a property of the catalogue's sizes, not of the ABI. */
+    bool saw_text = false, saw_digits = false, saw_icons = false;
     for (int i = 0; i < ml_sim_font_count(); i++) {
-        if (strcmp(ml_sim_font_name(i), "wx16") == 0)
+        const char *name = ml_sim_font_name(i);
+        if (strcmp(name, "sans8") == 0)
+            saw_text = ml_sim_font_role(i) == (int)ML_FONT_TEXT;
+        if (strcmp(name, "digits10") == 0)
+            saw_digits = ml_sim_font_role(i) == (int)ML_FONT_DIGITS;
+        if (strcmp(name, "wx16") == 0)
             saw_icons = ml_sim_font_role(i) == (int)ML_FONT_ICONS;
     }
+    CHECK(saw_text, "a text cut crosses the boundary as text");
+    CHECK(saw_digits, "a clock cut crosses the boundary as digits");
     CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
     CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
     CHECK(ml_sim_type_count() == 17, "all widget types enumerated");

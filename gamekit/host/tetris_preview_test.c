@@ -5,6 +5,10 @@
  * to settle, so on a board with any stack at all the piece's destination was
  * guesswork. draw now paints the cells the piece would occupy if nothing moved
  * it, a third of the piece's own colour so the falling piece still reads first.
+ * The same fixture covers the rest of what draw owes the panel, including the
+ * score HUD: a five-figure score has to reach the margin whole, which it did
+ * not while it was drawn in a face too wide for the 20px column beside the
+ * field.
  *
  * Observable: the drawn field. The fixture includes the tetris translation unit
  * and provides the one ctx service the game calls (ml_ctx_rng) itself, so a test
@@ -449,39 +453,64 @@ static void test_geometry(const panel_size *p)
     fx_close(&f);
 }
 
-/* ---- a long score stays in its margin ----------------------------------- */
+/* ---- the score is drawn whole in its margin ------------------------------ */
 
-static void test_score_clip(const panel_size *p)
+static void test_score_whole(const panel_size *p)
 {
-    printf("tetris: a five-digit score stays left of the field (%dx%d)\n", p->w, p->h);
+    printf("tetris: a five-figure score is drawn whole (%dx%d)\n", p->w, p->h);
     fixture f;
     if (!fx_open(&f, p->w, p->h)) { check(0, "fixture opens"); return; }
 
-    ml_canvas plain;
-    if (!ml_canvas_init(&plain, p->w, p->h, NULL)) { check(0, "canvas opens"); return; }
+    ml_canvas plain, want;
+    if (!ml_canvas_init(&plain, p->w, p->h, NULL) ||
+        !ml_canvas_init(&want, p->w, p->h, NULL)) {
+        check(0, "canvas opens");
+        return;
+    }
 
+    const ml_font *score_font = ml_font_find("micro7");
+    const ml_rgb pc = tetris_piece_color(f.st.piece);
+    check(score_font != NULL, "the score face is in the build");
+
+    /* The panel with no score in it, and the margin the whole string would
+     * paint on its own. A score drawn through ml_text_draw_clipped in a face
+     * that does not fit - the digits10 behaviour this replaced - cuts at the
+     * first digit and marks the rest with dots, so the margin cannot match. */
     f.st.score = 0;
     fx_draw(&f);
     memcpy(plain.px, f.cv.px, (size_t)p->w * p->h * sizeof(ml_rgb));
+    ml_canvas_clear(&want, ml_black);
+    if (score_font)
+        ml_text_draw(&want, score_font, 1, 1, "12345", pc, ML_SCALE_1X);
 
     f.st.score = 12345;
     fx_draw(&f);
 
-    /* Everything at or right of the frame column is unchanged: the score was
-     * bounded by its margin instead of painting over the board. */
-    int intact = 1, drawn = 0;
+    int intact = 1, whole = 1, rightmost = -1, drawn = 0;
     for (int y = 0; y < p->h; y++) {
         for (int x = 0; x < p->w; x++) {
-            const int same = fx_same(ml_canvas_get(&f.cv, x, y),
-                                     ml_canvas_get(&plain, x, y));
-            if (x >= f.st.ox - 1) { if (!same) intact = 0; }
-            else if (!same) drawn = 1;
+            const ml_rgb got = ml_canvas_get(&f.cv, x, y);
+            if (x >= f.st.ox - 1) {
+                /* Every pixel from the frame column rightwards is the board,
+                 * so a score that fits is also a score that cannot cover it. */
+                if (!fx_same(got, ml_canvas_get(&plain, x, y))) intact = 0;
+                continue;
+            }
+            if (fx_same(got, ml_black)) continue;
+            drawn = 1;
+            if (!fx_same(got, ml_canvas_get(&want, x, y))) whole = 0;
+            if (fx_same(got, pc)) rightmost = x;
         }
     }
     check(intact, "no score pixel reaches the field or its frame");
-    check(drawn, "while the digits are drawn in the margin");
+    check(drawn, "the score is drawn in the margin");
+    check(whole, "and it is the whole five-figure number, not an ellipsis");
+    /* Five figures at the face's 4px advance start their last one at x=17, so
+     * ink that stops short of it is a number that was cut. */
+    check(rightmost >= 17, "with the last figure inside the margin");
 
     ml_canvas_free(&plain);
+    ml_canvas_free(&want);
     fx_close(&f);
 }
 
@@ -528,9 +557,8 @@ int main(void)
         test_line_clear(PANELS[i].w, PANELS[i].h);
         test_floor(PANELS[i].w, PANELS[i].h);
         test_topout(PANELS[i].w, PANELS[i].h);
+        test_score_whole(&PANELS[i]);
     }
-
-    test_score_clip(&PANELS[1]);
     test_draw_is_pure(PANELS[0].w, PANELS[0].h);
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);

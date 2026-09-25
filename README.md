@@ -359,6 +359,7 @@ label with weather symbols.
 |---|---|---|
 | `sans8` to `sans24` | 8 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
 | `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
+| `micro7` | 7px cells, hand-drawn | The ten digits, `0-9`, for a HUD margin and nothing else |
 | `wx16` | 16x16 master | Ten continuously scalable weather icons in four colour planes, indexed by category |
 
 Drop a font you do not use and it stops being compiled in: the build discovers
@@ -368,6 +369,13 @@ One typeface everywhere is the point: body text, dates, temperatures and the
 clock share a design, differing only in size and, for the clock, in weight.
 Both families are proportional, which recovers several characters per line
 versus a fixed cell: "Standup 10:00" is 67px in `sans8`.
+
+`micro7` is the deliberate exception, and it is a game HUD rather than a
+typeface: a 3x7 digit costs 4px of advance, so the five figures a score can
+reach fit the 20px column beside a 10-cell board, where `digits10` would need
+44px and answer the overflow with an ellipsis. It carries the ten digits and
+no punctuation, which also keeps it out of the `auto_font` search that would
+otherwise fit it to a clock string in a narrow box.
 
 The clock faces exist so the time can suit the panel rather than the panel suiting the
 time. "09:41" is 40px in `digits10`, 54px in `digits16` and 98px in `digits32`. All

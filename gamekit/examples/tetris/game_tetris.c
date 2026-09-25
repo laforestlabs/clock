@@ -4,8 +4,9 @@
  * The puzzle game, and the first whose controls are semantic rather than
  * spatial: Up rotates once per press edge (a held key or the phone's repeated
  * full-state packets must not spin the piece), Down soft-drops (hold to fall
- * faster, one row per tick, re-armed by a fresh press per piece), Left/Right
- * move. Same input surface as snake (four direction buttons), different
+ * faster, one row per tick, re-armed by a fresh press per piece) and locks the
+ * piece's column for as long as it is held, Left/Right move. Same input
+ * surface as snake (four direction buttons), different
  * meaning, which is exactly the contract's point: the controls are declared
  * by the game, and the controller client renders them as labels.
  *
@@ -29,6 +30,19 @@
 #define TETRIS_BW 10
 #define TETRIS_BH 16
 #define TETRIS_CELL 2
+
+/*
+ * The face the score is drawn in. Every panel leaves the field a margin of
+ * (panel_w - 20) / 2 pixels, which is 20 on the 64px panel the mirror ships:
+ * no cut of the digits family holds five figures there (digits10 needs 44px,
+ * sans8 29px), and ml_text_draw_clipped answers the overflow with an ellipsis
+ * that hides every digit after the first. micro7 is a purpose-drawn 3x7 score
+ * face whose 4px advance puts all five figures of a uint16 score in 19px, so
+ * the whole number is always on the panel. A build that drops the cut falls
+ * back to the body font, which is the old truncating behaviour rather than
+ * nothing at all.
+ */
+#define TETRIS_SCORE_FONT "micro7"
 
 enum { TETRIS_PLAYING = 0, TETRIS_OVER = 1 };
 
@@ -238,14 +252,23 @@ static void tetris_update(void *state, ml_game_ctx *ctx)
 
     /* Horizontal: on tilt the piece walks toward the column the phone points
      * at, one field column per tick and never through a wall or the stack it
-     * is aiming past; on buttons it repeats while held. */
-    if (ml_axis_engaged(s->steer_x)) {
-        const int target = (int)ml_axis_map(s->steer_x, -3, s->bw - 1);
-        if (s->px < target && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
-        else if (s->px > target && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
-    } else {
-        if (s->held_l && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
-        if (s->held_r && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+     * is aiming past; on buttons it repeats while held.
+     *
+     * Except while the soft drop is engaged: pressing Down commits the piece
+     * to the column it is in, and it stays there until Down is released or the
+     * piece locks. A held drop button is a deliberate "send it down now", so
+     * walking the piece out from under that - by a direction button or by the
+     * tilt axis drifting - is never what the player meant. The held direction
+     * is not swallowed: it still lands the moment Down comes up. */
+    if (!s->down_active) {
+        if (ml_axis_engaged(s->steer_x)) {
+            const int target = (int)ml_axis_map(s->steer_x, -3, s->bw - 1);
+            if (s->px < target && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+            else if (s->px > target && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
+        } else {
+            if (s->held_l && !tetris_collide(s, s->mask, s->px - 1, s->py)) s->px--;
+            if (s->held_r && !tetris_collide(s, s->mask, s->px + 1, s->py)) s->px++;
+        }
     }
 
     /* soft drop: one row per tick while Down is engaged, so the piece falls
@@ -361,11 +384,12 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
         }
     }
 
-    /* score, in the current piece's colour so a new piece resets it. Clipped to
-     * the margin left of the field, so a long score cannot paint over the board
-     * or its frame. */
+    /* score, in the current piece's colour so a new piece resets it. micro7's
+     * 4px advance fits the whole five-figure score in the margin; the clip
+     * stays as the guard for a panel so narrow that even that overflows, where
+     * the alternative is digits painted across the board. */
     char buf[8];
-    const ml_font *f = ml_font_find("digits10");
+    const ml_font *f = ml_font_find(TETRIS_SCORE_FONT);
     if (!f) f = ml_font_default();
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     const int score_w = s->ox - 2;

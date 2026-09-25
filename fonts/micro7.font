@@ -1,0 +1,128 @@
+# micro7 - 3x7 digits for a HUD margin too narrow for the digits family.
+#
+# A game draws its HUD into whatever margin its field leaves, and on the 64px
+# panel the tetris field leaves 20px each side. Five figures need 44px in
+# digits10 and 29px in sans8, so both of those cuts truncate a score at 100
+# with the ellipsis marker, hiding every digit after the first. The digits
+# family is sized for a body of text, not for the column beside a board; this
+# cut is drawn for that column instead. Three pixels of ink per digit plus the
+# 1px gap is a 4px advance, so the five figures a uint16 score can reach fit
+# in 19px and nothing is ever cut off.
+#
+# The ten digits and nothing else. A string with punctuation in it is not a
+# score, and leaving out ':' and '.' also keeps this cut out of the engine's
+# auto_font search for clock and temperature strings (see can_stand_in in
+# core/src/render.c): a 7px face fills a narrow box better than any cut of the
+# digits family, so it would win those boxes and restyle them with a face the
+# layout never named.
+#
+# Every stroke is one pixel, so the cut declares @smooth no: a fitted scale
+# stays on whole multiples rather than anti-aliasing a 1px stem into grey.
+
+@name     micro7
+@role     digits
+@height   7
+@baseline 7
+@gap      1
+@family   micro
+@smooth   no
+
+# --- 48 0 ---
+48
+  |###|
+  |#.#|
+  |#.#|
+  |#.#|
+  |#.#|
+  |#.#|
+  |###|
+
+# --- 49 1 ---
+49
+  |..#|
+  |.##|
+  |..#|
+  |..#|
+  |..#|
+  |..#|
+  |###|
+
+# --- 50 2 ---
+50
+  |##.|
+  |..#|
+  |..#|
+  |.#.|
+  |#..|
+  |#..|
+  |###|
+
+# --- 51 3 ---
+51
+  |##.|
+  |..#|
+  |..#|
+  |.##|
+  |..#|
+  |..#|
+  |##.|
+
+# --- 52 4 ---
+52
+  |#.#|
+  |#.#|
+  |#.#|
+  |###|
+  |..#|
+  |..#|
+  |..#|
+
+# --- 53 5 ---
+53
+  |###|
+  |#..|
+  |#..|
+  |##.|
+  |..#|
+  |..#|
+  |##.|
+
+# --- 54 6 ---
+54
+  |.##|
+  |#..|
+  |#..|
+  |##.|
+  |#.#|
+  |#.#|
+  |###|
+
+# --- 55 7 ---
+55
+  |###|
+  |..#|
+  |..#|
+  |.#.|
+  |.#.|
+  |.#.|
+  |.#.|
+
+# --- 56 8 ---
+56
+  |###|
+  |#.#|
+  |#.#|
+  |###|
+  |#.#|
+  |#.#|
+  |###|
+
+# --- 57 9 ---
+57
+  |###|
+  |#.#|
+  |#.#|
+  |###|
+  |..#|
+  |..#|
+  |##.|

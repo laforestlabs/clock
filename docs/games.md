@@ -362,7 +362,8 @@ snake is a grid game with a heading and no coordinate, so it reads the tilt as a
 angle (about 9 degrees), leaving the one-cell step and the no-reversal rule
 untouched. Tetris keeps its per-tick column step and walks the falling piece
 toward the column the phone points at, stopping at a wall or the stack rather
-than teleporting into it.
+than teleporting into it — except while the soft drop is engaged, which locks
+the piece to the column it is in until the drop button comes up.
 
 ### The input frame on the wire
 
@@ -542,7 +543,9 @@ checkpoint. Scores cap at 9999; terminal boards show the score and `OVER` or
 `WIN`. Replay belongs to the app.
 
 Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
-Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90.
+Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90;
+4 for Tetris, whose demo does not press anything before tick 4, so its capture is
+the spawn frame and not a stack of locked pieces.
 Jumpman's demo holds Right and jumps on the authored level's obstacle cadence,
 showing the run, plant and blocks rather than a generated course.
 

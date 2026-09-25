@@ -18,6 +18,10 @@
  *     keyboard repeats the key), and each one used to spin the piece again.
  *     Only the 0->1 edge rotates; a release re-arms the next press.
  *
+ *  4. Down must lock the piece's column while it is held. A direction key
+ *     arriving with Down used to walk the piece sideways on its way down, so
+ *     the drop landed a column or two from where the player aimed it.
+ *
  * Observable: the field is a fixed 10x16 logical board drawn at 2 pixels a
  * cell, so on a 64x32 panel it is 20 pixels wide (origin x=22) and the full
  * panel height, with the frame at columns 21 and 42. Every piece is 4 lit
@@ -98,6 +102,25 @@ static void release_down(ml_game_session *s, int steps)
     }
 }
 
+/* One tick of a phone's full-state stream with Down held and a direction key
+ * at the given state. Tetris' controls are Up=0, Down=1, Left=2, Right=3. */
+static void tick_down_steer(ml_game_session *s, int left, int right)
+{
+    ml_game_input(s, 1, 1, 1);      /* Down held */
+    ml_game_input(s, 1, 2, left);   /* Left */
+    ml_game_input(s, 1, 3, right);  /* Right */
+    ml_game_step(s, 25);
+}
+
+/* One tick with Down up and a direction key at the given state. */
+static void tick_steer(ml_game_session *s, int left, int right)
+{
+    ml_game_input(s, 1, 1, 0);      /* Down up */
+    ml_game_input(s, 1, 2, left);   /* Left */
+    ml_game_input(s, 1, 3, right);  /* Right */
+    ml_game_step(s, 25);
+}
+
 /* Byte-compare the field rect of two sessions. The two render buffers are
  * session-owned, and the rect excludes the score text at (1,1) and the
  * next-piece preview in the right margin, so only the piece's cells can
@@ -166,7 +189,53 @@ int main(void)
 
     ml_game_close(s);
 
-    /* 6. Up rotates once per press. Three Up=1 packets with no release in
+    /* 6. Down locks the piece horizontally. Three sessions get the same five
+     * ticks of a held Down; one also holds Left and one holds Right. All
+     * three fields must be identical, because a held drop commits the piece to
+     * its column. The walk session is the control: the same Left press with
+     * Down up must move the piece, or the lock assertions would pass for a
+     * game that had simply stopped listening to Left. */
+    ml_game_session *ldrop = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
+    ml_game_session *lleft = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
+    ml_game_session *lright = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
+    ml_game_session *lwalk = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
+    ml_game_session *lstill = ml_game_open("tetris", PANEL_W, PANEL_H, 1, 1);
+    if (!ldrop || !lleft || !lright || !lwalk || !lstill) {
+        fprintf(stderr, "open failed\n");
+        return 1;
+    }
+
+    for (int t = 0; t < 5; t++) {
+        tick_down_steer(ldrop, 0, 0);
+        tick_down_steer(lleft, 1, 0);
+        tick_down_steer(lright, 0, 1);
+        tick_steer(lwalk, 1, 0);
+        tick_steer(lstill, 0, 0);
+    }
+
+    int lock_left = same_field(ldrop, lleft);
+    int lock_right = same_field(ldrop, lright);
+    int walk_differs = !same_field(lstill, lwalk);
+    printf("Down+Left:        ==Down only=%d (expect 1)\n", lock_left);
+    printf("Down+Right:       ==Down only=%d (expect 1)\n", lock_right);
+    printf("Left, Down up:    field moved=%d (expect 1)\n", walk_differs);
+    if (!lock_left || !lock_right || !walk_differs) fail = 1;
+
+    /* 7. The lock ends with the press. A Left still held when Down comes up
+     * lands on the next tick, so the held key was ignored, not swallowed. */
+    tick_steer(lleft, 1, 0);
+    tick_steer(ldrop, 0, 0);
+    int queued = !same_field(ldrop, lleft);
+    printf("Left after drop:  field moved=%d (expect 1)\n", queued);
+    if (!queued) fail = 1;
+
+    ml_game_close(ldrop);
+    ml_game_close(lleft);
+    ml_game_close(lright);
+    ml_game_close(lwalk);
+    ml_game_close(lstill);
+
+    /* 8. Up rotates once per press. Three Up=1 packets with no release in
      * between are one press, exactly as the phone's per-frame full-state
      * stream delivers them; the field must match a session that received a
      * single Up=1. The frozen session pins the "rotated at all" half: if the
@@ -192,7 +261,7 @@ int main(void)
     printf("held Up x3:       ==one press=%d (expect 1, bug: 0)\n", held_once);
     if (!rotated || !held_once) fail = 1;
 
-    /* 7. Releasing re-arms the next press: the held session rotates a second
+    /* 9. Releasing re-arms the next press: the held session rotates a second
      * time, matching a clean two-press reference, and no longer matches the
      * one-rotation frame (T's four rotations are all distinct). A session
      * that ignored the release stays at one rotation and matches nothing. */
