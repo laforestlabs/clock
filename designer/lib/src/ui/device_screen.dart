@@ -259,8 +259,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         context,
         deviceVersion: version,
         bundledVersion: bundled.version,
-        blockedReason:
-            _device.canUpdateFirmware ? null : MirrorDevice.needsBluetooth,
+        device: _device,
       );
       if (!accepted || !mounted) return;
       await _installBundledFirmware(bundled);
@@ -488,8 +487,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       context,
       deviceVersion: version,
       bundledVersion: bundled.version,
-      blockedReason:
-          _device.canUpdateFirmware ? null : MirrorDevice.needsBluetooth,
+      device: _device,
     );
     if (!accepted || !mounted) return;
     _offeredFirmware.add('${_device.key}|$version');

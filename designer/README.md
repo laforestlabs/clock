@@ -128,6 +128,13 @@ run; background tile polling never opens update dialogs. Declining is an answer,
 and the next launch asks again. Current, newer, or unreadable versions are left
 alone. Updates and reconnects stay bound to that device.
 
+The image travels over the page's Bluetooth link, which is opened when the page
+is pushed; the version that raises the offer arrives over Wi-Fi, which answers
+in milliseconds. The offer's action therefore follows the link while the dialog
+is on screen: a mirror whose link is still coming up shows why and the action
+comes alive the moment the link does, rather than leaving a dead button in front
+of an owner whose mirror is already linked.
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To

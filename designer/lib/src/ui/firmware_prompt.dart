@@ -23,39 +23,50 @@ import '../services/mirror_lan.dart';
 /// The panel goes dark while the mirror reboots, so that is said here rather
 /// than met as a surprise.
 ///
-/// [blockedReason] is the app's own reason it cannot send the image — no
-/// address for this mirror. The offer still reports the gap, because the owner
-/// should know an update exists, but the update action is disabled instead of
-/// being offered and then refused after the tap.
+/// The action follows [device]'s Bluetooth link for as long as the dialog is
+/// open. The offer is raised on the version a mirror reports, and that version
+/// arrives over Wi-Fi — which answers in milliseconds, while the link the
+/// image travels over is opened when the page is pushed and can take seconds.
+/// Reading the link once left the owner looking at a disabled action on a
+/// mirror that was already linked, so the reason is read again on every
+/// rebuild and the action comes alive the moment the link lands. A mirror that
+/// cannot be reached over Bluetooth keeps the reason and the disabled action,
+/// because the owner should still know an update exists.
 Future<bool> confirmFirmwareUpdate(
   BuildContext context, {
   required String deviceVersion,
   required String bundledVersion,
-  String? blockedReason,
+  required MirrorDevice device,
 }) async {
   final answer = await showDialog<bool>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Firmware update available'),
-      content: Text(
-        'This mirror is running v$deviceVersion. This app includes '
-        'v$bundledVersion.\n\n'
-        'The image is sent over Bluetooth and the mirror restarts when it is '
-        'installed, so the panel goes dark for a few seconds.'
-        '${blockedReason == null ? '' : '\n\n$blockedReason'}',
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Not now'),
-        ),
-        FilledButton(
-          onPressed: blockedReason == null
-              ? () => Navigator.of(context).pop(true)
-              : null,
-          child: Text('Update to v$bundledVersion'),
-        ),
-      ],
+    builder: (context) => ListenableBuilder(
+      listenable: device.connection,
+      builder: (context, _) {
+        final blockedReason = device.firmwareUpdateBlocker;
+        return AlertDialog(
+          title: const Text('Firmware update available'),
+          content: Text(
+            'This mirror is running v$deviceVersion. This app includes '
+            'v$bundledVersion.\n\n'
+            'The image is sent over Bluetooth and the mirror restarts when it '
+            'is installed, so the panel goes dark for a few seconds.'
+            '${blockedReason == null ? '' : '\n\n$blockedReason'}',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Not now'),
+            ),
+            FilledButton(
+              onPressed: blockedReason == null
+                  ? () => Navigator.of(context).pop(true)
+                  : null,
+              child: Text('Update to v$bundledVersion'),
+            ),
+          ],
+        );
+      },
     ),
   );
   return answer == true;

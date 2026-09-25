@@ -16,6 +16,7 @@
 // The device version under test is derived from it, so "older" and "current"
 // stay true across those bumps.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -125,6 +126,50 @@ void main() {
     }
     expect(find.text('Firmware update available'), findsNothing);
   });
+
+  testWidgets('a link that lands while the offer is open enables the update',
+      (tester) async {
+    final fixture = _Fixture();
+    addTearDown(fixture.dispose);
+    late final MirrorDevice device;
+    late final _Connection connection;
+    await tester.runAsync(() async {
+      fixture.lanAt('127.0.0.1:8080').version = '0.0.1';
+      await fixture.registry.addLan('127.0.0.1', 8080);
+      // The same mirror, paired over Bluetooth: the version is read over
+      // Wi-Fi the moment a page polls it, while the link the image travels
+      // over is only opened when that page is pushed. The Bluetooth record
+      // folds into the Wi-Fi one, which is the record an update runs through.
+      device = await fixture.registry.addBle(fixture.nearby());
+      expect(device.bleId, isNotNull, reason: 'an update needs this target');
+      connection = device.connection as _Connection;
+      await connection.disconnect();
+    });
+
+    // The page opens the link when it is pushed; this case holds that open,
+    // so the offer is raised while no link is up yet.
+    connection.hold = Completer<void>();
+
+    await boot(tester, fixture.registry, device);
+    await pumpUntil(tester, find.text('Firmware update available'));
+
+    final action =
+        find.widgetWithText(FilledButton, 'Update to v$bundledVersion');
+    expect(tester.widget<FilledButton>(action).onPressed, isNull,
+        reason: 'the link is still coming up');
+    expect(find.textContaining(MirrorDevice.openingBluetooth), findsOneWidget);
+
+    // The link lands while the owner is looking at the offer.
+    connection.hold!.complete();
+    connection.hold = null;
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(find.textContaining(MirrorDevice.openingBluetooth), findsNothing);
+    expect(tester.widget<FilledButton>(action).onPressed, isNotNull,
+        reason: 'a live link must offer the update it can now send');
+  });
 }
 
 /// A live BLE session whose identity the test controls.
@@ -176,13 +221,20 @@ class _Connection extends MirrorConnection {
   _Session? live;
   int connects = 0;
 
+  /// Holds the next connect open until the case completes it, so a test can
+  /// look at the page while the link is still coming up — which is when the
+  /// offer is raised on a version that arrived over Wi-Fi.
+  Completer<void>? hold;
+
   @override
   BleSession? get session => live;
 
   @override
-  MirrorConnectionStatus get status => live == null
-      ? MirrorConnectionStatus.disconnected
-      : MirrorConnectionStatus.connected;
+  MirrorConnectionStatus get status => hold != null
+      ? MirrorConnectionStatus.connecting
+      : live == null
+          ? MirrorConnectionStatus.disconnected
+          : MirrorConnectionStatus.connected;
 
   @override
   BlePong? get pong =>
@@ -197,6 +249,9 @@ class _Connection extends MirrorConnection {
     required String name,
     Duration timeout = const Duration(seconds: 35),
   }) async {
+    connects++;
+    final held = hold;
+    if (held != null) await held.future;
     live = _Session(_firmwareId, () {
       version = _installedVersion;
       live = null;

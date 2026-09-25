@@ -306,10 +306,27 @@ class MirrorDevice extends ChangeNotifier {
   /// Whether a firmware update can be sent over a live Bluetooth link.
   bool get canUpdateFirmware => _connection.session != null;
 
-  /// Shown when [canUpdateFirmware] is false.
+  /// Why an update cannot be sent right now, or null when it can.
+  ///
+  /// Read live rather than captured by whoever shows the reason: the answer
+  /// turns on a link that a device page opens when it is pushed, and the
+  /// version an update offer is raised on arrives over Wi-Fi, which answers in
+  /// milliseconds. A captured answer leaves a disabled action on screen after
+  /// the radio has come up behind it.
+  String? get firmwareUpdateBlocker {
+    if (canUpdateFirmware) return null;
+    return bleConnecting ? openingBluetooth : needsBluetooth;
+  }
+
+  /// Shown when [canUpdateFirmware] is false, because no link is open.
   static const String needsBluetooth =
       'A firmware update is sent over Bluetooth, so this mirror needs a live '
       'Bluetooth connection. Connect to it and try again.';
+
+  /// Shown instead while this app is opening that link.
+  static const String openingBluetooth =
+      'The Bluetooth link to this mirror is being opened; the update is sent '
+      'over that link, so it becomes available once the link is up.';
 
   @override
   String toString() => '$name ($key)';
