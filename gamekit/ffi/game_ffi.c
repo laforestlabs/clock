@@ -232,3 +232,68 @@ int ml_game_rgba_size(const ml_game_session *s)
 {
     return s ? (int)s->rgba_size : 0;
 }
+
+/* ---- authored levels: the level a development caller hands in ----------- */
+
+#ifdef ML_GAME_AUTHORING
+
+/*
+ * The games that accept a level at run time, and the read-out that goes with
+ * one. A game absent from this table is compiled with its level and plays it,
+ * which is every game on a device: ML_GAME_AUTHORING is defined by the host
+ * builds only (gamekit/Makefile.host and the shared library's CMakeLists),
+ * never by the firmware.
+ */
+typedef struct {
+    const char *id;
+    bool (*set_level)(const uint8_t *blob, size_t len);
+    int  (*state_int)(const void *state, const char *name);
+} level_entry;
+
+extern bool ml_game_jumpman_set_level(const uint8_t *blob, size_t len);
+extern int  ml_game_jumpman_state_int(const void *state, const char *name);
+
+static const level_entry k_level_games[] = {
+    { "jumpman", ml_game_jumpman_set_level, ml_game_jumpman_state_int },
+};
+
+static const level_entry *find_level_game(const char *id)
+{
+    for (unsigned i = 0; i < sizeof k_level_games / sizeof k_level_games[0]; i++)
+        if (strcmp(k_level_games[i].id, id) == 0) return &k_level_games[i];
+    return NULL;
+}
+
+int ml_game_set_level(const char *game_id, const uint8_t *blob, size_t len)
+{
+    const level_entry *e = game_id ? find_level_game(game_id) : NULL;
+    if (!e) return 0;
+    return e->set_level(blob, len) ? 1 : 0;
+}
+
+int ml_game_state_int(const ml_game_session *s, const char *name)
+{
+    if (!s || !name) return -1;
+    const level_entry *e = find_level_game(s->game->id);
+    if (!e) return -1;
+    return e->state_int(ml_host_state(s->host), name);
+}
+
+#else /* !ML_GAME_AUTHORING */
+
+/* This build compiles no level in and cannot replace one, so it accepts none:
+ * the same answer as a level game id that has no authoring path, which is the
+ * honest one for a device image. */
+int ml_game_set_level(const char *game_id, const uint8_t *blob, size_t len)
+{
+    (void)game_id; (void)blob; (void)len;
+    return 0;
+}
+
+int ml_game_state_int(const ml_game_session *s, const char *name)
+{
+    (void)s; (void)name;
+    return -1;
+}
+
+#endif /* ML_GAME_AUTHORING */

@@ -48,9 +48,9 @@ import 'package:flutter/rendering.dart'
     show SemanticsAction, SemanticsData, SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mirror_core_ffi/mirror_core_ffi.dart';
 import 'package:mirror_designer/src/controller.dart';
 import 'package:mirror_designer/src/engine/engine.dart';
-import 'package:mirror_designer/src/engine/game_engine.dart';
 import 'package:mirror_designer/src/services/mirror_connection.dart';
 import 'package:mirror_designer/src/services/tilt_sensor.dart';
 import 'package:mirror_designer/src/ui/game_screen.dart';

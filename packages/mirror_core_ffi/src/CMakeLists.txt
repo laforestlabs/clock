@@ -127,6 +127,13 @@ set_target_properties(mirror_core_ffi PROPERTIES
 
 target_compile_definitions(mirror_core_ffi PUBLIC DART_SHARED_LIB)
 
+# ML_GAME_AUTHORING compiles gamekit's run-time level path in: the level a
+# device plays is compiled in, and the level editor hands a session a level of
+# its own through ml_game_set_level before opening it. The firmware's build
+# never defines this, so a device image carries the authored tables and no way
+# to replace them.
+target_compile_definitions(mirror_core_ffi PRIVATE ML_GAME_AUTHORING)
+
 if(NOT MSVC)
     target_compile_options(mirror_core_ffi PRIVATE -Wall -Wextra -O2)
 endif()

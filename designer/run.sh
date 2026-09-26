@@ -63,8 +63,8 @@ fail() {
 SOURCE_ROOTS=(
   designer/lib
   designer/pubspec.yaml
-  designer/packages/mirror_core_ffi/lib
-  designer/packages/mirror_core_ffi/src
+  packages/mirror_core_ffi/lib
+  packages/mirror_core_ffi/src
   core/src
   core/include
   core/ffi

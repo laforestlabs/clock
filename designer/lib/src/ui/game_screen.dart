@@ -72,11 +72,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:mirror_core_ffi/mirror_core_ffi.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import '../controller.dart';
-import '../engine/game_bindings.dart' show GameLibraryException;
-import '../engine/game_engine.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_ble_game.dart';
 import '../services/mirror_ble_status.dart';

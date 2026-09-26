@@ -978,7 +978,7 @@ Done: the empty `designer/mirror_designer/` directory is gone, and two unused FF
 plus one no-op assertion were removed — `dart analyze` is down from 13 issues to 10.
 
 Remaining: ten `library_private_types_in_public_api` infos in
-`designer/lib/src/engine/game_bindings.dart`, where the public API returns private typedef
+`packages/mirror_core_ffi/lib/src/game_bindings.dart`, where the public API returns private typedef
 types. Fixing them means renaming types in the FFI facade, which is a slightly riskier change
 than the rest of this tier. Once Tier 1–2 land, also revisit the README's milestone table: M4
 is more true than it was now that B3 is fixed, but the LAN push is still unauthenticated.

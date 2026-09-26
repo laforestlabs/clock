@@ -202,7 +202,7 @@ class MirrorBindings {
     // are already in the process. Everything else loads a shared object.
     if (Platform.isIOS || Platform.isMacOS) return DynamicLibrary.process();
 
-    // Name matches the CMake target in designer/packages/mirror_core_ffi/src.
+    // Name matches the CMake target in packages/mirror_core_ffi/src.
     const soName = 'libmirror_core_ffi.so';
     try {
       if (Platform.isAndroid || Platform.isLinux) {

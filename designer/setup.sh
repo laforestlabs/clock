@@ -53,17 +53,15 @@ fi
 # Generates a throwaway project and lifts only its platform directories, so a
 # regenerate can never clobber hand-written Dart or pubspec entries.
 scaffold() {
-  local target_dir="$1" template="$2" project_name="$3"
+  local target_dir="$1" project_name="$2"
   local tmp created=0
 
   tmp="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" RETURN
 
-  local args=(create --platforms="$PLATFORMS" --project-name "$project_name")
-  [ -n "$template" ] && args+=(--template="$template")
-
-  flutter "${args[@]}" "$tmp/scaffold" >/dev/null
+  flutter create --platforms="$PLATFORMS" --project-name "$project_name" \
+    "$tmp/scaffold" >/dev/null
 
   for platform in android ios linux macos windows; do
     if [ -d "$tmp/scaffold/$platform" ] && [ ! -d "$target_dir/$platform" ]; then
@@ -77,11 +75,13 @@ scaffold() {
   return 0
 }
 
-info "Scaffolding the native plugin (compiles core/)"
-scaffold "$DESIGNER_DIR/packages/mirror_core_ffi" "plugin_ffi" "mirror_core_ffi"
+# The native package is shared (the Jumpman level editor builds against it too),
+# so its own scaffolding lives with it. One copy of the step, two callers.
+info "Scaffolding the shared native package"
+"$REPO_ROOT/packages/mirror_core_ffi/setup.sh" "$PLATFORMS"
 
 info "Scaffolding the app"
-scaffold "$DESIGNER_DIR" "" "mirror_designer"
+scaffold "$DESIGNER_DIR" "mirror_designer"
 
 # "Save As" uses ACTION_CREATE_DOCUMENT because file_selector has no save
 # support on Android. MainActivity.kt is ours; install it over the stub that
@@ -204,14 +204,6 @@ for gradle_file in "$DESIGNER_DIR/android/app/build.gradle.kts" \
   fi
 done
 
-# The generated plugin ships a placeholder .c and matching Dart bindings that
-# reference functions our core does not have. Left in place they break the
-# build, so remove them; src/CMakeLists.txt is ours and points at core/.
-rm -f "$DESIGNER_DIR/packages/mirror_core_ffi/src/mirror_core_ffi.c" \
-      "$DESIGNER_DIR/packages/mirror_core_ffi/src/mirror_core_ffi.h" \
-      "$DESIGNER_DIR/packages/mirror_core_ffi/lib/mirror_core_ffi_bindings_generated.dart" \
-      "$DESIGNER_DIR/packages/mirror_core_ffi/ffigen.yaml"
-
 # -------------------------------------------------------------------- icons
 
 # Android launcher icons are rendered from the committed icon layout rather
@@ -245,6 +237,6 @@ Done. To run:
   flutter run -d <device-id>    # phone, see: flutter devices
 
 If the app opens on "The render engine did not load", the native library was
-not built. Check that packages/mirror_core_ffi/<platform>/ exists and re-run
+not built. Check that ../packages/mirror_core_ffi/<platform>/ exists and re-run
 this script.
 EOF

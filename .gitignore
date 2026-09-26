@@ -34,9 +34,14 @@ designer/build/
 designer/.flutter-plugins
 designer/.flutter-plugins-dependencies
 designer/pubspec.lock
-designer/packages/*/.dart_tool/
-designer/packages/*/pubspec.lock
-designer/packages/*/build/
+jumpman_editor/.dart_tool/
+jumpman_editor/build/
+jumpman_editor/.flutter-plugins
+jumpman_editor/.flutter-plugins-dependencies
+jumpman_editor/pubspec.lock
+packages/*/.dart_tool/
+packages/*/pubspec.lock
+packages/*/build/
 
 # Symlink to the shared layouts directory, created by designer/setup.sh
 designer/assets/layouts
@@ -49,11 +54,14 @@ designer/ios/
 designer/linux/
 designer/macos/
 designer/windows/
-designer/packages/*/android/
-designer/packages/*/ios/
-designer/packages/*/linux/
-designer/packages/*/macos/
-designer/packages/*/windows/
+jumpman_editor/linux/
+jumpman_editor/macos/
+jumpman_editor/windows/
+packages/*/android/
+packages/*/ios/
+packages/*/linux/
+packages/*/macos/
+packages/*/windows/
 
 # Test artifacts. Golden references are committed; actual output is not.
 core/test/out/

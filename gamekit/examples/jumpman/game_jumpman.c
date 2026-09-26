@@ -34,6 +34,13 @@
  * held angle cannot express a jump, so Jump is a button and the level is
  * playable on the pad alone. Every animation is driven by a state counter and
  * never by the tick, so a peer's frame for the same state is the same frame.
+ *
+ * The level a device plays is compiled in: the tables below are the level, and
+ * the level's shape - its width, its ground row, its flag column - is read from
+ * this file's constants rather than repeated anywhere else. A development
+ * caller may hand a session a level at run time instead (ML_GAME_AUTHORING,
+ * near the end of the file), which is how the level editor plays what it
+ * painted back against this game before it writes the tables out.
  */
 #include <stdio.h>
 #include <string.h>
@@ -63,7 +70,6 @@
 #define PLAYER_W       4
 #define PLAYER_H_SMALL 6
 #define PLAYER_H_SUPER 9
-#define PLAYER_START_X 3
 
 /*
  * Q8.8 physics. Gravity is 56/256 of a pixel per tick squared and the jump
@@ -151,10 +157,11 @@
 #define SCORE_MAX     9999
 #define COIN_MAX      99
 
-/* The level: 256 columns, one run of ground per entry, the checkpoint flag and
- * the goal flagpole. */
+/* The level: 256 columns, a checkpoint flag and the goal flagpole. The two
+ * columns that are not in the tables - where a run starts, and where a death
+ * after the checkpoint puts the player back - are stated with the tables, so
+ * the level is the tables and the flag columns rather than this file's shape. */
 #define JUMP_COLS    256
-#define CHECKPOINT_X 116
 #define FLAG_X       (JUMP_COLS - 4)
 
 /* A deliberate tilt, not a resting hand: a quarter of the travel, about 11
@@ -182,6 +189,24 @@ typedef struct { uint8_t x, w, row, kind; } jm_block_def; /* w 1-column blocks i
 typedef struct { uint8_t x, h, plant; } jm_pipe_def;      /* h = rows above the ground */
 typedef struct { uint8_t x, y; } jm_coin_def;             /* top-left, world pixels */
 typedef struct { uint8_t x, row; int8_t dir; uint8_t kind; } jm_enemy_def; /* row = the surface its feet rest on */
+
+/* A level: the five authored tables and the two columns that are not in them,
+ * gathered into one value, so the level a session plays is a pointer rather
+ * than a set of symbols. */
+typedef struct {
+    const jm_ground_def *ground;  int ground_n;
+    const jm_block_def  *blocks;  int blocks_n;
+    const jm_pipe_def   *pipes;   int pipes_n;
+    const jm_coin_def   *coins;   int coins_n;
+    const jm_enemy_def  *enemies; int enemies_n;
+    uint8_t start_x;
+    uint8_t checkpoint_x;
+} jm_level;
+
+/* Where a run starts, and where a death after the checkpoint puts the player
+ * back. The editor rewrites both alongside the tables. */
+#define JM_LEVEL_START_X      3
+#define JM_LEVEL_CHECKPOINT_X 116
 
 static const jm_ground_def jm_level_ground[] = {
     {   0, 105, 19 }, { 105,   3, JML_PIT }, { 108,  66, 19 }, { 174,   5, JML_PIT },
@@ -222,6 +247,18 @@ typedef char jm_level_coins_fit[
 typedef char jm_level_enemies_fit[
     (sizeof jm_level_enemies / sizeof jm_level_enemies[0] <= ENEMY_SLOTS) ? 1 : -1];
 typedef char jm_level_block_cols_fit[(JM_LEVEL_BLOCK_COLS <= JUMP_COLS) ? 1 : -1];
+
+/* The level a (re)start builds. Only a development caller moves it off the
+ * authored one: a device plays the level compiled into it. */
+static const jm_level jm_level_authored = {
+    jm_level_ground,  (int)(sizeof jm_level_ground  / sizeof jm_level_ground[0]),
+    jm_level_blocks,  (int)(sizeof jm_level_blocks  / sizeof jm_level_blocks[0]),
+    jm_level_pipes,   (int)(sizeof jm_level_pipes   / sizeof jm_level_pipes[0]),
+    jm_level_coins,   (int)(sizeof jm_level_coins   / sizeof jm_level_coins[0]),
+    jm_level_enemies, (int)(sizeof jm_level_enemies / sizeof jm_level_enemies[0]),
+    JM_LEVEL_START_X, JM_LEVEL_CHECKPOINT_X,
+};
+static const jm_level *jm_level_now = &jm_level_authored;
 
 /* ---- state -------------------------------------------------------------- */
 
@@ -279,6 +316,8 @@ typedef struct {
     uint8_t  invuln;        /* ticks of flashing left */
     uint8_t  dying;         /* ticks of the death pause left */
     uint8_t  checkpoint;    /* the checkpoint flag has been passed */
+    uint8_t  start_x;       /* the level's start column */
+    uint8_t  checkpoint_x;  /* the level's checkpoint column */
     uint8_t  bump_x;        /* the column of the block being jerked */
     uint8_t  bump_anim;     /* ticks of jerk left */
 } jumpman_state;
@@ -500,16 +539,25 @@ static int jm_enemy_slot(const jumpman_state *s)
     return -1;
 }
 
+/* Whether a column is inside the field. A level's records carry a column as one
+ * byte, so against today's 256-column level a bare comparison would be vacuous
+ * and a compiler says so; this is the check in the field's own units, so it
+ * stays the one that catches a bad record if the field ever grows past what a
+ * byte can name. */
+static bool jm_col_inside(int x) { return x >= 0 && x < JUMP_COLS; }
+
 /*
- * Build the level from the authored tables and put the player at its start.
+ * Build the level the session was given and put the player at its start.
  * This is the whole of (re)starting: reset calls it once, and the death path
- * calls it again, so the level a death reloads is the authored one - a bumped
- * block is live again, a taken coin is back, and every enemy is at its spawn.
- * The score, the coin count, the lives and the checkpoint are the only things a
- * death carries, and this function deliberately does not touch them.
+ * calls it again, so the level a death reloads is the level being played - a
+ * bumped block is live again, a taken coin is back, and every enemy is at its
+ * spawn. The score, the coin count, the lives and the checkpoint are the only
+ * things a death carries, and this function deliberately does not touch them.
  */
 static void jm_load_level(jumpman_state *s)
 {
+    const jm_level *lv = jm_level_now;
+
     memset(s->surf, JM_NONE, sizeof s->surf);
     memset(s->block, JM_NOBLK, sizeof s->block);
 
@@ -538,14 +586,23 @@ static void jm_load_level(jumpman_state *s)
         s->items[i].state = IS_NONE;
     }
 
-    for (unsigned i = 0; i < sizeof jm_level_ground / sizeof jm_level_ground[0]; i++) {
-        const jm_ground_def *g = &jm_level_ground[i];
+    /* A record that could not be part of a level is ignored rather than built:
+     * a run of no columns or one that leaves the field, a pipe standing no rows
+     * above the ground, a coin whose 2x2 box leaves the field, an enemy
+     * standing outside it. Those are the same records the check below refuses
+     * from the wire, so a record means one thing whether it was compiled in or
+     * decoded - and it is what lets a level with no coins of its own be written
+     * as a table with one record that is not a coin (C has no empty array). */
+    for (int i = 0; i < lv->ground_n; i++) {
+        const jm_ground_def *g = &lv->ground[i];
+        if (g->w == 0 || (int)g->x + (int)g->w > JUMP_COLS) continue;
         if (g->surf == JML_PIT) continue;
         for (int x = g->x; x < (int)g->x + (int)g->w; x++) s->surf[x] = g->surf;
     }
 
-    for (unsigned i = 0; i < sizeof jm_level_pipes / sizeof jm_level_pipes[0]; i++) {
-        const jm_pipe_def *p = &jm_level_pipes[i];
+    for (int i = 0; i < lv->pipes_n; i++) {
+        const jm_pipe_def *p = &lv->pipes[i];
+        if (p->h == 0 || (int)p->x + PIPE_W > JUMP_COLS) continue;
         const int slot = jm_pipe_slot(s);
         if (slot < 0) break;
         const int top = JUMP_GROUND_ROW - (int)p->h;
@@ -556,14 +613,16 @@ static void jm_load_level(jumpman_state *s)
         s->pipes[slot].phase = 0;
     }
 
-    for (unsigned i = 0; i < sizeof jm_level_blocks / sizeof jm_level_blocks[0]; i++) {
-        const jm_block_def *b = &jm_level_blocks[i];
+    for (int i = 0; i < lv->blocks_n; i++) {
+        const jm_block_def *b = &lv->blocks[i];
+        if (b->w == 0 || (int)b->x + (int)b->w > JUMP_COLS) continue;
         for (int k = 0; k < (int)b->w; k++)
             s->block[b->x + k] = jm_blk_make(b->kind, b->row);
     }
 
-    for (unsigned i = 0; i < sizeof jm_level_coins / sizeof jm_level_coins[0]; i++) {
-        const jm_coin_def *c = &jm_level_coins[i];
+    for (int i = 0; i < lv->coins_n; i++) {
+        const jm_coin_def *c = &lv->coins[i];
+        if ((int)c->x + 2 > JUMP_COLS || (int)c->y + 2 > JUMP_ROWS) continue;
         const int slot = jm_coin_slot(s);
         if (slot < 0) break;
         s->coins[slot].x = c->x;
@@ -571,8 +630,9 @@ static void jm_load_level(jumpman_state *s)
         s->coins[slot].state = CM_LIVE;
     }
 
-    for (unsigned i = 0; i < sizeof jm_level_enemies / sizeof jm_level_enemies[0]; i++) {
-        const jm_enemy_def *d = &jm_level_enemies[i];
+    for (int i = 0; i < lv->enemies_n; i++) {
+        const jm_enemy_def *d = &lv->enemies[i];
+        if (!jm_col_inside(d->x) || (int)d->row >= JUMP_ROWS) continue;
         const int slot = jm_enemy_slot(s);
         if (slot < 0) break;
         jm_enemy *e = &s->enemies[slot];
@@ -587,7 +647,9 @@ static void jm_load_level(jumpman_state *s)
         e->awake = 0;
     }
 
-    s->px = (int32_t)(s->checkpoint ? CHECKPOINT_X : PLAYER_START_X) << 8;
+    s->start_x = lv->start_x;
+    s->checkpoint_x = lv->checkpoint_x;
+    s->px = (int32_t)(s->checkpoint ? s->checkpoint_x : s->start_x) << 8;
     s->py = (int32_t)(JUMP_GROUND_ROW - PLAYER_H_SMALL) << 8;
     s->vx = 0;
     s->vy = 0;
@@ -602,6 +664,210 @@ static void jm_load_level(jumpman_state *s)
     s->bump_x = 0xFF;
     s->bump_anim = 0;
 }
+
+/* ---- a level handed in at run time -------------------------------------- */
+
+#ifdef ML_GAME_AUTHORING
+
+/*
+ * The level a device plays is compiled in. These are the calls that let a
+ * development tool - the level editor - hand this game a level of its own
+ * before the session that plays it is opened, and read the live state back
+ * out while it plays. ML_GAME_AUTHORING is defined by the host builds only,
+ * so the firmware image carries the authored tables and none of this.
+ */
+
+/* The most run records a level handed in over the wire may carry. The authored
+ * tables never come near either: a level is 256 columns wide, and a run is only
+ * started where the column before it differs. */
+#define JM_GROUND_MAX 128
+#define JM_BLOCK_MAX  128
+
+/* The two entry points the harness binds (gamekit/ffi/game_ffi.c), declared
+ * before their definitions so the translation unit stays warning-clean on its
+ * own. */
+bool ml_game_jumpman_set_level(const uint8_t *blob, size_t len);
+int  ml_game_jumpman_state_int(const void *state, const char *name);
+
+/* How many rows of itself a plant has out of its pipe. Defined with the plants,
+ * further down the file; the read-out publishes it and comes first. */
+static int jm_plant_rows(uint8_t phase);
+
+/* Slot storage for a level handed in at run time: the shipped level is const
+ * data, an injected one is not. */
+static jm_ground_def jm_held_ground[JM_GROUND_MAX];
+static jm_block_def  jm_held_blocks[JM_BLOCK_MAX];
+static jm_pipe_def   jm_held_pipes[PIPE_SLOTS];
+static jm_coin_def   jm_held_coins[COIN_SLOTS];
+static jm_enemy_def  jm_held_enemies[ENEMY_SLOTS];
+static jm_level      jm_held_level;
+
+/*
+ * Take a level in the editor's wire form, without writing anything until the
+ * whole blob has been read: a rejected blob must leave the level in place, and
+ * a half-applied one would be worse than either. Structural checks only - a
+ * level that passes can still be unplayable, which is what the editor's
+ * playtest and its reachability scans are for. len 0 restores the authored
+ * level, which is how a tool that is done with its own level gives it back.
+ */
+bool ml_game_jumpman_set_level(const uint8_t *blob, size_t len)
+{
+    if (len == 0) { jm_level_now = &jm_level_authored; return true; }
+    if (!blob || len < 8) return false;
+
+    const uint8_t start_x = blob[1], checkpoint_x = blob[2];
+    const uint8_t ground_n = blob[3], block_n = blob[4], pipe_n = blob[5];
+    const uint8_t coin_n = blob[6], enemy_n = blob[7];
+
+    if (blob[0] != 1) return false;
+    if (ground_n > JM_GROUND_MAX || block_n > JM_BLOCK_MAX) return false;
+    if (pipe_n > PIPE_SLOTS || coin_n > COIN_SLOTS || enemy_n > ENEMY_SLOTS) return false;
+    if (!jm_col_inside(start_x) || !jm_col_inside(checkpoint_x)) return false;
+
+    const size_t want = 8 + (size_t)ground_n * 3 + (size_t)block_n * 4
+                      + (size_t)pipe_n * 3 + (size_t)coin_n * 2
+                      + (size_t)enemy_n * 4;
+    if (len != want) return false;
+
+    size_t at = 8;
+    for (int i = 0; i < ground_n; i++, at += 3) {
+        const uint8_t w = blob[at + 1], surf = blob[at + 2];
+        if (w == 0 || (int)blob[at] + (int)w > JUMP_COLS) return false;
+        /* A surface row outside the field is not a pit and not ground. */
+        if (surf != JML_PIT && surf >= JUMP_ROWS) return false;
+    }
+    for (int i = 0; i < block_n; i++, at += 4) {
+        const uint8_t w = blob[at + 1], row = blob[at + 2], kind = blob[at + 3];
+        if (w == 0 || (int)blob[at] + (int)w > JUMP_COLS) return false;
+        /* The packed byte keeps the row in five bits, so a larger row would
+         * wrap into the kind rather than fail there. */
+        if (row > 31 || kind < BM_BRICK || kind > BM_BROKEN) return false;
+    }
+    for (int i = 0; i < pipe_n; i++, at += 3) {
+        const uint8_t x = blob[at], h = blob[at + 1], plant = blob[at + 2];
+        if (h == 0 || h >= JUMP_GROUND_ROW || plant > 1) return false;
+        if ((int)x + PIPE_W > JUMP_COLS) return false;
+    }
+    for (int i = 0; i < coin_n; i++, at += 2) {
+        if ((int)blob[at] + 2 > JUMP_COLS || (int)blob[at + 1] + 2 > JUMP_ROWS)
+            return false;
+    }
+    for (int i = 0; i < enemy_n; i++, at += 4) {
+        const uint8_t x = blob[at], row = blob[at + 1];
+        const int8_t dir = (int8_t)blob[at + 2];
+        const uint8_t kind = blob[at + 3];
+        if (!jm_col_inside(x) || row >= JUMP_ROWS || kind > EK_SHELL) return false;
+        if (dir < -1 || dir > 1) return false;
+    }
+
+    at = 8;
+    for (int i = 0; i < ground_n; i++, at += 3) {
+        jm_held_ground[i].x = blob[at];
+        jm_held_ground[i].w = blob[at + 1];
+        jm_held_ground[i].surf = blob[at + 2];
+    }
+    for (int i = 0; i < block_n; i++, at += 4) {
+        jm_held_blocks[i].x = blob[at];
+        jm_held_blocks[i].w = blob[at + 1];
+        jm_held_blocks[i].row = blob[at + 2];
+        jm_held_blocks[i].kind = blob[at + 3];
+    }
+    for (int i = 0; i < pipe_n; i++, at += 3) {
+        jm_held_pipes[i].x = blob[at];
+        jm_held_pipes[i].h = blob[at + 1];
+        jm_held_pipes[i].plant = blob[at + 2];
+    }
+    for (int i = 0; i < coin_n; i++, at += 2) {
+        jm_held_coins[i].x = blob[at];
+        jm_held_coins[i].y = blob[at + 1];
+    }
+    for (int i = 0; i < enemy_n; i++, at += 4) {
+        jm_held_enemies[i].x = blob[at];
+        jm_held_enemies[i].row = blob[at + 1];
+        jm_held_enemies[i].dir = (int8_t)blob[at + 2];
+        jm_held_enemies[i].kind = blob[at + 3];
+    }
+
+    jm_held_level.ground    = jm_held_ground;  jm_held_level.ground_n = ground_n;
+    jm_held_level.blocks    = jm_held_blocks;  jm_held_level.blocks_n = block_n;
+    jm_held_level.pipes     = jm_held_pipes;   jm_held_level.pipes_n = pipe_n;
+    jm_held_level.coins     = jm_held_coins;   jm_held_level.coins_n = coin_n;
+    jm_held_level.enemies   = jm_held_enemies; jm_held_level.enemies_n = enemy_n;
+    jm_held_level.start_x   = start_x;
+    jm_held_level.checkpoint_x = checkpoint_x;
+
+    jm_level_now = &jm_held_level;
+    return true;
+}
+
+/* The enemy closest in front of the player, of those whose body is in the
+ * player's way: what the read-out publishes the distance to and the kind of.
+ * NULL when none is close enough or none is at the player's rows. */
+static const jm_enemy *jm_enemy_ahead(const jumpman_state *s)
+{
+    const jm_enemy *best = NULL;
+    for (int i = 0; i < ENEMY_SLOTS; i++) {
+        const jm_enemy *e = &s->enemies[i];
+        if (e->kind == EK_NONE || e->state == ES_SQUASH) continue;
+        const int gap = (e->x >> 8) - jm_left(s);
+        if (gap < 0 || gap > ENEMY_WAKE) continue;
+        if ((e->y >> 8) > jm_bottom(s)) continue;
+        if ((e->y >> 8) + jm_enemy_h(e->kind) - 1 < jm_top(s)) continue;
+        if (!best || gap < (best->x >> 8) - jm_left(s)) best = e;
+    }
+    return best;
+}
+
+/*
+ * One integer out of the live state, by name. The editor's playtest reads the
+ * player's column, the camera, the lives and the status; a bot playing the
+ * level to test it needs its row and footing too, and the distance to the
+ * nearest enemy in its way - which it cannot work out for itself, because the
+ * enemies walk. A name this game does not publish is -1 rather than an invented
+ * zero.
+ */
+int ml_game_jumpman_state_int(const void *state, const char *name)
+{
+    if (!state || !name) return -1;
+    const jumpman_state *s = state;
+    if (strcmp(name, "player_x") == 0) return s->px >> 8;
+    if (strcmp(name, "player_y") == 0) return s->py >> 8;
+    if (strcmp(name, "camera") == 0)   return s->cam;
+    if (strcmp(name, "lives") == 0)    return s->lives;
+    if (strcmp(name, "status") == 0)   return s->status;
+    if (strcmp(name, "on_ground") == 0) return jm_on_ground(s) ? 1 : 0;
+    if (strcmp(name, "enemy_gap") == 0) {
+        const jm_enemy *e = jm_enemy_ahead(s);
+        return e ? (e->x >> 8) - jm_left(s) : -1;
+    }
+    /* What the gap is to: how tall the thing is decides how early a jump has to
+     * start, and only the game knows which enemy it is. -1 alongside a gap of
+     * -1. */
+    if (strcmp(name, "enemy_kind") == 0) {
+        const jm_enemy *e = jm_enemy_ahead(s);
+        return e ? e->kind : -1;
+    }
+    /* How many rows of itself the next pipe's plant has out, 0 when it is
+     * hidden: a bot has to know before it walks into one, and the game only
+     * holds a plant down once the player is over the pipe already. Plants that
+     * are behind the player, or further off than anything ahead of the player is
+     * noticed at, are not in the answer. */
+    if (strcmp(name, "plant_out") == 0) {
+        int rows = 0;
+        for (int i = 0; i < PIPE_SLOTS; i++) {
+            const jumpman_pipe *p = &s->pipes[i];
+            if (p->x == PM_NONE || !p->plant) continue;
+            if ((int)p->x < jm_left(s)) continue;
+            if ((int)p->x > jm_right(s) + ENEMY_WAKE) continue;
+            const int out = jm_plant_rows(p->phase);
+            if (out > rows) rows = out;
+        }
+        return rows;
+    }
+    return -1;
+}
+
+#endif /* ML_GAME_AUTHORING */
 
 /* ---- score, payouts and spawns ----------------------------------------- */
 
@@ -1127,7 +1393,7 @@ static void jm_update(void *state, ml_game_ctx *ctx)
     jm_take_items(s, ctx);
     jm_take_coins(s, ctx);
 
-    if (!s->checkpoint && jm_right(s) >= CHECKPOINT_X) {
+    if (!s->checkpoint && jm_right(s) >= s->checkpoint_x) {
         s->checkpoint = 1;
         ml_ctx_emit_event(ctx, JM_EVENT_CHECKPOINT, 0);
     }
@@ -1393,8 +1659,8 @@ static void jm_draw_checkpoint(ml_canvas *c, const jumpman_state *s)
     const ml_rgb grey = ML_RGB(176, 176, 184);
     const ml_rgb gold = ML_RGB(248, 208, 64);
     const ml_rgb col = s->checkpoint ? gold : grey;
-    jm_fill(c, s->cam, CHECKPOINT_X, top, 1, JUMP_GROUND_ROW - top, col);
-    jm_fill(c, s->cam, CHECKPOINT_X + 1, top, 2, 2, col);
+    jm_fill(c, s->cam, s->checkpoint_x, top, 1, JUMP_GROUND_ROW - top, col);
+    jm_fill(c, s->cam, s->checkpoint_x + 1, top, 2, 2, col);
 }
 
 /* The goal: a pole at the last column of the level and a pennant off its top.

@@ -360,6 +360,8 @@ uint32_t ml_host_tick(const ml_host_session *h)            { return h ? h->tick 
 int      ml_host_player_count(const ml_host_session *h)    { return h ? h->player_count : 0; }
 size_t   ml_host_last_snapshot_len(const ml_host_session *h){ return h ? h->last_snap_len : 0; }
 
+void *ml_host_state(const ml_host_session *h) { return h ? h->state : NULL; }
+
 bool ml_host_is_over(const ml_host_session *h)
 {
     return h && h->game->is_over && h->game->is_over(h->state);

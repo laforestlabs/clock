@@ -16,7 +16,10 @@ STD     := -std=c99
 WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes \
            -Wmissing-prototypes -Wpointer-arith -Wwrite-strings
 INC     := -Iinclude -I../core/include -I../core/host -I../core/ffi
-CFLAGS  := $(STD) $(WARN) $(OPT) $(INC)
+# ML_GAME_AUTHORING compiles the run-time level path into the host build: the
+# level a device plays is compiled in, and only a host build can be handed one
+# by the editor. The firmware's CMakeLists deliberately does not define it.
+CFLAGS  := $(STD) $(WARN) $(OPT) $(INC) -DML_GAME_AUTHORING
 LDLIBS  :=
 
 BUILD    := build/host

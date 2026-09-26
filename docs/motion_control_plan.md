@@ -139,7 +139,7 @@ exact files and call sites, and how to verify — on the host and on the device.
   the dot drifts while tilted and stops when level — not the positional
   behaviour this plan wants.
 - It is compiled everywhere: host CLI/tests, the Flutter shared library
-  (`designer/packages/mirror_core_ffi/src/CMakeLists.txt`), and the firmware
+  (`packages/mirror_core_ffi/src/CMakeLists.txt`), and the firmware
   (`gamekit/CMakeLists.txt`, `fw/game_registry.c:15-24`). It appears in
   `game list` from a real mirror.
 - What 7016ac0 removed was its **entry in the app's game picker**, not the game.
@@ -360,8 +360,9 @@ FFI (like `held_input_test.c`) and asserts, per game:
    three C tests (`host/game_ffi_test.c`, 22 calls; `host/tetris_input_test.c`,
    11; `host/held_input_test.c`, 4 — `host/game_cli.c` and
    `host/breakout_progression_test.c` do not use it) and
-   `designer/lib/src/engine/game_bindings.dart:84` plus the `GameEngine.button`
-   wrapper at `game_engine.dart:120-123`.
+   `packages/mirror_core_ffi/lib/src/game_bindings.dart:84` plus the
+   `GameEngine.button` wrapper at
+   `packages/mirror_core_ffi/lib/src/game_engine.dart:120-123`.
 
 ## Phase 3 — firmware
 

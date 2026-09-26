@@ -104,6 +104,10 @@ uint32_t         ml_host_tick(const ml_host_session *h);
 int              ml_host_player_count(const ml_host_session *h);
 size_t           ml_host_last_snapshot_len(const ml_host_session *h);
 
+/* The game's state, for the harness's own introspection (a named read through
+ * the game; nothing else may touch it). NULL when the session has no state. */
+void            *ml_host_state(const ml_host_session *h);
+
 /* True once the game's optional is_over callback reports a terminal state
  * (game over, or the win state where a game has one); false for a game
  * without the callback. Poll after step; stays true until the session is

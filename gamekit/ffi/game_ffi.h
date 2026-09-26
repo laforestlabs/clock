@@ -108,6 +108,27 @@ ML_GAME_EXPORT const uint8_t *ml_game_render_rgba(ml_game_session *s);
 
 ML_GAME_EXPORT int ml_game_rgba_size(const ml_game_session *s);
 
+/* ------------------------------------------------------- authored levels */
+
+/*
+ * Both of these are development calls and a device never makes either. A build
+ * that does not define ML_GAME_AUTHORING accepts no level (ml_game_set_level
+ * returns 0) and publishes no state (ml_game_state_int returns -1), which is
+ * what the firmware image is built with.
+ */
+
+/*
+ * Hand a game one of its levels, in that game's own wire form, before the
+ * session that plays it is opened. Returns 1 when it was accepted, 0 for an id
+ * with no authored level or a malformed blob, in which case the game keeps the
+ * level it had. len 0 restores the shipped level.
+ */
+ML_GAME_EXPORT int ml_game_set_level(const char *game_id,
+                                     const uint8_t *blob, size_t len);
+
+/* One integer of the session's live game state, by name, or -1. */
+ML_GAME_EXPORT int ml_game_state_int(const ml_game_session *s, const char *name);
+
 #ifdef __cplusplus
 }
 #endif

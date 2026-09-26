@@ -1,0 +1,33 @@
+name: jumpman_editor
+description: Level editor for Jumpman, played against the real game before it is written out.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # The shared native build (core/ and gamekit/) and the game simulation's
+  # Dart face. Shared with the designer, so it lives at the repository root.
+  mirror_core_ffi:
+    path: ../packages/mirror_core_ffi
+  # Utf8 helpers for the C string boundary.
+  ffi: ^2.1.3
+  # Joining the repository path parts.
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  # Level projects are opened and saved through the desktop file dialogs.
+  file_selector: ^1.0.3
+  # The remembered repository and last level directory.
+  shared_preferences: ^2.5.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

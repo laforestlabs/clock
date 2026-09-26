@@ -53,6 +53,12 @@ typedef _IntIntToStrD = Pointer<Utf8> Function(int, int);
 typedef _IntIntToIntC = Int Function(Int, Int);
 typedef _IntIntToIntD = int Function(int, int);
 
+typedef _SetLevelC = Int Function(Pointer<Utf8>, Pointer<Uint8>, Int);
+typedef _SetLevelD = int Function(Pointer<Utf8>, Pointer<Uint8>, int);
+
+typedef _StateIntC = Int Function(_VoidPtr, Pointer<Utf8>);
+typedef _StateIntD = int Function(_VoidPtr, Pointer<Utf8>);
+
 /// Thrown when the game symbols are missing, which means the CMake build did
 /// not compile gamekit/ into the shared library.
 class GameLibraryException implements Exception {
@@ -94,7 +100,11 @@ class GameBindings {
         gameRenderRgba =
             lib.lookupFunction<_PtrToUint8C, _PtrToUint8D>('ml_game_render_rgba'),
         gameRgbaSize =
-            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_rgba_size');
+            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_rgba_size'),
+        gameSetLevel =
+            lib.lookupFunction<_SetLevelC, _SetLevelD>('ml_game_set_level'),
+        gameStateInt =
+            lib.lookupFunction<_StateIntC, _StateIntD>('ml_game_state_int');
 
   final int Function() gameCount;
   final Pointer<Utf8> Function(int) gameId;
@@ -113,6 +123,11 @@ class GameBindings {
   final int Function(_VoidPtr) gameIsOver;
   final Pointer<Uint8> Function(_VoidPtr) gameRenderRgba;
   final int Function(_VoidPtr) gameRgbaSize;
+
+  /// The authoring calls: a build without ML_GAME_AUTHORING still exports both,
+  /// answering 0 and -1. See [GameEngine.setLevel] and [GameEngine.stateInt].
+  final int Function(Pointer<Utf8>, Pointer<Uint8>, int) gameSetLevel;
+  final int Function(_VoidPtr, Pointer<Utf8>) gameStateInt;
 
   static GameBindings? _instance;
 

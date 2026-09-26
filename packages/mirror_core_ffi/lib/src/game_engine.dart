@@ -179,4 +179,45 @@ class GameEngine {
     );
     return completer.future;
   }
+
+  // --------------------------------------------------------- authored levels
+
+  /// Hands game [gameId] one of its levels, in that game's own wire form,
+  /// before the session that plays it is opened. Returns false when the game has
+  /// no authored level or the blob was malformed, in which case the game keeps
+  /// the level it had. A null or empty [blob] restores the shipped level.
+  ///
+  /// A development call: it is what the level editor hands a game it painted a
+  /// level for, and a device never makes it.
+  static bool setLevel(String gameId, [Uint8List? blob]) {
+    final bindings = GameBindings.instance();
+    final id = gameId.toNativeUtf8();
+    Pointer<Uint8> data = nullptr;
+    final length = blob?.length ?? 0;
+    try {
+      if (length > 0) {
+        data = calloc<Uint8>(length);
+        data.asTypedList(length).setAll(0, blob!);
+      }
+      return bindings.gameSetLevel(id, data, length) != 0;
+    } finally {
+      if (data != nullptr) calloc.free(data);
+      calloc.free(id);
+    }
+  }
+
+  /// One integer of this session's live game state, by name, or -1 when the game
+  /// publishes no such value. The names a game publishes are its own; jumpman
+  /// answers "player_x", "camera", "lives" and "status".
+  ///
+  /// A development call, like [setLevel].
+  int stateInt(String name) {
+    _assertLive();
+    final ptr = name.toNativeUtf8();
+    try {
+      return _b.gameStateInt(_handle, ptr);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
 }
