@@ -281,16 +281,14 @@ static void racer_draw(const void *state, const ml_view *view, ml_canvas *c,
     ml_canvas_clear(c, ml_black);
     const int W = c->w, H = c->h;
 
-    const ml_font *num = ml_font_find("digits10");
-    if (!num) num = ml_font_default();
+    const ml_font *num = &ml_font_game8;
     char buf[16];
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
 
     if (s->status == RACER_OVER) {
         /* The board is already cleared: the final score, then the ending. */
         ml_text_draw(c, num, 1, 0, buf, ml_white, ML_SCALE_1X);
-        const ml_font *of = ml_font_find("sans10");
-        if (!of) of = ml_font_default();
+        const ml_font *of = &ml_font_game8;
         ml_text_draw(c, of, (W - ml_text_width(of, "OVER", ML_SCALE_1X)) / 2,
                      17, "OVER", ML_RGB(255, 60, 60), ML_SCALE_1X);
         return;

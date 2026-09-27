@@ -18,6 +18,7 @@ if(ESP_PLATFORM)
             src/net_loopback.c
             src/seats.c
             src/view.c
+            src/font_game8.c
             examples/rally/game_rally.c
             examples/snake/game_snake.c
             examples/tetris/game_tetris.c

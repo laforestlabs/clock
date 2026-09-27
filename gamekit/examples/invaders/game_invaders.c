@@ -557,15 +557,13 @@ static void invaders_draw(const void *state, const ml_view *view, ml_canvas *c,
      * changed, and so the aliens behind it are uncovered half of the intro. */
     if (s->intro == 0 || ((s->intro / 5) & 1) == 0) {
         char buf[16];
-        const ml_font *f = ml_font_find("digits10");
-        if (!f) f = ml_font_default();
+        const ml_font *f = &ml_font_game8;
         snprintf(buf, sizeof(buf), "%u:%u", (unsigned)s->round, (unsigned)s->score);
         ml_text_draw(c, f, 1, 1, buf, pad, ML_SCALE_1X);
     }
 
     if (s->status == INV_OVER) {
-        const ml_font *of = ml_font_find("sans10");
-        if (!of) of = ml_font_default();
+        const ml_font *of = &ml_font_game8;
         int th = ml_text_height(of, ML_SCALE_1X);
         int top = (H - (2 * th + 1)) / 2;
         ml_text_draw(c, of, (W - ml_text_width(of, "GAME", ML_SCALE_1X)) / 2,

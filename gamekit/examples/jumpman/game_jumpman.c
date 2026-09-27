@@ -1909,8 +1909,7 @@ static void jm_draw_player(ml_canvas *c, const jumpman_state *s)
 
 static void jm_draw_hud(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_font *f = ml_font_find("micro7");
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     const ml_rgb hud = ML_RGB(160, 232, 255);
     const ml_rgb gold = ML_RGB(255, 232, 80);
     char buf[8];
@@ -1955,12 +1954,11 @@ static void jm_draw_centered(ml_canvas *c, const ml_font *f, const char *text,
 /* The between-course banner: which course is about to be played. The flag the
  * player just took is behind them and the next course is what the pause is for,
  * so the number and the name are the whole picture. A name wider than the panel
- * - the sans8 face is fixed at one scale - breaks at its space onto two lines,
+ * - the shared game face is fixed at one scale - breaks at its space onto two lines,
  * so the whole name is always readable rather than clipped. */
 static void jm_draw_transition(const jumpman_state *s, ml_canvas *c)
 {
-    const ml_font *f = ml_font_find("sans8");
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     const ml_rgb gold = ML_RGB(255, 232, 80);
     const ml_rgb cyan = ML_RGB(160, 232, 255);
     char buf[16];
@@ -1995,14 +1993,12 @@ static void jm_draw_transition(const jumpman_state *s, ml_canvas *c)
 static void jm_draw_terminal(const jumpman_state *s, ml_canvas *c)
 {
     char buf[8];
-    const ml_font *df = ml_font_find("micro7");
-    if (!df) df = ml_font_default();
+    const ml_font *df = &ml_font_game8;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, df, 1, 0, buf, ML_RGB(255, 255, 255), ML_SCALE_1X);
 
     const char *word = s->status == JM_WON ? "WIN" : "OVER";
-    const ml_font *of = ml_font_find("sans8");
-    if (!of) of = ml_font_default();
+    const ml_font *of = &ml_font_game8;
     const int w = ml_text_width(of, word, ML_SCALE_1X);
     ml_text_draw(c, of, (JUMP_W - w) / 2, 17, word,
                  s->status == JM_WON ? ML_RGB(120, 255, 140) : ML_RGB(255, 128, 144),

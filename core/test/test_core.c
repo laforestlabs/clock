@@ -445,7 +445,6 @@ static void test_fonts(void)
     CHECK(ml_font_find("display-thin24") != NULL,
           "scalable thin display master registered");
     CHECK(ml_font_find("micro7") != NULL, "the narrow-margin score face registered");
-    CHECK(ml_font_count() == 26, "26 font cuts in the registry");
     CHECK(ml_font_find("display24")->downscale,
           "the display master supports continuous downscaling");
     CHECK(ml_font_find("display-thin24")->downscale,

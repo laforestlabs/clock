@@ -291,21 +291,18 @@ static void snake_draw(const void *state, const ml_view *view, ml_canvas *c,
 
     /* score in the corner, drawn after the body so it never hides behind it */
     char buf[8];
-    const ml_font *f = ml_font_find("digits10");
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, f, 1, 1, buf, body, ML_SCALE_1X);
 
     if (s->status == SNAKE_WON) {
-        const ml_font *wf = ml_font_find("sans10");
-        if (!wf) wf = ml_font_default();
+        const ml_font *wf = &ml_font_game8;
         int tw = ml_text_width(wf, "WIN", ML_SCALE_1X);
         int th = ml_text_height(wf, ML_SCALE_1X);
         ml_text_draw(c, wf, (W - tw) / 2, (H - th) / 2, "WIN",
                      ML_RGB(255, 220, 60), ML_SCALE_1X);
     } else if (s->status == SNAKE_DEAD) {
-        const ml_font *of = ml_font_find("sans10");
-        if (!of) of = ml_font_default();
+        const ml_font *of = &ml_font_game8;
         int th = ml_text_height(of, ML_SCALE_1X);
         int top = (H - (2 * th + 1)) / 2;
         ml_text_draw(c, of, (W - ml_text_width(of, "GAME", ML_SCALE_1X)) / 2,

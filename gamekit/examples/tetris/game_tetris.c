@@ -31,19 +31,6 @@
 #define TETRIS_BH 16
 #define TETRIS_CELL 2
 
-/*
- * The face the score is drawn in. Every panel leaves the field a margin of
- * (panel_w - 20) / 2 pixels, which is 20 on the 64px panel the mirror ships:
- * no cut of the digits family holds five figures there (digits10 needs 44px,
- * sans8 29px), and ml_text_draw_clipped answers the overflow with an ellipsis
- * that hides every digit after the first. micro7 is a purpose-drawn 3x7 score
- * face whose 4px advance puts all five figures of a uint16 score in 19px, so
- * the whole number is always on the panel. A build that drops the cut falls
- * back to the body font, which is the old truncating behaviour rather than
- * nothing at all.
- */
-#define TETRIS_SCORE_FONT "micro7"
-
 enum { TETRIS_PLAYING = 0, TETRIS_OVER = 1 };
 
 typedef struct {
@@ -384,24 +371,18 @@ static void tetris_draw(const void *state, const ml_view *view, ml_canvas *c,
         }
     }
 
-    /* score, in the current piece's colour so a new piece resets it. micro7's
-     * 4px advance fits the whole five-figure score in the margin; the clip
-     * stays as the guard for a panel so narrow that even that overflows, where
-     * the alternative is digits painted across the board. */
+    /* The shared game's 4px digit advance fits the full five-figure score in
+     * the margin. Keep the clip for panels too narrow even for that. */
     char buf[8];
-    const ml_font *f = ml_font_find(TETRIS_SCORE_FONT);
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     const int score_w = s->ox - 2;
     if (score_w > 0)
         ml_text_draw_clipped(c, f, 1, 1, score_w, buf, pc, ML_SCALE_1X);
 
     if (s->status == TETRIS_OVER) {
-        const ml_font *of = ml_font_find("sans10");
-        if (!of) of = ml_font_default();
-        /* "GAME OVER" is one pixel wider than the shipped 64px panel, so the
-         * label clips at both edges; two centered lines fit and read the
-         * same. A one-pixel gap keeps the block tight while staying centered */
+        const ml_font *of = &ml_font_game8;
+        /* Two centred lines leave the score visible above the result. */
         ml_rgb over = ML_RGB(255, 60, 60);
         int lh = ml_text_height(of, ML_SCALE_1X);
         int top = (H - (2 * lh + 1)) / 2;

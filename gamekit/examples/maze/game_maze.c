@@ -340,8 +340,7 @@ static void maze_draw_cell(ml_canvas *c, int cell_x, int cell_y, ml_rgb col)
 
 static void maze_draw_hud(ml_canvas *c, const char *text)
 {
-    const ml_font *f = ml_font_find("digits10");
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     ml_text_draw(c, f, 1, 0, text, ml_white, ML_SCALE_1X);
 }
 
@@ -358,8 +357,7 @@ static void maze_draw(const void *state, const ml_view *view, ml_canvas *c,
         snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
         maze_draw_hud(c, buf);
 
-        const ml_font *rf = ml_font_find("sans10");
-        if (!rf) rf = ml_font_default();
+        const ml_font *rf = &ml_font_game8;
         const char *msg = (s->status == MAZE_WON) ? "WIN" : "OVER";
         const ml_rgb col = (s->status == MAZE_WON) ? ML_RGB(0, 220, 0)
                                                    : ML_RGB(255, 60, 60);

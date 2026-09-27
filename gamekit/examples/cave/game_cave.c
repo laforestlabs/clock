@@ -264,13 +264,11 @@ static void cave_update(void *state, ml_game_ctx *ctx)
 static void cave_draw_terminal(const cave_state *s, ml_canvas *c)
 {
     char buf[8];
-    const ml_font *df = ml_font_find("digits10");
-    if (!df) df = ml_font_default();
+    const ml_font *df = &ml_font_game8;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, df, 1, 0, buf, ML_RGB(255, 255, 255), ML_SCALE_1X);
 
-    const ml_font *of = ml_font_find("sans10");
-    if (!of) of = ml_font_default();
+    const ml_font *of = &ml_font_game8;
     int w = ml_text_width(of, "OVER", ML_SCALE_1X);
     ml_text_draw(c, of, (CAVE_COLS - w) / 2, 17, "OVER",
                  ML_RGB(255, 60, 60), ML_SCALE_1X);
@@ -313,8 +311,7 @@ static void cave_draw(const void *state, const ml_view *view, ml_canvas *c,
             ml_canvas_set(c, CAVE_SHIP_X + dx, s->ship_y + dy, ship);
 
     char buf[8];
-    const ml_font *f = ml_font_find("digits10");
-    if (!f) f = ml_font_default();
+    const ml_font *f = &ml_font_game8;
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, f, 1, 0, buf, hud, ML_SCALE_1X);
     for (int i = 0; i < s->lives; i++)

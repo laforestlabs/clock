@@ -562,10 +562,18 @@ restarting the app or mirror.
 
 Jumpman's veneer-oriented palette keeps the background black and uses bright
 multi-channel colours for terrain, enemies and pickups; only inset eyes and
-block markings stay dark. The HUD uses compact 3x7 `micro7` digits, with cyan
-score, gold coin count and coral lives; three pips mark course progress.
-End-screen labels use `sans8`. The original course's geometry and collision
-bounds are unchanged. The editor's map palette matches the game.
+block markings stay dark. All games now share the `game8` face: Jumpman's
+compact 3x7 score digits and `sans8` lettering in one 8-pixel line cell. Scores,
+punctuation, course banners and end-screen labels use the same font; five-digit
+Tetris scores still fit the 19-pixel margin. Jumpman keeps cyan score, gold coin
+count and coral lives; three pips mark course progress. Its original course's
+geometry and collision bounds are unchanged. The editor's map palette matches
+the game.
+
+The shared face is authored in `gamekit/fonts/game8.font` and generated into
+`gamekit/src/font_game8.c` by `tools/fontgen.py`. It is linked directly by the
+games, not registered in the clock/layout font catalogue, so automatic font
+selection outside games remains unchanged. Probe draws no text.
 Preview attenuation with `game-cli jumpman --led --mirror 20`; this
 is a visibility check, not a calibration for a particular veneer or panel.
 

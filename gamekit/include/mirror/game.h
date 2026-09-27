@@ -21,11 +21,17 @@
 
 #include "mirror/canvas.h"
 #include "mirror/color.h"
+#include "mirror/font.h"
 #include "mirror/model.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Universal game text: Jumpman's compact lettering and 3px-wide score digits.
+ * Link the generated face directly: games must never silently fall back to a
+ * larger font whose scores or labels would clip on the panel. */
+extern const ml_font ml_font_game8;
 
 /* ---- size policy: how a game's logical space meets the physical panel ---- */
 

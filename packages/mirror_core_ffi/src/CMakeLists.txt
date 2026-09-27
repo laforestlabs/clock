@@ -92,6 +92,7 @@ add_library(mirror_core_ffi SHARED
     "${MIRROR_CORE}/ffi/mirror_ffi.c"
     # gamekit: runtime, view, loopback, and the games compiled in.
     "${MIRROR_GAMEKIT}/src/view.c"
+    "${MIRROR_GAMEKIT}/src/font_game8.c"
     "${MIRROR_GAMEKIT}/src/runtime.c"
     "${MIRROR_GAMEKIT}/src/net_loopback.c"
     "${MIRROR_GAMEKIT}/examples/rally/game_rally.c"

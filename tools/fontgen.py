@@ -88,6 +88,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FONT_SRC_DIR = ROOT / "fonts"
 FONT_OUT_DIR = ROOT / "core" / "src" / "fonts"
+GAME_FONT_SRC_DIR = ROOT / "gamekit" / "fonts"
+GAME_FONT_OUT_DIR = ROOT / "gamekit" / "src"
 
 
 class FontError(Exception):
@@ -324,7 +326,7 @@ class Font:
         out.append("/*")
         out.append(f" * font_{ident}.c - GENERATED FILE, DO NOT EDIT.")
         out.append(" *")
-        out.append(f" * Source:      fonts/{self.path.name}")
+        out.append(f" * Source:      {self.path.relative_to(ROOT)}")
         out.append(" * Regenerate:  python3 tools/fontgen.py")
         out.append(" *")
         out.append(f" * {self.count} glyphs, codepoints {self.first} to {max(self.glyphs)}, role {self.role}, ")
@@ -431,11 +433,12 @@ def main(argv: list[str]) -> int:
 
     try:
         fonts = [Font(path) for path in sources]
+        game_fonts = [Font(path) for path in sorted(GAME_FONT_SRC_DIR.glob("*.font"))]
     except FontError as exc:
         print(f"fontgen: {exc}", file=sys.stderr)
         return 1
 
-    names = [f.name for f in fonts]
+    names = [f.name for f in fonts + game_fonts]
     if len(set(names)) != len(names):
         print(f"fontgen: duplicate @name among {names}", file=sys.stderr)
         return 1
@@ -445,7 +448,7 @@ def main(argv: list[str]) -> int:
     # smoothness (how it scales). A cut that disagrees splits the family in a
     # way the runtime cannot see.
     by_family: dict[str, Font] = {}
-    for font in fonts:
+    for font in fonts + game_fonts:
         first = by_family.setdefault(font.family, font)
         if (first.role != font.role or first.smooth != font.smooth or
                 first.downscale != font.downscale):
@@ -462,6 +465,12 @@ def main(argv: list[str]) -> int:
     FONT_OUT_DIR.mkdir(parents=True, exist_ok=True)
     outputs = {FONT_OUT_DIR / f"font_{f.name.replace('-', '_')}.c": f.emit_c() for f in fonts}
     outputs[FONT_OUT_DIR / "font_registry.c"] = emit_registry(fonts)
+    # Game-only faces must not enter the layout registry: otherwise automatic
+    # clock/agenda font selection can unexpectedly adopt compact HUD digits.
+    outputs.update({
+        GAME_FONT_OUT_DIR / f"font_{f.name.replace('-', '_')}.c": f.emit_c()
+        for f in game_fonts
+    })
 
     stale = []
     for path, text in outputs.items():
@@ -479,7 +488,7 @@ def main(argv: list[str]) -> int:
         print("fontgen: generated files are up to date")
         return 0
 
-    for font in fonts:
+    for font in fonts + game_fonts:
         total = sum(((g.width + 7) // 8) * font.height * font.planes
                     for g in font.glyphs.values())
         print(
@@ -487,7 +496,7 @@ def main(argv: list[str]) -> int:
             f"cell {font.height:2d}px  baseline {font.baseline:2d}  "
             f"{font.planes}p  {total:5d} bytes"
         )
-    print(f"fontgen: wrote {len(outputs)} files to {FONT_OUT_DIR.relative_to(ROOT)}")
+    print(f"fontgen: wrote {len(outputs)} files to core and gamekit")
     return 0
 
 

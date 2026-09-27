@@ -361,8 +361,7 @@ static void breakout_draw(const void *state, const ml_view *view, ml_canvas *c,
      * changed, and so the bricks behind it are uncovered half of the intro. */
     if (s->intro == 0 || ((s->intro / 5) & 1) == 0) {
         char buf[16];
-        const ml_font *f = ml_font_find("digits10");
-        if (!f) f = ml_font_default();
+        const ml_font *f = &ml_font_game8;
         snprintf(buf, sizeof(buf), "%u:%u", (unsigned)s->level, (unsigned)s->score);
         ml_text_draw(c, f, 1, 1, buf, ML_RGB(0, 180, 255), ML_SCALE_1X);
     }
@@ -370,10 +369,8 @@ static void breakout_draw(const void *state, const ml_view *view, ml_canvas *c,
         ml_canvas_set(c, 1 + i, H - 1, ML_RGB(220, 220, 220));
 
     if (s->status == BREAKOUT_OVER) {
-        /* Two centred lines: "GAME OVER" on one line does not fit the shipped
-         * 64-pixel panel at the smallest font and was clipped. */
-        const ml_font *of = ml_font_find("sans10");
-        if (!of) of = ml_font_default();
+        /* Two centred result lines keep the score visible above them. */
+        const ml_font *of = &ml_font_game8;
         int th = ml_text_height(of, ML_SCALE_1X);
         int w1 = ml_text_width(of, "GAME", ML_SCALE_1X);
         int w2 = ml_text_width(of, "OVER", ML_SCALE_1X);

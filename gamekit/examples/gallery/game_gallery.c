@@ -283,8 +283,7 @@ static void gallery_draw(const void *state, const ml_view *view, ml_canvas *c,
     ml_canvas_clear(c, ml_black);
     const int W = c->w, H = c->h;
 
-    const ml_font *digits = ml_font_find("digits10");
-    if (!digits) digits = ml_font_default();
+    const ml_font *digits = &ml_font_game8;
     const ml_rgb hud = ML_RGB(255, 255, 255);
     char buf[8];
 
@@ -293,8 +292,7 @@ static void gallery_draw(const void *state, const ml_view *view, ml_canvas *c,
          * cleared, so the clock bar and the crosshair are gone with it. */
         snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
         ml_text_draw(c, digits, 1, 0, buf, hud, ML_SCALE_1X);
-        const ml_font *word = ml_font_find("sans10");
-        if (!word) word = ml_font_default();
+        const ml_font *word = &ml_font_game8;
         const int w = ml_text_width(word, "OVER", ML_SCALE_1X);
         ml_text_draw(c, word, (W - w) / 2, 17, "OVER",
                      ML_RGB(255, 60, 60), ML_SCALE_1X);

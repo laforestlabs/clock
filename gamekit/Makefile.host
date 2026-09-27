@@ -107,7 +107,7 @@ $(BUILD)/breakout_bounce_test: host/breakout_bounce_test.c $(BUILD)/ffi/game_ffi
 # Fixtures that include a game's own translation unit and provide the ctx services
 # themselves: they link the view helper and the core, never the runtime (whose
 # ml_ctx_* the fixture replaces) and never the game's own object.
-FIXTURE_DEPS := $(BUILD)/src/view.o $(CORE_LIB)
+FIXTURE_DEPS := $(BUILD)/src/view.o $(BUILD)/src/font_game8.o $(CORE_LIB)
 
 $(BUILD)/invaders_rounds_test: host/invaders_rounds_test.c $(FIXTURE_DEPS)
 	@mkdir -p $(dir $@)
