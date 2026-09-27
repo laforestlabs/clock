@@ -67,6 +67,7 @@
 // produced at all says so, with the way back to setup, instead of going blank.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -377,8 +378,7 @@ class _GameScreenState extends State<GameScreen>
   /// reserves its spacing in.
   static const double _padGap = 8;
 
-  /// The largest a pad button ever grows, so the controls stay the same size
-  /// on a tablet as on a phone.
+  /// Tetris's legacy manual-pad cap, also the width of compact axis readouts.
   static const double _maxPadSide = 96;
 
   /// The wire labels that mean movement. Everything else a round declares
@@ -5651,11 +5651,8 @@ class _GameScreenState extends State<GameScreen>
 
   // --------------------------------------------------------- control surface
 
-  /// The play surface shared by a local round and a mirror round: the
-  /// movement grid under the left thumb, the action column under the right,
-  /// and the local panel in the middle - nothing there when the mirror is the
-  /// display. Both modes size their buttons with the same formula, so a
-  /// control is the same size wherever it is drawn.
+  /// Shared local and mirror controls. Non-Tetris pads fill the available
+  /// height, with rectangular direction targets and a large action column.
   ///
   /// A surface that cannot give every button its 48-pixel minimum is refused
   /// rather than clipped: nothing is clamped upward into an overflow, and
@@ -5672,6 +5669,67 @@ class _GameScreenState extends State<GameScreen>
       minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final large = _runningGameId != 'tetris';
+          final actions = specs.where((spec) => !spec.isDirection).toList();
+          final previewWidth =
+              preview == null ? 0.0 : constraints.maxWidth * .3;
+          final readoutWidth =
+              actions.isEmpty && axes.isNotEmpty ? _maxPadSide : 0.0;
+          final groups =
+              (directions.isEmpty ? 0 : 1) + (actions.isEmpty ? 0 : 1);
+          final groupWidth = (constraints.maxWidth -
+                  previewWidth -
+                  readoutWidth -
+                  2 * _padGap) /
+              (groups == 0 ? 1 : groups);
+          final horizontal = directions
+              .any((spec) => spec.wire == 'Left' || spec.wire == 'Right');
+          final vertical = directions
+              .any((spec) => spec.wire == 'Up' || spec.wire == 'Down');
+          final movementSize = Size(
+            (groupWidth - (horizontal ? _padGap : 0)) / (horizontal ? 2 : 1),
+            (constraints.maxHeight - (vertical ? _padGap : 0)) /
+                (vertical ? 2 : 1),
+          );
+          if (large) {
+            final actionHeight = (constraints.maxHeight -
+                    axes.length *
+                        (MediaQuery.textScalerOf(context).scale(32) + 16) -
+                    (actions.length - 1).clamp(0, actions.length) * _padGap) /
+                (actions.isEmpty ? 1 : actions.length);
+            if ((directions.isNotEmpty &&
+                    movementSize.shortestSide < _minPadSide) ||
+                (actions.isNotEmpty &&
+                    (groupWidth < _minPadSide || actionHeight < _minPadSide))) {
+              _noteInsufficientSpace();
+              return _insufficientSpaceView();
+            }
+            return Row(
+              children: <Widget>[
+                if (directions.isNotEmpty)
+                  _MovementPad(
+                    specs: directions,
+                    side: movementSize.shortestSide,
+                    size: movementSize,
+                    gap: _padGap,
+                    heldAt: _heldAt,
+                    onTrack: _trackPadPointer,
+                    onEnd: _releasePointer,
+                    onActivate: _activatePad,
+                  ),
+                const SizedBox(width: _padGap),
+                if (preview != null)
+                  SizedBox(width: previewWidth, child: preview)
+                else if (groups < 2)
+                  const Spacer(),
+                const SizedBox(width: _padGap),
+                if (actions.isNotEmpty || axes.isNotEmpty)
+                  _buildActionColumn(
+                      specs, axes, actions.isEmpty ? readoutWidth : groupWidth,
+                      size: Size(groupWidth, actionHeight)),
+              ],
+            );
+          }
           final side = _padSide(
             availableWidth: constraints.maxWidth,
             availableHeight: constraints.maxHeight,
@@ -5709,8 +5767,9 @@ class _GameScreenState extends State<GameScreen>
   Widget _buildActionColumn(
     List<_PadSpec> specs,
     List<_PadSpec> axes,
-    double side,
-  ) {
+    double side, {
+    Size? size,
+  }) {
     final actions = <_PadSpec>[
       for (final spec in specs)
         if (!spec.isDirection) spec,
@@ -5723,6 +5782,7 @@ class _GameScreenState extends State<GameScreen>
           _ActionButton(
             spec: actions[i],
             side: side,
+            size: size,
             pressed: _heldAt(actions[i].index),
             onPress: _pressAction,
             onMove: _moveAction,
@@ -5827,13 +5887,15 @@ class _GameScreenState extends State<GameScreen>
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final rows = actions.length + axes.length;
-                final byHeight = (constraints.maxHeight - rows * _padGap) /
-                    (rows == 0 ? 1 : rows);
-                final byWidth = constraints.maxWidth -
-                    (preview == null ? 0 : 128 + _padGap);
-                final available = byHeight < byWidth ? byHeight : byWidth;
-                final side = available < _maxPadSide ? available : _maxPadSide;
+                final width =
+                    constraints.maxWidth * (preview == null ? 1 : .5) - _padGap;
+                final height = (constraints.maxHeight -
+                        axes.length *
+                            (MediaQuery.textScalerOf(context).scale(32) + 16) -
+                        (actions.length - 1).clamp(0, actions.length) *
+                            _padGap) /
+                    (actions.isEmpty ? 1 : actions.length);
+                final side = width < height ? width : height;
                 if (side < _minPadSide) {
                   _noteInsufficientSpace();
                   return _insufficientSpaceView();
@@ -5845,7 +5907,8 @@ class _GameScreenState extends State<GameScreen>
                     Expanded(child: preview ?? const SizedBox.shrink()),
                     if (actions.isNotEmpty || axes.isNotEmpty) ...<Widget>[
                       const SizedBox(width: _padGap),
-                      _buildActionColumn(_padSpecs(), axes, side),
+                      _buildActionColumn(_padSpecs(), axes, width,
+                          size: Size(width, height)),
                     ],
                   ],
                 );
@@ -6252,6 +6315,7 @@ class _MovementPad extends StatelessWidget {
   const _MovementPad({
     required this.specs,
     required this.side,
+    this.size,
     required this.gap,
     required this.heldAt,
     required this.onTrack,
@@ -6262,6 +6326,7 @@ class _MovementPad extends StatelessWidget {
   /// The directions this round declares, keyed by their wire labels.
   final List<_PadSpec> specs;
   final double side;
+  final Size? size;
   final double gap;
 
   /// Whether a control is held right now, for the pressed state.
@@ -6275,9 +6340,21 @@ class _MovementPad extends StatelessWidget {
 
   final void Function(_PadSpec spec) onActivate;
 
-  /// Where one direction sits in the 3x3 grid. The centre is deliberately
-  /// empty: a d-pad with no fifth button.
+  /// Large pads pair horizontal and vertical directions in compact rows.
+  /// Tetris retains its original three-by-three directional grid.
   Offset _cell(String wire) {
+    final cellSize = size;
+    if (cellSize != null) {
+      final horizontal =
+          specs.any((spec) => spec.wire == 'Left' || spec.wire == 'Right');
+      return switch (wire) {
+        'Right' => Offset(cellSize.width + gap, 0),
+        'Up' => Offset(0, horizontal ? cellSize.height + gap : 0),
+        'Down' =>
+          Offset(horizontal ? cellSize.width + gap : 0, cellSize.height + gap),
+        _ => Offset.zero,
+      };
+    }
     final step = side + gap;
     switch (wire) {
       case 'Up':
@@ -6297,7 +6374,7 @@ class _MovementPad extends StatelessWidget {
   /// the empty centre, and anywhere outside the grid.
   int? _hit(Offset point) {
     for (final spec in specs) {
-      final rect = _cell(spec.wire) & Size.square(side);
+      final rect = _cell(spec.wire) & (size ?? Size.square(side));
       if (rect.contains(point)) return spec.index;
     }
     return null;
@@ -6306,6 +6383,18 @@ class _MovementPad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final box = 3 * side + 2 * gap;
+    final width = size == null
+        ? box
+        : specs.fold<double>(
+            0,
+            (extent, spec) =>
+                math.max(extent, _cell(spec.wire).dx + size!.width));
+    final height = size == null
+        ? box
+        : specs.fold<double>(
+            0,
+            (extent, spec) =>
+                math.max(extent, _cell(spec.wire).dy + size!.height));
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: (event) =>
@@ -6315,8 +6404,8 @@ class _MovementPad extends StatelessWidget {
       onPointerUp: (event) => onEnd(event.pointer),
       onPointerCancel: (event) => onEnd(event.pointer),
       child: SizedBox(
-        width: box,
-        height: box,
+        width: width,
+        height: height,
         child: Stack(
           children: <Widget>[
             for (final spec in specs)
@@ -6327,6 +6416,7 @@ class _MovementPad extends StatelessWidget {
                   key: ValueKey<String>('control-${spec.wire}'),
                   spec: spec,
                   side: side,
+                  size: size,
                   pressed: heldAt(spec.index),
                   onActivate: onActivate,
                 ),

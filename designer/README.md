@@ -363,6 +363,11 @@ right side, with the local preview between them. Both touch areas extend almost
 the full height of the play area; when controlling the mirror, each fills nearly
 half the available width.
 
+Other games use large rounded rectangular touch controls too. Manual directions
+fill the available height in paired rows, and action buttons expand beside the
+preview rather than stopping at the old small circular-pad size. Touch actions
+remain large in motion mode; tilt readouts stay separate from the buttons.
+
 Pause retains the round. Returning from app suspension does not resume it.
 Help and **Display & diagnostics** pause before opening and leave the round paused
 when dismissed. The overflow menu contains Restart, Choose game, and diagnostics;
