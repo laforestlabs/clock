@@ -1421,23 +1421,23 @@ static void jm_fill(ml_canvas *c, int cam, int x, int y, int w, int h, ml_rgb co
 }
 
 /* One palette for every sprite in the game, so a creature is a picture in the
- * source and nothing else. Letters follow the file's module comment; 'a' and
- * 'n' are the goomba's own two browns, kept from the blob it grew out of. */
+ * source and nothing else. Bright, multi-channel colours survive veneer loss;
+ * only inset eyes and block marks stay dark. The background stays unlit. */
 static ml_rgb jm_sprite_col(char ch)
 {
     switch (ch) {
-    case 'r': return ML_RGB(224, 56, 48);   /* red: cap, plant head */
-    case 's': return ML_RGB(252, 200, 152); /* skin */
-    case 'd': return ML_RGB(56, 96, 208);   /* denim */
-    case 'b': return ML_RGB(112, 68, 36);   /* boot brown */
-    case 'k': return ML_RGB(24, 24, 24);    /* dark: the player's eye */
+    case 'r': return ML_RGB(255, 112, 128);   /* red: cap, plant head */
+    case 's': return ML_RGB(255, 224, 160); /* skin */
+    case 'd': return ML_RGB(64, 208, 255);   /* denim */
+    case 'b': return ML_RGB(255, 176, 80);   /* amber boots */
+    case 'k': return ML_RGB(0, 0, 0);    /* dark: the player's eye */
     case 'w': return ML_RGB(255, 248, 240); /* white */
-    case 'g': return ML_RGB(56, 200, 88);   /* green: koopa and shell */
-    case 'h': return ML_RGB(24, 128, 56);   /* dark green */
-    case 'y': return ML_RGB(248, 208, 64);  /* yellow: the koopa's head */
-    case 'p': return ML_RGB(252, 200, 152); /* cream: the mushroom's stem */
-    case 'a': return ML_RGB(64, 40, 26);    /* the goomba's cap */
-    case 'n': return ML_RGB(104, 64, 44);   /* the goomba's body */
+    case 'g': return ML_RGB(96, 255, 128);   /* green: koopa and shell */
+    case 'h': return ML_RGB(32, 208, 160);   /* teal detail */
+    case 'y': return ML_RGB(255, 232, 80);  /* yellow: the koopa's head */
+    case 'p': return ML_RGB(255, 224, 160); /* cream: the mushroom's stem */
+    case 'a': return ML_RGB(255, 176, 64);    /* the goomba's orange cap */
+    case 'n': return ML_RGB(255, 128, 64);   /* the goomba's body */
     default:  return ML_RGB(0, 0, 0);       /* unreachable: sprite data only */
     }
 }
@@ -1462,9 +1462,9 @@ static const char *const jm_spr_mushroom[ITEM_H] = { ".rr.", "rwrw", "rrrr", ".p
 
 static void jm_draw_ground(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb grass = ML_RGB(72, 176, 80);
-    const ml_rgb dirt  = ML_RGB(120, 72, 40);
-    const ml_rgb dark  = ML_RGB(84, 48, 26);
+    const ml_rgb grass = ML_RGB(160, 255, 80);
+    const ml_rgb dirt  = ML_RGB(240, 168, 80);
+    const ml_rgb dark  = ML_RGB(224, 128, 64);
     const int cam = s->cam;
 
     for (int x = cam; x < cam + JUMP_W; x++) {
@@ -1482,9 +1482,9 @@ static void jm_draw_ground(ml_canvas *c, const jumpman_state *s)
  * across the top and a highlight down the left edge. */
 static void jm_draw_pipes(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb body  = ML_RGB(40, 184, 72);
-    const ml_rgb rim   = ML_RGB(120, 240, 144);
-    const ml_rgb shade = ML_RGB(24, 120, 48);
+    const ml_rgb body  = ML_RGB(64, 240, 176);
+    const ml_rgb rim   = ML_RGB(176, 255, 224);
+    const ml_rgb shade = ML_RGB(32, 208, 160);
     const int cam = s->cam;
 
     for (int i = 0; i < PIPE_SLOTS; i++) {
@@ -1504,7 +1504,7 @@ static void jm_draw_pipes(ml_canvas *c, const jumpman_state *s)
  * and its stem down the pipe's middle to the rim. */
 static void jm_draw_plants(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb stem = ML_RGB(24, 120, 48);
+    const ml_rgb stem = ML_RGB(32, 208, 160);
     const int cam = s->cam;
 
     for (int i = 0; i < PIPE_SLOTS; i++) {
@@ -1530,15 +1530,15 @@ static void jm_draw_plants(ml_canvas *c, const jumpman_state *s)
  */
 static void jm_draw_blocks(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb brick = ML_RGB(196, 108, 48);
-    const ml_rgb lit   = ML_RGB(236, 160, 88);
-    const ml_rgb stone = ML_RGB(152, 152, 160);
-    const ml_rgb stone_lit = ML_RGB(200, 200, 208);
-    const ml_rgb gold  = ML_RGB(248, 208, 64);
-    const ml_rgb gold_lit = ML_RGB(255, 240, 160);
-    const ml_rgb used  = ML_RGB(96, 88, 80);
-    const ml_rgb used_lit = ML_RGB(128, 120, 112);
-    const ml_rgb mark  = ML_RGB(120, 84, 8);
+    const ml_rgb brick = ML_RGB(255, 144, 80);
+    const ml_rgb lit   = ML_RGB(255, 208, 128);
+    const ml_rgb stone = ML_RGB(128, 208, 255);
+    const ml_rgb stone_lit = ML_RGB(208, 240, 255);
+    const ml_rgb gold  = ML_RGB(255, 232, 80);
+    const ml_rgb gold_lit = ML_RGB(255, 248, 176);
+    const ml_rgb used  = ML_RGB(160, 144, 240);
+    const ml_rgb used_lit = ML_RGB(208, 192, 255);
+    const ml_rgb mark  = ML_RGB(64, 32, 0);
     const int cam = s->cam;
 
     for (int x = cam; x < cam + JUMP_W; ) {
@@ -1579,7 +1579,7 @@ static void jm_draw_blocks(ml_canvas *c, const jumpman_state *s)
 
 static void jm_draw_pops(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb gold = ML_RGB(255, 216, 64);
+    const ml_rgb gold = ML_RGB(255, 232, 80);
     const ml_rgb glint = ML_RGB(255, 248, 200);
     for (int i = 0; i < POP_SLOTS; i++) {
         const jm_pop *p = &s->pop[i];
@@ -1591,7 +1591,7 @@ static void jm_draw_pops(ml_canvas *c, const jumpman_state *s)
 
 static void jm_draw_coins(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb gold = ML_RGB(255, 216, 64);
+    const ml_rgb gold = ML_RGB(255, 232, 80);
     const ml_rgb glint = ML_RGB(255, 248, 200);
     const int cam = s->cam;
     for (int i = 0; i < COIN_SLOTS; i++) {
@@ -1619,8 +1619,8 @@ static void jm_draw_items(ml_canvas *c, const jumpman_state *s)
  * slides, which is the whole of its spin at four pixels across. */
 static void jm_draw_shell(ml_canvas *c, const jumpman_state *s, const jm_enemy *e)
 {
-    const ml_rgb rim  = ML_RGB(56, 200, 88);
-    const ml_rgb dark = ML_RGB(24, 128, 56);
+    const ml_rgb rim  = ML_RGB(96, 255, 128);
+    const ml_rgb dark = ML_RGB(32, 208, 160);
     const int x = e->x >> 8, y = e->y >> 8;
     const int spin = e->state == ES_SLIDE ? (e->anim >> 2) & 3 : 1;
     jm_fill(c, s->cam, x, y, ENEMY_W, 1, rim);
@@ -1651,13 +1651,13 @@ static void jm_draw_enemies(ml_canvas *c, const jumpman_state *s)
     }
 }
 
-/* The checkpoint: a short pole and pennant, grey until the player passes it and
+/* The checkpoint: a short pole and pennant, cyan until the player passes it and
  * gold from then on. */
 static void jm_draw_checkpoint(ml_canvas *c, const jumpman_state *s)
 {
     const int top = 12;
-    const ml_rgb grey = ML_RGB(176, 176, 184);
-    const ml_rgb gold = ML_RGB(248, 208, 64);
+    const ml_rgb grey = ML_RGB(128, 224, 255);
+    const ml_rgb gold = ML_RGB(255, 232, 80);
     const ml_rgb col = s->checkpoint ? gold : grey;
     jm_fill(c, s->cam, s->checkpoint_x, top, 1, JUMP_GROUND_ROW - top, col);
     jm_fill(c, s->cam, s->checkpoint_x + 1, top, 2, 2, col);
@@ -1667,8 +1667,8 @@ static void jm_draw_checkpoint(ml_canvas *c, const jumpman_state *s)
  * Touching the pole is what ends the run. */
 static void jm_draw_flag(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb pole  = ML_RGB(216, 216, 224);
-    const ml_rgb cloth = ML_RGB(240, 72, 64);
+    const ml_rgb pole  = ML_RGB(208, 240, 255);
+    const ml_rgb cloth = ML_RGB(255, 112, 128);
     const int top = JUMP_GROUND_ROW - 9;
     jm_fill(c, s->cam, FLAG_X, top, 1, JUMP_GROUND_ROW - top, pole);
     for (int i = 0; i < 3; i++)
@@ -1683,11 +1683,11 @@ static void jm_draw_flag(ml_canvas *c, const jumpman_state *s)
  * skipped on every other four-tick block. */
 static void jm_draw_player(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_rgb cap   = ML_RGB(224, 56, 48);
-    const ml_rgb skin  = ML_RGB(252, 200, 152);
-    const ml_rgb denim = ML_RGB(56, 96, 208);
-    const ml_rgb boots = ML_RGB(112, 68, 36);
-    const ml_rgb eye   = ML_RGB(24, 24, 24);
+    const ml_rgb cap   = ML_RGB(255, 112, 128);
+    const ml_rgb skin  = ML_RGB(255, 224, 160);
+    const ml_rgb denim = ML_RGB(64, 208, 255);
+    const ml_rgb boots = ML_RGB(255, 176, 80);
+    const ml_rgb eye   = ML_RGB(0, 0, 0);
     const int x = s->px >> 8;
     const int y = s->py >> 8;
     const int cam = s->cam;
@@ -1707,10 +1707,10 @@ static void jm_draw_player(ml_canvas *c, const jumpman_state *s)
 
 static void jm_draw_hud(ml_canvas *c, const jumpman_state *s)
 {
-    const ml_font *f = ml_font_find("digits10");
+    const ml_font *f = ml_font_find("micro7");
     if (!f) f = ml_font_default();
-    const ml_rgb hud = ML_RGB(255, 255, 255);
-    const ml_rgb gold = ML_RGB(255, 216, 64);
+    const ml_rgb hud = ML_RGB(160, 232, 255);
+    const ml_rgb gold = ML_RGB(255, 232, 80);
     char buf[8];
 
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
@@ -1719,26 +1719,26 @@ static void jm_draw_hud(ml_canvas *c, const jumpman_state *s)
     /* The coin count wears a coin, so the two digits beside it need no label. */
     ml_canvas_fill_rect(c, ML_RECT(33, 4, 2, 2), gold);
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->coin_count);
-    ml_text_draw(c, f, 37, 0, buf, hud, ML_SCALE_1X);
+    ml_text_draw(c, f, 37, 0, buf, gold, ML_SCALE_1X);
 
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->lives);
-    ml_text_draw(c, f, 58, 0, buf, hud, ML_SCALE_1X);
+    ml_text_draw(c, f, 58, 0, buf, jm_sprite_col('r'), ML_SCALE_1X);
 }
 
 static void jm_draw_terminal(const jumpman_state *s, ml_canvas *c)
 {
     char buf[8];
-    const ml_font *df = ml_font_find("digits10");
+    const ml_font *df = ml_font_find("micro7");
     if (!df) df = ml_font_default();
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->score);
     ml_text_draw(c, df, 1, 0, buf, ML_RGB(255, 255, 255), ML_SCALE_1X);
 
     const char *word = s->status == JM_WON ? "WIN" : "OVER";
-    const ml_font *of = ml_font_find("sans10");
+    const ml_font *of = ml_font_find("sans8");
     if (!of) of = ml_font_default();
     const int w = ml_text_width(of, word, ML_SCALE_1X);
     ml_text_draw(c, of, (JUMP_W - w) / 2, 17, word,
-                 s->status == JM_WON ? ML_RGB(120, 255, 140) : ML_RGB(255, 60, 60),
+                 s->status == JM_WON ? ML_RGB(120, 255, 140) : ML_RGB(255, 128, 144),
                  ML_SCALE_1X);
 }
 

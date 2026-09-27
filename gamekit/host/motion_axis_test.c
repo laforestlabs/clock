@@ -708,16 +708,17 @@ static void test_cave(void)
 
 /* ---- jumpman ------------------------------------------------------------ */
 
-/* The leftmost column of the player on the panel. The cap is red, and the
- * boots that share it are in the same columns, so the scan lands on the same
- * edge either way. The level's flag is red too, but it stands at the end of a
- * 256-column level and the camera never gets near it inside 30 columns. */
+/* The leftmost coral pixel of the player on the panel. Blue exceeds green in
+ * the cap, unlike the orange enemies and terrain. The matching goal flag is
+ * at the far end of the level, outside this motion script's opening window. */
 static int jumpman_player_x(ml_game_session *s)
 {
     const uint8_t *rgba = ml_game_render_rgba(s);
     for (int x = 0; x < 50; x++)
-        for (int y = 10; y < PANEL_H; y++)
-            if (lit(rgba, x, y, 1, 0, 0)) return x;
+        for (int y = 10; y < PANEL_H; y++) {
+            const uint8_t *p = rgba + ((size_t)y * PANEL_W + x) * 4;
+            if (p[0] > 200 && p[0] > p[2] && p[2] > p[1]) return x;
+        }
     return -1;
 }
 

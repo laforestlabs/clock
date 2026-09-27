@@ -542,6 +542,14 @@ hit consumes one of three lives, reloads the authored level, and restarts at the
 checkpoint. Scores cap at 9999; terminal boards show the score and `OVER` or
 `WIN`. Replay belongs to the app.
 
+Jumpman's veneer-oriented palette keeps the background black and uses bright
+multi-channel colours for terrain, enemies and pickups; only inset eyes and
+block markings stay dark. The HUD uses compact 3x7 `micro7` digits, with cyan
+score, gold coin count and coral lives; end-screen labels use `sans8`. Level
+geometry and collision bounds are unchanged. The editor's map palette matches
+the game. Preview attenuation with `game-cli jumpman --led --mirror 20`; this
+is a visibility check, not a calibration for a particular veneer or panel.
+
 Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
 Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90;
 4 for Tetris, whose demo does not press anything before tick 4, so its capture is

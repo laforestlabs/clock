@@ -532,29 +532,29 @@ class _LevelPainter extends CustomPainter {
 // after the C functions that use them, so a mismatch is a visible diff rather
 // than a guessed colour.
 
-const Color _grass = Color(0xFF48B050); // jm_draw_ground: 72,176,80
-const Color _dirt = Color(0xFF784828); // 120,72,40
-const Color _dirtDark = Color(0xFF54301A); // 84,48,26
-const Color _pipeBody = Color(0xFF28B848); // jm_draw_pipes: 40,184,72
-const Color _pipeRim = Color(0xFF78F090); // 120,240,144
-const Color _pipeShade = Color(0xFF187830); // 24,120,48
-const Color _brick = Color(0xFFC46C30); // jm_draw_blocks: 196,108,48
-const Color _brickLit = Color(0xFFECA058); // 236,160,88
-const Color _stone = Color(0xFF9898A0); // 152,152,160
-const Color _stoneLit = Color(0xFFC8C8D0); // 200,200,208
-const Color _coin = Color(0xFFFFD840); // 255,216,64 (coins and gold blocks)
-const Color _goldLit = Color(0xFFFFF0A0); // 255,240,160
-const Color _used = Color(0xFF605850); // 96,88,80
-const Color _usedLit = Color(0xFF807870); // 128,120,112
-const Color _mark = Color(0xFF785408); // 120,84,8
+const Color _grass = Color(0xFFA0FF50); // jm_draw_ground: 160,255,80
+const Color _dirt = Color(0xFFF0A850); // 240,168,80
+const Color _dirtDark = Color(0xFFE08040); // 224,128,64
+const Color _pipeBody = Color(0xFF40F0B0); // jm_draw_pipes: 64,240,176
+const Color _pipeRim = Color(0xFFB0FFE0); // 176,255,224
+const Color _pipeShade = Color(0xFF20D0A0); // 32,208,160
+const Color _brick = Color(0xFFFF9050); // jm_draw_blocks: 255,144,80
+const Color _brickLit = Color(0xFFFFD080); // 255,208,128
+const Color _stone = Color(0xFF80D0FF); // 128,208,255
+const Color _stoneLit = Color(0xFFD0F0FF); // 208,240,255
+const Color _coin = Color(0xFFFFE850); // 255,232,80 (coins and gold blocks)
+const Color _goldLit = Color(0xFFFFF8B0); // 255,248,176
+const Color _used = Color(0xFFA090F0); // 160,144,240
+const Color _usedLit = Color(0xFFD0C0FF); // 208,192,255
+const Color _mark = Color(0xFF402000); // 64,32,0
 const Color _glint = Color(0xFFFFF8C8); // 255,248,200
-const Color _shellRim = Color(0xFF38C858); // jm_draw_shell: 56,200,88
-const Color _shellDark = Color(0xFF187838); // 24,128,56
-const Color _poleGrey = Color(0xFFB0B0B8); // jm_draw_checkpoint: 176,176,184
-const Color _flagPole = Color(0xFFD8D8E0); // jm_draw_flag: 216,216,224
-const Color _flagCloth = Color(0xFFF04840); // 240,72,64
+const Color _shellRim = Color(0xFF60FF80); // jm_draw_shell: 96,255,128
+const Color _shellDark = Color(0xFF20D0A0); // 32,208,160
+const Color _poleGrey = Color(0xFF80E0FF); // jm_draw_checkpoint: 128,224,255
+const Color _flagPole = Color(0xFFD0F0FF); // jm_draw_flag: 208,240,255
+const Color _flagCloth = Color(0xFFFF7080); // 255,112,128
 const Color _white = Color(0xFFFFF8F0); // the sprite palette's white
-const Color _startMarker = Color(0xFFE03830); // the player's cap red
+const Color _startMarker = Color(0xFFFF7080); // the player's cap red
 const Color _selection = Color(0xFF00E5FF);
 const Color _cameraWindow = Color(0x3320C0FF);
 const Color _ruler = Color(0xFF202024);
@@ -563,18 +563,18 @@ const Color _rulerText = Color(0xFFD0D0D8);
 
 /// `jm_sprite_col`, letter for letter.
 const Map<String, Color> _spriteColours = {
-  'r': Color(0xFFE03830),
-  's': Color(0xFFFCC898),
-  'd': Color(0xFF3860D0),
-  'b': Color(0xFF704424),
-  'k': Color(0xFF181818),
+  'r': Color(0xFFFF7080),
+  's': Color(0xFFFFE0A0),
+  'd': Color(0xFF40D0FF),
+  'b': Color(0xFFFFB050),
+  'k': Color(0xFF000000),
   'w': Color(0xFFFFF8F0),
-  'g': Color(0xFF38C858),
-  'h': Color(0xFF187838),
-  'y': Color(0xFFF8D040),
-  'p': Color(0xFFFCC898),
-  'a': Color(0xFF40281A),
-  'n': Color(0xFF68402C),
+  'g': Color(0xFF60FF80),
+  'h': Color(0xFF20D0A0),
+  'y': Color(0xFFFFE850),
+  'p': Color(0xFFFFE0A0),
+  'a': Color(0xFFFFB040),
+  'n': Color(0xFFFF8040),
 };
 
 /// `jm_spr_goomba` and `jm_spr_koopa`, letter for letter.
