@@ -550,6 +550,17 @@ geometry and collision bounds are unchanged. The editor's map palette matches
 the game. Preview attenuation with `game-cli jumpman --led --mirror 20`; this
 is a visibility check, not a calibration for a particular veneer or panel.
 
+The level editor plays a level back through this same game before writing it
+out, and the computer can drive that run: the auto playtest. Its skill is
+selectable and defaults to High; it changes how the bot errs rather than how the
+game plays. **High** is the original precise bot - full-height jumps taken at
+the last moment, prompt reactions to enemies. **Medium** takes off imperfectly,
+holds its jumps shorter and reacts to enemies more slowly. **Low** errs larger
+still, so it can misjudge a takeoff or collide with an enemy it should have
+stomped. The three are repeatable probes of how forgiving a level is, not
+calibrated human success rates: a run that fails describes that profile's
+mistakes, and never proves the level cannot be finished by a person.
+
 Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
 Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90;
 4 for Tetris, whose demo does not press anything before tick 4, so its capture is

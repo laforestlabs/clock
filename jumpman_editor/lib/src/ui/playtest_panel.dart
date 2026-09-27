@@ -12,6 +12,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../autoplay.dart';
 import '../editor_state.dart';
 import '../playtest.dart';
 
@@ -37,6 +38,8 @@ class PlaytestPanel extends StatelessWidget {
           'when it opened; editing here does not change it.',
           style: theme.textTheme.bodySmall,
         ),
+        const SizedBox(height: 12),
+        _skillPicker(context),
         const SizedBox(height: 12),
         Wrap(
           spacing: 8,
@@ -87,7 +90,41 @@ class PlaytestPanel extends StatelessWidget {
             'and enemies, and reports how far it got.',
             style: theme.textTheme.bodySmall,
           )
-        else ..._readout(context, report, running),
+        else
+          ..._readout(context, report, running),
+      ],
+    );
+  }
+
+  /// The computer's skill: how carefully the bot plays the auto playtest. A
+  /// level can clear for a sharp bot and stop a careless one, so how it plays
+  /// is part of the test and has to be chosen, not assumed.
+  Widget _skillPicker(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('Auto playtest skill', style: theme.textTheme.bodyMedium),
+            DropdownButton<AutoSkill>(
+              value: state.playtestSkill,
+              isDense: true,
+              onChanged: (skill) {
+                if (skill != null) state.selectPlaytestSkill(skill);
+              },
+              items: [
+                for (final skill in AutoSkill.values)
+                  DropdownMenuItem(value: skill, child: Text(skill.label)),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(state.playtestSkill.description, style: theme.textTheme.bodySmall),
       ],
     );
   }
@@ -105,7 +142,10 @@ class PlaytestPanel extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text(
-          state.playtestAuto ? 'auto playtest' : 'playtest',
+          state.playtestAuto
+              ? 'auto playtest · '
+                  '${state.playtestRunSkill?.label ?? state.playtestSkill.label}'
+              : 'playtest',
           style: theme.textTheme.bodyMedium,
         ),
         const Spacer(),
@@ -131,8 +171,8 @@ class PlaytestPanel extends StatelessWidget {
     if (report.deaths > 0) {
       rows.add(Text(
         'died ${report.deaths}×${report.diedAt == null ? '' : ' (last at column ${report.diedAt})'}',
-        style: theme.textTheme.bodySmall
-            ?.copyWith(color: theme.colorScheme.error),
+        style:
+            theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
       ));
     }
     if (state.playtestAuto) {
@@ -140,8 +180,9 @@ class PlaytestPanel extends StatelessWidget {
       rows.add(Text(
         report.stuckAt != null
             ? 'The computer could not get past column ${report.stuckAt}. '
-                'A level it cannot walk is worth looking at: it is the level, '
-                'not the bot, that has to be wrong.'
+                'That is worth a look, not a verdict: the bot is not a person, '
+                'so a column it cannot pass is a question about the level - try '
+                'a sharper skill before calling the level wrong.'
             : 'The computer is working its way right; it reached column '
                 '${report.reached}.',
         style: theme.textTheme.bodySmall,

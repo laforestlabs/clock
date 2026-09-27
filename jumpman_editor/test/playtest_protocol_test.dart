@@ -6,6 +6,7 @@
 // follows a run that is not there.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jumpman_editor/src/autoplay.dart';
 import 'package:jumpman_editor/src/playtest.dart';
 import 'package:jumpman_editor/src/playtest_window.dart';
 
@@ -41,6 +42,41 @@ void main() {
     expect(read.fromColumn, isNull);
     expect(read.reportPath, isNull);
     expect(read.toArgs(), const ['--playtest', '/tmp/l.json']);
+  });
+
+  test('every skill survives the command line, and no skill means high', () {
+    for (final skill in AutoSkill.values) {
+      final options = PlaytestOptions(
+        levelPath: '/tmp/level.json',
+        auto: true,
+        skill: skill,
+      );
+      final read = PlaytestOptions.fromArgs(options.toArgs())!;
+      expect(read.auto, isTrue);
+      expect(read.skill, skill, reason: 'skill ${skill.name} did not survive');
+    }
+    // A command line from before the skills existed is the high one.
+    final old = PlaytestOptions.fromArgs(
+        const ['--playtest', '/tmp/level.json', '--auto'])!;
+    expect(old.skill, AutoSkill.high);
+  });
+
+  test('a skill that is not one of the three is rejected, not guessed', () {
+    expect(
+      () => PlaytestOptions.fromArgs(const [
+        '--playtest',
+        '/tmp/level.json',
+        '--auto',
+        '--skill',
+        'sideways',
+      ]),
+      throwsFormatException,
+    );
+    expect(
+      () => PlaytestOptions.fromArgs(
+          const ['--playtest', '/tmp/level.json', '--auto', '--skill']),
+      throwsFormatException,
+    );
   });
 
   test('a report survives the file it is written to', () {

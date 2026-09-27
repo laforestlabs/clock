@@ -40,6 +40,7 @@ class PlaytestOptions {
   const PlaytestOptions({
     required this.levelPath,
     this.auto = false,
+    this.skill = AutoSkill.high,
     this.fromColumn,
     this.reportPath,
   });
@@ -51,6 +52,10 @@ class PlaytestOptions {
   /// Whether the computer drives instead of a person.
   final bool auto;
 
+  /// How well the computer drives, when it is driving. Ignored when a person
+  /// is at the keys.
+  final AutoSkill skill;
+
   /// The column to start from, for "play from here".
   final int? fromColumn;
 
@@ -60,13 +65,16 @@ class PlaytestOptions {
 
   static const String _playtestFlag = '--playtest';
   static const String _autoFlag = '--auto';
+  static const String _skillFlag = '--skill';
   static const String _fromFlag = '--from';
   static const String _reportFlag = '--report';
 
   List<String> toArgs() => [
         _playtestFlag,
         levelPath,
-        if (auto) _autoFlag,
+        // The skill only means something to the computer, so it travels with
+        // the flag that tells the window the computer is driving.
+        if (auto) ...[_autoFlag, _skillFlag, skill.name],
         if (fromColumn != null) ...[_fromFlag, '$fromColumn'],
         if (reportPath != null) ...[_reportFlag, reportPath!],
       ];
@@ -85,9 +93,28 @@ class PlaytestOptions {
     return PlaytestOptions(
       levelPath: level,
       auto: args.contains(_autoFlag),
+      skill: _readSkill(args),
       fromColumn: from == null ? null : int.tryParse(from),
       reportPath: value(_reportFlag),
     );
+  }
+
+  /// The skill a command line names, or [AutoSkill.high] when it names none -
+  /// which is what a command line from before the skills existed names. A skill
+  /// that is not one of the three is a command line that cannot be obeyed, so it
+  /// is rejected rather than quietly guessed at.
+  static AutoSkill _readSkill(List<String> args) {
+    final at = args.indexOf(_skillFlag);
+    if (at < 0) return AutoSkill.high;
+    if (at + 1 >= args.length) {
+      throw const FormatException('--skill needs one of high, medium or low');
+    }
+    final name = args[at + 1];
+    for (final skill in AutoSkill.values) {
+      if (skill.name == name) return skill;
+    }
+    throw FormatException(
+        'unknown skill "$name": expected high, medium or low');
   }
 }
 
@@ -174,8 +201,10 @@ class _PlaytestWindowState extends State<PlaytestWindow>
             'level\'s shape cannot be read.');
         return;
       }
-      final spec = JumpmanSpec.parse(source.readGameSource(), path: source.gameFile);
-      final decoded = jsonDecode(File(widget.options.levelPath).readAsStringSync());
+      final spec =
+          JumpmanSpec.parse(source.readGameSource(), path: source.gameFile);
+      final decoded =
+          jsonDecode(File(widget.options.levelPath).readAsStringSync());
       if (decoded is! Map<String, Object?>) {
         setState(() => _error = '${widget.options.levelPath} is not a level.');
         return;
@@ -187,7 +216,8 @@ class _PlaytestWindowState extends State<PlaytestWindow>
         _level = level;
       });
       _open(fromColumn: widget.options.fromColumn);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _focus.requestFocus());
     } on JumpmanSpecException catch (e) {
       setState(() => _error = e.message);
     } on LevelFormatException catch (e) {
@@ -195,7 +225,8 @@ class _PlaytestWindowState extends State<PlaytestWindow>
     } on FileSystemException catch (e) {
       setState(() => _error = '${e.path}: ${e.message}');
     } on FormatException catch (e) {
-      setState(() => _error = '${widget.options.levelPath} is not readable: ${e.message}');
+      setState(() =>
+          _error = '${widget.options.levelPath} is not readable: ${e.message}');
     }
   }
 
@@ -211,7 +242,11 @@ class _PlaytestWindowState extends State<PlaytestWindow>
       setState(() => _error = e.message);
       return;
     }
-    _bot = AutoPlayer(level: level, spec: spec);
+    _bot = AutoPlayer(
+      level: level,
+      spec: spec,
+      skill: widget.options.skill,
+    );
     _playing = true;
     _accumMicros = 0;
     _writeReport();
@@ -402,13 +437,20 @@ class _PlaytestWindowState extends State<PlaytestWindow>
               children: [
                 Container(
                   color: theme.colorScheme.surfaceContainerHigh,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Row(
                     children: [
-                      Icon(_auto ? Icons.smart_toy_outlined : Icons.videogame_asset,
+                      Icon(
+                          _auto
+                              ? Icons.smart_toy_outlined
+                              : Icons.videogame_asset,
                           size: 18),
                       const SizedBox(width: 8),
-                      Text(_auto ? 'auto playtest' : 'playtest',
+                      Text(
+                          _auto
+                              ? 'auto playtest · ${widget.options.skill.label}'
+                              : 'playtest',
                           style: theme.textTheme.titleSmall),
                       const SizedBox(width: 16),
                       if (_error != null)
@@ -442,7 +484,8 @@ class _PlaytestWindowState extends State<PlaytestWindow>
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   child: Text(
                     'Left/A and Right/D run, Space/Up/W jumps, P pauses, '
                     'R restarts. The window plays the level as it was when it was '
@@ -511,7 +554,8 @@ class _PlaytestWindowState extends State<PlaytestWindow>
       builder: (context, constraints) {
         final byWidth = (constraints.maxWidth / kPanelWidth).floor();
         final byHeight = (constraints.maxHeight / kPanelHeight).floor();
-        final scale = (byWidth < byHeight ? byWidth : byHeight).clamp(1, 64).toInt();
+        final scale =
+            (byWidth < byHeight ? byWidth : byHeight).clamp(1, 64).toInt();
         return Container(
           decoration: BoxDecoration(
             border: Border.all(color: theme.dividerColor),
@@ -519,7 +563,8 @@ class _PlaytestWindowState extends State<PlaytestWindow>
           width: (kPanelWidth * scale).toDouble(),
           height: (kPanelHeight * scale).toDouble(),
           child: _image == null
-              ? Center(child: Text('no frame', style: theme.textTheme.bodySmall))
+              ? Center(
+                  child: Text('no frame', style: theme.textTheme.bodySmall))
               : RawImage(
                   image: _image,
                   width: (kPanelWidth * scale).toDouble(),

@@ -14,12 +14,28 @@
 //   - jump at an enemy close in front, which is a stomp and the only way past
 //     one at this size.
 //
-// It holds right the whole time, because the run has to be played at the speed
-// the game runs. What it cannot do is a finding about the level, not a failure
-// of the bot: a level it never gets past is reported as stuck at that column.
+// High preserves the precise original bot. Lower skills make repeatable input
+// mistakes, not physics changes: early takeoffs, short holds and late reactions.
+// A failed run describes this profile, not proof that the level is impossible.
+
+import 'dart:math';
 
 import 'jump_level.dart';
 import 'jumpman_spec.dart';
+
+enum AutoSkill {
+  high('High',
+      'Precise takeoffs, full-height jumps and prompt enemy reactions.'),
+  medium(
+      'Medium', 'Earlier takeoffs, shorter jumps and slower enemy reactions.'),
+  low('Low',
+      'Less precise takeoffs, short jumps and late reactions that can cause hits.');
+
+  const AutoSkill(this.label, this.description);
+
+  final String label;
+  final String description;
+}
 
 /// What the bot presses for one tick.
 class AutoInput {
@@ -38,14 +54,45 @@ class AutoInput {
 
 /// The bot: a decision per tick, and what it has seen so far.
 class AutoPlayer {
-  AutoPlayer({required this.level, required this.spec});
+  AutoPlayer({
+    required this.level,
+    required this.spec,
+    this.skill = AutoSkill.high,
+  }) {
+    _chooseTiming();
+  }
 
   final JumpLevel level;
   final JumpmanSpec spec;
+  final AutoSkill skill;
 
-  /// How long one jump is held: the whole rise, so the jump is the biggest the
-  /// game allows. The game cuts it short when the button goes up early, which is
-  /// the one thing this bot never wants.
+  // Sample once per attempt, not every frame: moving toward a hazard must not
+  // continually move the target. A fixed seed makes level comparisons repeatable.
+  late final Random _random = Random(0);
+  int _jumpHold = holdTicks;
+  int _pitWarning = pitLookahead;
+  int _enemyDelay = 0;
+  int _stepDelay = 2;
+
+  void _chooseTiming() {
+    switch (skill) {
+      case AutoSkill.high:
+        break;
+      case AutoSkill.medium:
+        _jumpHold = 2;
+        _pitWarning = 4 + _random.nextInt(3);
+        _enemyDelay = _random.nextInt(2);
+        _stepDelay = 3 + _random.nextInt(3);
+      case AutoSkill.low:
+        _jumpHold = 1;
+        _pitWarning = 5 + _random.nextInt(4);
+        _enemyDelay = _random.nextInt(4);
+        _stepDelay = 5 + _random.nextInt(5);
+    }
+  }
+
+  /// High holds through the whole rise; lower skills release while rising,
+  /// letting the game's own jump-cut physics reduce height and range.
   static const int holdTicks = 20;
 
   /// How many columns ahead a pit's edge makes the bot jump. A jump carries about
@@ -122,9 +169,8 @@ class AutoPlayer {
     _lastX = playerX;
     if (_still >= stuckAfter) stuckAt ??= playerX;
 
-    // A press runs its course: the game reads the edge, and the rise is the
-    // button's, so the bot holds it for the whole of it. Two things end it: the
-    // hold running out, and landing - the flight is over, and the next thing
+    // A press runs its course using this attempt's hold duration. Two things
+    // end it: the hold running out, and landing - the flight is over, and the next thing
     // ahead needs the button up before it can be pressed, because the game reads
     // the press and not the level. A button held through a landing is what makes
     // a bot stop jumping without noticing.
@@ -152,7 +198,9 @@ class AutoPlayer {
     }
 
     if (_wantsJump(playerX, enemyGap, enemyKind)) {
-      _hold = holdTicks - 1;
+      // _hold includes the press tick; the next tick decrements before checking.
+      _hold = skill == AutoSkill.high ? holdTicks - 1 : _jumpHold;
+      _chooseTiming();
       return const AutoInput(right: true, jump: true);
     }
     return const AutoInput(right: true, jump: false);
@@ -170,17 +218,20 @@ class AutoPlayer {
   /// Whether something ahead calls for a jump.
   bool _wantsJump(int x, int enemyGap, int enemyKind) {
     // The ground runs out: a pit's edge within a few columns.
-    for (var ahead = 1; ahead <= pitLookahead; ahead++) {
+    for (var ahead = 1; ahead <= _pitWarning; ahead++) {
       if (level.surfaceAt(x + ahead) == kPit) return true;
     }
     // Something stopped the walk, which is what a step, a pipe or a wall of
     // stone looks like from inside the run.
-    if (_still >= 2) return true;
+    if (_still >= _stepDelay) return true;
     // An enemy far enough out to clear. Jumping later would meet it while still
     // rising, which is a hit rather than a stomp; the distance depends on how
     // tall it is.
-    if (enemyGap >= 0 && enemyKind >= 0 && enemyGap >= jumpAtKind(enemyKind)) {
-      return true;
+    if (enemyGap >= 0 && enemyKind >= 0) {
+      final warning = jumpAtKind(enemyKind);
+      if (skill == AutoSkill.high) return enemyGap >= warning;
+      // Lower skills notice the enemy later, sometimes too late to clear it.
+      return enemyGap <= warning - _enemyDelay;
     }
     return false;
   }

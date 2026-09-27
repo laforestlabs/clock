@@ -17,6 +17,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'autoplay.dart';
 import 'game_source.dart';
 import 'jump_level.dart';
 import 'jumpman_spec.dart';
@@ -282,13 +283,13 @@ class EditorState extends ChangeNotifier {
     if (column < 0 || column >= spec.cols) return;
     final pipe = _level.pipeAt(column);
     if (pipe != null) {
-      selection = Selection(
-          kind: SelectionKind.pipe, column: column, pipe: pipe);
+      selection =
+          Selection(kind: SelectionKind.pipe, column: column, pipe: pipe);
     } else {
       final coin = _level.coinAt(column, row);
       if (coin != null) {
-        selection = Selection(
-            kind: SelectionKind.coin, column: column, coin: coin);
+        selection =
+            Selection(kind: SelectionKind.coin, column: column, coin: coin);
       } else {
         final enemy = _level.enemyAt(column);
         if (enemy != null) {
@@ -335,23 +336,23 @@ class EditorState extends ChangeNotifier {
   void placePipe(int column) => edit((level) {
         level.pipes.removeWhere(
             (p) => p.x < column + level.pipeW && column < p.x + level.pipeW);
-        level.pipes.add(
-            JumpPipe(x: column, h: pipeH, plant: pipePlant ? 1 : 0));
+        level.pipes
+            .add(JumpPipe(x: column, h: pipeH, plant: pipePlant ? 1 : 0));
       });
 
   void setStart(int column) => edit((level) => level.startX = column);
 
-  void setCheckpoint(int column) =>
-      edit((level) => level.checkpointX = column);
+  void setCheckpoint(int column) => edit((level) => level.checkpointX = column);
 
   /// The Erase tool: whatever is on the cell, gone. Blocks and coins are found
   /// by the cell, enemies and pipes by the column they stand in.
   void eraseAt(int column, int row) => edit((level) {
         if (level.blockAt(column) != kNoBlock) level.blocks[column] = kNoBlock;
-        level.coins.removeWhere(
-            (c) => column >= c.x && column < c.x + 2 && row >= c.y && row < c.y + 2);
+        level.coins.removeWhere((c) =>
+            column >= c.x && column < c.x + 2 && row >= c.y && row < c.y + 2);
         level.enemies.removeWhere((e) => e.x == column);
-        level.pipes.removeWhere((pipe) => level.pipeW > 0 &&
+        level.pipes.removeWhere((pipe) =>
+            level.pipeW > 0 &&
             column >= pipe.x &&
             column < pipe.x + level.pipeW);
       });
@@ -359,7 +360,8 @@ class EditorState extends ChangeNotifier {
   // ------------------------------------------------------- the selected item
 
   /// Change the selected item's own fields, for the inspector's steppers.
-  void updateSelected(void Function(JumpLevel level, Selection selection) change) {
+  void updateSelected(
+      void Function(JumpLevel level, Selection selection) change) {
     final selected = selection;
     if (selected == null) return;
     edit((level) => change(level, selected));
@@ -552,7 +554,8 @@ class EditorState extends ChangeNotifier {
   }
 
   static String _firstDifference(JumpLevel a, JumpLevel b) {
-    if (a.cols != b.cols) return 'the column counts differ (${a.cols} and ${b.cols}).';
+    if (a.cols != b.cols)
+      return 'the column counts differ (${a.cols} and ${b.cols}).';
     for (var x = 0; x < a.cols; x++) {
       if (a.surface[x] != b.surface[x]) {
         return 'column $x: surface ${a.surface[x]} became ${b.surface[x]}.';
@@ -668,6 +671,24 @@ class EditorState extends ChangeNotifier {
   PlaytestReport? playtestReport;
   bool playtestAuto = false;
 
+  /// The skill the next auto playtest will run with, chosen in the panel. It is
+  /// a preference, not part of any one run, so it outlives the window.
+  AutoSkill playtestSkill = AutoSkill.high;
+
+  /// The skill the window on screen is driving with, or null when nothing is
+  /// running - or when a person is driving. Kept apart from [playtestSkill] so
+  /// that a restart repeats the run that is on screen even after the selection
+  /// has moved on to the next one.
+  AutoSkill? playtestRunSkill;
+
+  /// Choose the skill the next auto playtest runs with. The selection is kept
+  /// even while a run is going: it is about the next run, not this one.
+  void selectPlaytestSkill(AutoSkill skill) {
+    if (skill == playtestSkill) return;
+    playtestSkill = skill;
+    notifyListeners();
+  }
+
   /// Set when the level is edited while a window plays: that window plays the
   /// level as it was when it opened, so the map stops following it.
   bool playtestStale = false;
@@ -691,32 +712,41 @@ class EditorState extends ChangeNotifier {
   /// Open a playtest window on the level as it is now: [fromColumn] for "play
   /// from here", and [auto] to have the computer drive it, which is the auto
   /// playtest - the same window, testing the level rather than playing it.
-  Future<void> openPlaytestWindow({int? fromColumn, bool auto = false}) async {
+  /// [skill] is how well the computer drives; it defaults to the panel's
+  /// selection, and a restart passes the running window's own skill so that the
+  /// run on screen is repeated rather than replaced.
+  Future<void> openPlaytestWindow({
+    int? fromColumn,
+    bool auto = false,
+    AutoSkill? skill,
+  }) async {
+    final runSkill = skill ?? playtestSkill;
     await closePlaytestWindow();
     playtestError = null;
     try {
       final dir = await Directory.systemTemp.createTemp('jumpman-playtest-');
       _playtestDir = dir;
       final levelFile = File(p.join(dir.path, 'level.json'));
-      levelFile.writeAsStringSync(
-          jsonEncode(_level.toJson(spec, projectName)));
+      levelFile.writeAsStringSync(jsonEncode(_level.toJson(spec, projectName)));
       final reportFile = File(p.join(dir.path, 'report.json'));
       _playtestReportPath = reportFile.path;
 
       final options = PlaytestOptions(
         levelPath: levelFile.path,
         auto: auto,
+        skill: runSkill,
         fromColumn: fromColumn,
         reportPath: reportFile.path,
       );
-      final process =
-          await Process.start(playtestExecutable, options.toArgs());
+      final process = await Process.start(playtestExecutable, options.toArgs());
       _playtestWindow = process;
       playtestAuto = auto;
+      playtestRunSkill = auto ? runSkill : null;
       playtestStale = false;
       playtestReport = null;
       status = auto
-          ? 'the computer is testing the level in its own window'
+          ? 'the computer is testing the level in its own window '
+              '(${runSkill.label} skill)'
           : 'playing in its own window'
               '${fromColumn == null ? '' : ' from column $fromColumn'}';
       _playtestPoll?.cancel();
@@ -729,7 +759,9 @@ class EditorState extends ChangeNotifier {
           _playtestWindow = null;
           _playtestPoll?.cancel();
           _playtestPoll = null;
-          status = auto ? 'the auto playtest window closed' : 'the playtest window closed';
+          status = auto
+              ? 'the auto playtest window closed'
+              : 'the playtest window closed';
           notifyListeners();
         }
       }));
@@ -752,6 +784,7 @@ class EditorState extends ChangeNotifier {
     playtestReport = null;
     playtestStale = false;
     playtestAuto = false;
+    playtestRunSkill = null;
     final dir = _playtestDir;
     _playtestDir = null;
     _playtestReportPath = null;
@@ -771,6 +804,7 @@ class EditorState extends ChangeNotifier {
     await openPlaytestWindow(
       fromColumn: fromHere ? playtestReport?.playerX : null,
       auto: playtestAuto,
+      skill: playtestRunSkill,
     );
   }
 
@@ -780,7 +814,8 @@ class EditorState extends ChangeNotifier {
     try {
       final file = File(path);
       if (!file.existsSync()) return;
-      final report = PlaytestReport.fromJson(jsonDecode(file.readAsStringSync()));
+      final report =
+          PlaytestReport.fromJson(jsonDecode(file.readAsStringSync()));
       if (report == null) return;
       final changed = report.tick != playtestReport?.tick ||
           report.lives != playtestReport?.lives ||

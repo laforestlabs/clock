@@ -28,9 +28,10 @@ class _Run {
 
 /// Play [level] with the bot until it wins, loses, or gets stuck: what the
 /// playtest window does, without the window.
-_Run _autoPlay(JumpLevel level, JumpmanSpec spec, {int maxTicks = 4000}) {
+_Run _autoPlay(JumpLevel level, JumpmanSpec spec,
+    {int maxTicks = 4000, AutoSkill skill = AutoSkill.high}) {
   final session = Playtest.open(level: level, spec: spec);
-  final bot = AutoPlayer(level: level, spec: spec);
+  final bot = AutoPlayer(level: level, spec: spec, skill: skill);
   var reached = 0;
   var deaths = 0;
   var diedAt = -1;
@@ -83,6 +84,70 @@ _Run _autoPlay(JumpLevel level, JumpmanSpec spec, {int maxTicks = 4000}) {
 }
 
 void main() {
+  test('all skills can finish an unobstructed level', () {
+    final spec = readSpec();
+    for (final skill in AutoSkill.values) {
+      final run = _autoPlay(JumpLevel.empty(spec), spec, skill: skill);
+      expect(run.report.isWon, isTrue, reason: skill.name);
+      expect(run.report.lives, 3, reason: skill.name);
+    }
+  });
+
+  test('lower skills take off earlier and reach lower jump heights', () {
+    final spec = readSpec();
+    final level = JumpLevel.empty(spec);
+    level.surface.fillRange(40, 43, kPit);
+    final takeoffs = <AutoSkill, int>{};
+    final peaks = <AutoSkill, int>{};
+    for (final skill in AutoSkill.values) {
+      final session = Playtest.open(level: level, spec: spec);
+      final bot = AutoPlayer(level: level, spec: spec, skill: skill);
+      var peak = session.playerY;
+      try {
+        while (session.tick < 100) {
+          final input = bot.next(
+            playerX: session.playerX,
+            onGround: session.onGround,
+            enemyGap: session.enemyGap,
+            enemyKind: session.enemyKind,
+            plantOut: session.plantOut,
+          );
+          if (input.jump) takeoffs.putIfAbsent(skill, () => session.playerX);
+          session.setRight(input.right);
+          if (input.jump) {
+            session.pressJump();
+          } else {
+            session.releaseJump();
+          }
+          session.step();
+          if (session.playerY < peak) peak = session.playerY;
+          if (takeoffs.containsKey(skill) && session.onGround) break;
+        }
+        peaks[skill] = peak;
+      } finally {
+        session.dispose();
+      }
+    }
+    for (final skill in [AutoSkill.medium, AutoSkill.low]) {
+      expect(takeoffs[skill], lessThan(takeoffs[AutoSkill.high]!));
+      // Screen rows increase downwards: a larger row is a lower apex.
+      expect(peaks[skill], greaterThan(peaks[AutoSkill.high]!));
+    }
+  });
+
+  test('low skill can lose to enemies that High clears, repeatably', () {
+    final spec = readSpec();
+    final level = readAuthoredLevel(spec);
+    final high = _autoPlay(level, spec);
+    final low = _autoPlay(level, spec, skill: AutoSkill.low);
+    final repeat = _autoPlay(level, spec, skill: AutoSkill.low);
+    expect(high.report.isWon, isTrue);
+    expect(low.report.lives, lessThan(high.report.lives));
+    expect(low.report.diedAt, lessThan(105),
+        reason: 'the missed enemy is before the first pit');
+    expect(repeat.report.toJson(), low.report.toJson());
+  });
+
   test('the computer plays the shipped level to the flagpole', () {
     final spec = readSpec();
     final level = readAuthoredLevel(spec);
@@ -144,13 +209,12 @@ void main() {
     // In the air the game throws a press away, so the bot must not spend one.
     var presses = 0;
     for (var i = 0; i < 50; i++) {
-      final input =
-          bot.next(
-              playerX: 10,
-              onGround: false,
-              enemyGap: -1,
-              enemyKind: -1,
-              plantOut: 0);
+      final input = bot.next(
+          playerX: 10,
+          onGround: false,
+          enemyGap: -1,
+          enemyKind: -1,
+          plantOut: 0);
       if (input.jump) presses++;
       expect(input.right, isTrue);
     }
