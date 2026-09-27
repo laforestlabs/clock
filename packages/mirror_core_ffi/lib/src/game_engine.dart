@@ -20,7 +20,6 @@ import 'package:ffi/ffi.dart';
 import 'game_bindings.dart';
 export 'game_bindings.dart' show GameControl, GameControlType, GameInfo;
 
-
 /// One game session: a host, a canvas, and (for each player) a controller.
 ///
 /// Create with [GameEngine.open], then drive with [step] and [button], and
@@ -40,21 +39,35 @@ class GameEngine {
   ///
   /// Throws [GameLibraryException] if the game id is unknown or the session
   /// could not be created.
+  /// [course] explicitly selects a built-in Jumpman course, bounded by the
+  /// highest course earned in trusted storage, [unlockedCourse]. Leave it null
+  /// for editor-injected single-course runs and games without a campaign.
   factory GameEngine.open({
     required String gameId,
     required int panelWidth,
     required int panelHeight,
     int seed = 1,
     int players = 1,
+    int? course,
+    int unlockedCourse = 1,
   }) {
     final bindings = GameBindings.instance();
     final id = gameId.toNativeUtf8();
     try {
-      final handle = bindings.gameOpen(id, panelWidth, panelHeight, seed, players);
+      final handle =
+          bindings.gameOpen(id, panelWidth, panelHeight, seed, players);
       if (handle == nullptr) {
         throw GameLibraryException(
           'ml_game_open returned null for game "$gameId" '
           'at ${panelWidth}x$panelHeight.',
+        );
+      }
+      if (course != null &&
+          bindings.gameStartCourse(handle, course, unlockedCourse) == 0) {
+        bindings.gameClose(handle);
+        throw GameLibraryException(
+          'Cannot start course $course of "$gameId" '
+          '(highest unlocked: $unlockedCourse).',
         );
       }
       final w = bindings.gameWidth(handle);
@@ -73,6 +86,19 @@ class GameEngine {
 
   void _assertLive() {
     if (_disposed) throw StateError('GameEngine used after dispose()');
+  }
+
+  /// One-based active course; zero for non-campaign sessions.
+  int get course {
+    _assertLive();
+    return _b.gameCourse(_handle);
+  }
+
+  /// Highest unlocked course. Persist increases immediately after [step],
+  /// rather than waiting for the player to finish or lose the campaign.
+  int get unlockedCourse {
+    _assertLive();
+    return _b.gameUnlocked(_handle);
   }
 
   // ------------------------------------------------------------ catalogue

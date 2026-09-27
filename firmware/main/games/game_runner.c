@@ -60,8 +60,10 @@
 #include "mirror/font.h"
 #include "mirror/game.h"
 #include "mirror/gamerun.h"
+#include "mirror/jumpman.h"
 #include "mirror/seats.h"
 #include "net/ble.h"
+#include "nvs.h"
 #include "panel.h"
 
 static const char *TAG = "game";
@@ -72,6 +74,7 @@ typedef enum {
     CMD_START,
     CMD_JOIN,
     CMD_SESSION,
+    CMD_PROGRESS,
     CMD_STOP,
     CMD_PAUSE,
     CMD_RESUME
@@ -151,6 +154,27 @@ static volatile uint32_t s_input_to_render_us;
 /* The running game's vtable, guarded by s_mutex. Used by the BLE host task
  * to interpret an input packet's i16 value (button vs axis). */
 static const ml_game_vt *s_active_vt;
+
+
+/* ------------------------------------------------- campaign progress */
+
+/* The highest course the mirror has unlocked, 1..ML_JUMPMAN_COURSES, and the
+ * NVS byte behind it. The RAM copy is what the render task plays against; the
+ * record is what survives a power cycle, so a raise is written the moment the
+ * game reports it rather than at the end of the round. s_loaded makes the read
+ * lazy, so a boot that never starts the campaign never touches NVS for it.
+ * Render task only - the only writers are the start and the per-frame poll,
+ * and the only reader is a command the render task drains itself. */
+#define NVS_NS_CAMPAIGN  "games"
+#define NVS_KEY_UNLOCKED "jm_unlocked"
+
+static int  s_campaign_unlocked;
+static bool s_campaign_loaded;
+/* A raise is owed to flash. Set with the RAM value and cleared only by a
+ * commit that succeeded, so a failed write is retried instead of being
+ * reported as saved. */
+static bool s_campaign_dirty;
+static int s_campaign_last_course;
 
 
 /* -------------------------------------------------------------- init */
@@ -243,6 +267,94 @@ static void input_flush(void)
     }
 }
 
+/* Missing storage is a new campaign. A failed read is not: never overwrite
+ * earned progress with a guessed default after an I/O or type error. */
+static int campaign_unlocked(void)
+{
+    if (s_campaign_loaded) return s_campaign_unlocked;
+    nvs_handle_t h;
+    uint8_t value = 1;
+    esp_err_t err = nvs_open(NVS_NS_CAMPAIGN, NVS_READONLY, &h);
+    if (err == ESP_OK) {
+        err = nvs_get_u8(h, NVS_KEY_UNLOCKED, &value);
+        nvs_close(h);
+    }
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        value = 1;
+    } else if (err != ESP_OK || value < 1 || value > ML_JUMPMAN_COURSES) {
+        ESP_LOGE(TAG, "campaign progress unavailable: %s (value %u)",
+                 esp_err_to_name(err), (unsigned)value);
+        return 0;
+    }
+    s_campaign_unlocked = value;
+    s_campaign_loaded = true;
+    return s_campaign_unlocked;
+}
+
+/* Commit an owed raise to NVS. False - with s_campaign_dirty still set - when
+ * the record could not be written, so no caller can report a progression as
+ * saved when it is not; the failure is logged and retried on the next raise,
+ * query, or stop. Render task only. */
+static bool campaign_flush(void)
+{
+    if (!s_campaign_dirty) return true;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS_CAMPAIGN, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(h, NVS_KEY_UNLOCKED, (uint8_t)s_campaign_unlocked);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "could not save unlocked course %d: %s",
+                 s_campaign_unlocked, esp_err_to_name(err));
+        ble_send_status_line("game progress unsaved");
+        return false;
+    }
+    s_campaign_dirty = false;
+    return true;
+}
+
+/* Push the live campaign's position at every link: the course the session is
+ * on and the highest course unlocked. Progression is a state every phone
+ * shows, so it is broadcast rather than answered to one. No-op when no
+ * campaign session is live. Render task only. */
+static void campaign_publish(void)
+{
+    if (s_session == NULL || strcmp(s_game_id, "jumpman") != 0) return;
+    const void *state = ml_host_state(s_session);
+    if (state == NULL) return;
+
+    char line[64];
+    snprintf(line, sizeof(line), "game progress jumpman %d %d",
+             ml_jumpman_course(state), campaign_unlocked());
+    ble_send_status_line(line);
+    s_campaign_last_course = ml_jumpman_course(state);
+}
+
+/* Read the live campaign's unlocked course after a step. A growth is persisted
+ * at once and pushed at every phone: a course the player has just beaten is
+ * unlocked the moment the game says so, not when the round ends, so a power
+ * cut mid-round cannot take it back. A no-op when nothing grew, so this can
+ * run every frame. Render task only. */
+static void campaign_step(void)
+{
+    if (s_session == NULL || strcmp(s_game_id, "jumpman") != 0) return;
+    const void *state = ml_host_state(s_session);
+    if (state == NULL) return;
+
+    const int unlocked = ml_jumpman_unlocked(state);
+    const bool grew = unlocked > campaign_unlocked();
+    if (grew) {
+        s_campaign_unlocked = unlocked;
+        s_campaign_dirty = true;
+        campaign_flush();
+    }
+    if (grew || ml_jumpman_course(state) != s_campaign_last_course)
+        campaign_publish();
+}
+
 /* Feed one neutral event into the live host for every occupied seat and every
  * control the running game declares, in code order and carrying the control's
  * own code and type: a button arrives released, an axis arrives idle. Draining
@@ -316,6 +428,11 @@ void game_runner_request_join(uint16_t link)
 void game_runner_request_session(uint16_t link)
 {
     request_cmd(CMD_SESSION, NULL, link);
+}
+
+void game_runner_request_progress(const char *id, uint16_t link)
+{
+    request_cmd(CMD_PROGRESS, id, link);
 }
 
 void game_runner_request_stop(uint16_t link)
@@ -418,22 +535,67 @@ static int append_controls(char *line, size_t cap, int n, const ml_game_vt *vt)
     return n;
 }
 
-/* Split "game start"'s argument into a game id and an optional seat count.
- * Only a trailing token that is exactly "1" or "2" is a count; every other
+/* Split "game start"'s argument into a game id, an optional seat count and -
+ * for the campaign game - an optional course.
+ *
+ * The campaign game's start is the one that names a course, so its argument is
+ * read strictly as "jumpman" / "jumpman <players>" / "jumpman <players>
+ * <course>". A stray token, a seat count that is not 1 or 2, or a course
+ * outside 1..ML_JUMPMAN_COURSES is refused rather than clamped: the phone and
+ * the firmware disagreeing about what was asked is not a value to guess
+ * around.
+ *
+ * Every other game keeps the loose rule that made today's phones work: only a
+ * trailing token that is exactly "1" or "2" is a seat count, and every other
  * tail stays part of the id, so a bare "game start rally" and the phones that
- * send one keep working. *players is 0 when no count was given, which the
- * caller reads as "the game's own default": one seat, today's solo round. */
-static void split_start_arg(const char *arg, char *id, size_t id_cap,
-                            int *players)
+ * send one keep working.
+ *
+ * `*players` is 0 when no seat count was given, which the caller reads as "the
+ * game's own default": one seat, today's solo round. `*campaign` says the id
+ * was the campaign game, in which case `*course` is 1..ML_JUMPMAN_COURSES.
+ * Returns false on a malformed campaign argument. */
+static bool parse_start_arg(const char *arg, char *id, size_t id_cap,
+                            bool *campaign, int *players, int *course)
 {
-    int want = 0;
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%s", arg ? arg : "");
+
+    *campaign = false;
+    *players = 0;
+    *course = 1;
+
+    char *save = NULL;
+    char *tok = strtok_r(buf, " ", &save);
+    if (tok != NULL && strcmp(tok, "jumpman") == 0) {
+        *campaign = true;
+        snprintf(id, id_cap, "%s", tok);
+
+        tok = strtok_r(NULL, " ", &save);
+        if (tok != NULL) {
+            if (tok[1] != '\0' || (tok[0] != '1' && tok[0] != '2')) return false;
+            *players = tok[0] - '0';
+            tok = strtok_r(NULL, " ", &save);
+        }
+        if (tok != NULL) {
+            if (tok[1] != '\0' || tok[0] < '1' ||
+                tok[0] > '0' + ML_JUMPMAN_COURSES) {
+                return false;
+            }
+            *course = tok[0] - '0';
+            /* A fourth token is a protocol error, not a tail of anything. */
+            if (strtok_r(NULL, " ", &save) != NULL) return false;
+        }
+        return true;
+    }
+
+    /* Not the campaign game: the id is everything except a trailing "1"/"2". */
     snprintf(id, id_cap, "%s", arg ? arg : "");
     char *tail = strrchr(id, ' ');
     if (tail != NULL && (tail[1] == '1' || tail[1] == '2') && tail[2] == '\0') {
-        want = tail[1] - '0';
+        *players = tail[1] - '0';
         tail[0] = '\0';
     }
-    *players = want;
+    return true;
 }
 
 /* Open a session for the id in `arg`, seating the asking link as player 1, and
@@ -448,12 +610,28 @@ static void session_start(const char *arg, uint16_t link)
     }
 
     char id[24];
-    int want = 0;
-    split_start_arg(arg, id, sizeof(id), &want);
+    int want = 0, course = 1;
+    bool campaign = false;
+    if (!parse_start_arg(arg, id, sizeof(id), &campaign, &want, &course)) {
+        ble_send_status_line_to(link, "game error bad course");
+        return;
+    }
 
     const ml_game_vt *vt = ml_fw_game_find(id);
     if (vt == NULL) {
         ble_send_status_line_to(link, "game error unknown game");
+        return;
+    }
+
+    /* The campaign selection is checked against the persisted unlock before
+     * anything is allocated or torn down, so a locked or out-of-range course
+     * is refused with a running session left exactly as it was. */
+    if (campaign && (campaign_unlocked() == 0 || !campaign_flush())) {
+        ble_send_status_line_to(link, "game error progress storage");
+        return;
+    }
+    if (campaign && course > campaign_unlocked()) {
+        ble_send_status_line_to(link, "game error locked course");
         return;
     }
 
@@ -478,6 +656,20 @@ static void session_start(const char *arg, uint16_t link)
     if (!h) {
         ble_send_status_line_to(link, "game error out of memory");
         return;
+    }
+
+    if (campaign) {
+        /* A fresh host opens on the campaign's first course; switch it to the
+         * requested one before a single tick, after whatever level the editor
+         * may have injected. The trusted unlock travels in with the course, so
+         * the core never reads a phone's word for what is playable. */
+        void *state = ml_host_state(h);
+        if (state == NULL ||
+            !ml_jumpman_start_course(state, course, campaign_unlocked())) {
+            ml_host_destroy(h);
+            ble_send_status_line_to(link, "game error campaign");
+            return;
+        }
     }
 
     const uint64_t now = (uint64_t)esp_timer_get_time();
@@ -525,6 +717,10 @@ static void session_start(const char *arg, uint16_t link)
                  seats_count(), s_need);
         ble_send_status_line(seats);
     }
+
+    /* The course selection is progress every phone shows, so the new position
+     * is published with the round rather than left for a query. */
+    if (campaign) campaign_publish();
 }
 
 /* Seat the asking link at the lowest free player id and answer it alone with
@@ -616,6 +812,39 @@ static void session_session(uint16_t link)
     ble_send_status_line_to(link, line);
 }
 
+/* Answer one link's "game progress <id>": the course a live session of that
+ * game is on, and the highest course the mirror has unlocked. The campaign
+ * game is the only one with progression, and its answer is served even while
+ * idle - course 0, the persisted unlock - so a phone that connects to a mirror
+ * playing nothing still learns what it may start. Render task only. */
+static void session_progress(const char *arg, uint16_t link)
+{
+    char id[24];
+    snprintf(id, sizeof(id), "%s", arg ? arg : "");
+
+    const ml_game_vt *vt = ml_fw_game_find(id);
+    if (vt == NULL || strcmp(vt->id, "jumpman") != 0) {
+        ble_send_status_line_to(link, "game error no campaign");
+        return;
+    }
+
+    if (campaign_unlocked() == 0 || !campaign_flush()) {
+        ble_send_status_line_to(link, "game error progress storage");
+        return;
+    }
+
+    int course = 0;
+    if (s_session != NULL && strcmp(s_game_id, "jumpman") == 0) {
+        const void *state = ml_host_state(s_session);
+        if (state != NULL) course = ml_jumpman_course(state);
+    }
+
+    char line[64];
+    snprintf(line, sizeof(line), "game progress jumpman %d %d",
+             course, campaign_unlocked());
+    ble_send_status_line_to(link, line);
+}
+
 /* Close the session and push "game stopped" at every link. The published state
  * goes first so no input frame can be stamped against a session that is being
  * freed, and the seat table is emptied with it, so a frame from a link that was
@@ -645,6 +874,9 @@ static void session_stop(uint16_t link)
     s_last_input_us = 0;
     s_input_to_render_us = 0;
     input_flush();
+    /* A progression owed to flash at the moment the round is torn down is
+     * written now: stopping is no reason to lose a course that was won. */
+    campaign_flush();
     ble_send_status_line("game stopped");
 }
 
@@ -778,6 +1010,7 @@ bool game_runner_service(void)
         case CMD_START:   session_start(item.id, item.link); break;
         case CMD_JOIN:    session_join(item.link);           break;
         case CMD_SESSION: session_session(item.link);        break;
+        case CMD_PROGRESS: session_progress(item.id, item.link); break;
         case CMD_STOP:    session_stop(item.link);           break;
         case CMD_PAUSE:   session_pause(item.link);          break;
         case CMD_RESUME:  session_resume(item.link);         break;
@@ -891,6 +1124,12 @@ void game_runner_render(ml_canvas *out)
          * huge step when the round continues. */
         s_last_us = now;
     }
+
+    /* Read the campaign's progression after the step: a course the player has
+     * just beaten is unlocked and written to flash on this frame, before the
+     * round can be torn down, and the phones are told at once. Runs on every
+     * frame but only acts on growth. */
+    campaign_step();
 
     /* Tell the phone the game reached its end, once per session. The poll is
      * a pure read of game state; the line rides the same status notification

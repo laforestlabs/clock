@@ -63,6 +63,15 @@ void game_runner_request_join(uint16_t link);
  * seats filled, the seats it needs, its state (waiting, playing, paused or
  * over), and this link's player id, which is 0 when it holds no seat. */
 void game_runner_request_session(uint16_t link);
+
+/* Ask a campaign game's progression. The render task answers the asking link
+ * alone with "game progress <id> <course> <unlocked>": <course> is the course
+ * a live session of that game is running, 0 when none is (the mirror is idle,
+ * or that game has no campaign); <unlocked> is the highest course the mirror
+ * has unlocked, 1..ML_JUMPMAN_COURSES. The answer is served even while idle,
+ * so a phone that connects to a mirror playing nothing still learns what it
+ * may start. A game without a campaign is refused. */
+void game_runner_request_progress(const char *id, uint16_t link);
 void game_runner_request_stop(uint16_t link);
 void game_runner_request_pause(uint16_t link);
 void game_runner_request_resume(uint16_t link);

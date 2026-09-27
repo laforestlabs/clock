@@ -17,6 +17,8 @@
 #include "game_ffi.h"
 #include "mirror/gamerun.h"
 
+#include "mirror/jumpman.h"
+
 /* ---- game registry: the set compiled into this build ---- */
 
 typedef struct {
@@ -149,6 +151,25 @@ ml_game_session *ml_game_open(const char *game_id, int panel_w, int panel_h,
         ml_host_attach_controller(host, (uint16_t)(i + 1), "p", ML_CAP_BUTTON);
 
     return s;
+}
+
+int ml_game_start_course(ml_game_session *s, int course, int unlocked)
+{
+    if (!s || s->game != &ml_game_jumpman || ml_host_tick(s->host) != 0)
+        return 0;
+    return ml_jumpman_start_course(ml_host_state(s->host), course, unlocked) ? 1 : 0;
+}
+
+int ml_game_course(const ml_game_session *s)
+{
+    return s && s->game == &ml_game_jumpman
+        ? ml_jumpman_course(ml_host_state(s->host)) : 0;
+}
+
+int ml_game_unlocked(const ml_game_session *s)
+{
+    return s && s->game == &ml_game_jumpman
+        ? ml_jumpman_unlocked(ml_host_state(s->host)) : 0;
 }
 
 void ml_game_close(ml_game_session *s)

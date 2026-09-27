@@ -24,9 +24,10 @@ terminal and watchdog notifications remain visible to other listeners.
 | Command | Successful reply |
 |---|---|
 | `game list` | `games` followed by space-separated IDs; bare `games` is supported-empty |
-| `game start <id> [1\|2]` | `game ok <id>` followed by declared controls |
+| `game start <id> [1\|2] [course]` | `game ok <id>` followed by declared controls; `course` is supported only for Jumpman, after player count `1` |
 | `game join` | `game joined <player> <id>` followed by declared controls; also the answer for a link that already holds a seat |
 | `game session` | `game session <id> <seats> <need> <state> <me>`, or `game session none`. `state` is `waiting`, `playing`, `paused` or `over`; `me` is this link's player id, 0 when it holds no seat |
+| `game progress jumpman` | `game progress jumpman <current> <unlocked>`; current is `0` when idle, otherwise `1..3`; unlocked is the highest earned course |
 | `game stop` | `game stopped`; `game error no game` also means already stopped |
 | `game pause` | `game paused` |
 | `game resume` | `game resumed` |
@@ -36,6 +37,17 @@ whenever the seat count changes, `game stopped` / `game paused` / `game resumed`
 when the shared round changes state, and `game over <id>` when it reaches its
 end. A command's reply goes to the link that asked; a state change goes to every
 link, because it changes what every phone shows.
+
+Jumpman broadcasts progress when a course starts or changes. The mirror stores
+the highest unlocked course in NVS (`games/jm_unlocked`) as soon as a flag earns
+it; stopping, losing, replaying an earlier course and rebooting do not lower it.
+An explicit start is rejected if its course is locked. Omit the course to start
+course 1. Phone-local preview progress is separate from the mirror's progress.
+An unavailable progress store returns `game error progress storage`. A failed
+unlock write sends `game progress unsaved`; progress remains in memory and is
+retried on Stop or the next progress query. The app reports the failure rather
+than claiming it was saved. Older firmware answering `unknown command` keeps
+the original single-course controls.
 
 Pause/Resume are idempotent in their respective states. Without a session they
 return `game error no game`; resuming a terminal session returns
@@ -534,20 +546,27 @@ one point per scrolled column, narrows as distance increases, and pauses scrolli
 for 80 ticks after a crash; steering still works during recovery, so holding into
 a wall can cost another life. Maze requires three keys and an exit in each of
 three 60-second rounds. Gallery lasts 60 seconds, fires every eight ticks while
-Shoot is held, and rewards consecutive hits up to 50 points each. Jumpman is one
-hand-authored 256-column level through a 64-column window: coins pay 200,
-goombas and koopas pay 100, shell kills pay 200, bricks pay 50, a mushroom
-pays 1000, and the flag pays 1000. A checkpoint survives death; a pit or enemy
-hit consumes one of three lives, reloads the authored level, and restarts at the
-checkpoint. Scores cap at 9999; terminal boards show the score and `OVER` or
-`WIN`. Replay belongs to the app.
+Shoot is held, and rewards consecutive hits up to 50 points each. Jumpman is a
+three-course campaign through a 64-column window: **Original**, **Pipe Garden**
+and **Koopa Quarry**. Each course is 256 columns. Coins pay 200, goombas and
+koopas pay 100, shell kills pay 200, bricks pay 50, a mushroom pays 1000, and
+each flag pays 1000. A checkpoint survives death within its course; a pit or
+enemy hit consumes one of three lives and reloads that course at its checkpoint.
+Flags in courses 1 and 2 permanently unlock the next course and continue there
+after a title banner, carrying score and remaining lives but resetting the
+checkpoint. Course 3's flag ends in `WIN`; running out of lives ends in `OVER`.
+Scores cap at 9999. The app's Course picker starts any earned course with a fresh
+score and three lives; Restart replays the active course. Only course 1 is
+available initially, and earned courses remain replayable after losing or
+restarting the app or mirror.
 
 Jumpman's veneer-oriented palette keeps the background black and uses bright
 multi-channel colours for terrain, enemies and pickups; only inset eyes and
 block markings stay dark. The HUD uses compact 3x7 `micro7` digits, with cyan
-score, gold coin count and coral lives; end-screen labels use `sans8`. Level
-geometry and collision bounds are unchanged. The editor's map palette matches
-the game. Preview attenuation with `game-cli jumpman --led --mirror 20`; this
+score, gold coin count and coral lives; three pips mark course progress.
+End-screen labels use `sans8`. The original course's geometry and collision
+bounds are unchanged. The editor's map palette matches the game.
+Preview attenuation with `game-cli jumpman --led --mirror 20`; this
 is a visibility check, not a calibration for a particular veneer or panel.
 
 The level editor plays a level back through this same game before writing it
@@ -560,6 +579,45 @@ still, so it can misjudge a takeoff or collide with an enemy it should have
 stomped. The three are repeatable probes of how forgiving a level is, not
 calibrated human success rates: a run that fails describes that profile's
 mistakes, and never proves the level cannot be finished by a person.
+
+All three courses ship in the native game. The two additional courses also live
+in `jumpman_editor/levels/` as editor project files: open either JSON to inspect
+or playtest it. An injected editor level remains standalone: its flag ends in
+`WIN` and cannot earn campaign unlocks.
+
+- **Pipe Garden** (`pipe-garden.json`): four low planted pipes, spaced goomba
+  encounters and overhead coin blocks. Safe ground makes this a timing course:
+  wait for plants to retract, vault their pipes, and jump the walkers.
+- **Koopa Quarry** (`koopa-quarry.json`): raised terraces, three narrow excavation
+  gaps, koopas and a kickable shell. Elevation changes and short gap jumps replace
+  the garden's plant waits. Both courses use the existing game palette and enemy
+  types, with a safe checkpoint at column 120.
+
+The native-game auto-play matrix (seed 1, unchanged High/Medium/Low profiles,
+three starting lives, 4,000-tick limit) gives:
+
+| Course | High | Medium | Low |
+| --- | --- | --- | --- |
+| Original | Win, 3 lives | Loss, column 221 | Loss, column 89 |
+| Pipe Garden | Win, 3 lives | Win, 3 lives | Win, 3 lives |
+| Koopa Quarry | Win, 3 lives | Win, 3 lives | Loss, column 21 |
+
+Medium clears **2/3** courses; High clears all three. Loss columns are the
+furthest reached, not necessarily the final death location. This matrix is
+covered by `jumpman_editor/test/autoplay_test.dart` against both editor-injected
+levels and the compiled courses. It checks High completion for every course,
+at least two Medium completions, the full High campaign and starting from an
+earned later course, without requiring Low to fail. Native regressions cover
+locked starts, transitions, checkpoint reset and monotonic progress; app tests
+cover persistence, replay and device-authoritative course selection.
+Run after building the current native library:
+
+```sh
+cd jumpman_editor
+flutter build linux --debug
+LD_LIBRARY_PATH=build/linux/x64/debug/bundle/lib \
+  flutter test test/autoplay_test.dart --reporter expanded
+```
 
 Picker thumbnails are real CLI captures at seed 1: 90 frames for Racer, Maze,
 Gallery and Jumpman; 20 for Cave, whose default button demo ends before frame 90;

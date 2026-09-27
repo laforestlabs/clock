@@ -76,6 +76,7 @@ import 'package:mirror_core_ffi/mirror_core_ffi.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import '../controller.dart';
+import '../services/jumpman_progress.dart';
 import '../services/mirror_ble.dart';
 import '../services/mirror_ble_game.dart';
 import '../services/mirror_ble_status.dart';
@@ -362,6 +363,11 @@ class _GameScreenState extends State<GameScreen>
   /// other phone back before it can continue.
   static const String _gameWaitingReason = 'waiting';
 
+  /// The line the device broadcasts when it earned a course but could not write
+  /// it to its own storage (`game progress unsaved`). The unlock it just made
+  /// is not durable, and only the player can do anything about that.
+  static const String _mirrorUnsavedLine = 'game progress unsaved';
+
   /// The lowest side a pad button may shrink to. A play surface that cannot
   /// give every button this much room is refused, not clipped.
   static const double _minPadSide = 48;
@@ -428,16 +434,20 @@ class _GameScreenState extends State<GameScreen>
       goal: 'Tilt left and right to dodge traffic. Three crashes end the run.',
     ),
     'cave': _GameCopy(
-      goal: 'Tilt forward and back to guide your ship through the cave. Avoid the walls.',
+      goal:
+          'Tilt forward and back to guide your ship through the cave. Avoid the walls.',
     ),
     'maze': _GameCopy(
-      goal: 'Tilt toward a passage to move. Collect three keys and reach the exit before time runs out.',
+      goal:
+          'Tilt toward a passage to move. Collect three keys and reach the exit before time runs out.',
     ),
     'gallery': _GameCopy(
-      goal: 'Tilt to aim and hold Shoot to hit targets. Consecutive hits earn more points.',
+      goal:
+          'Tilt to aim and hold Shoot to hit targets. Consecutive hits earn more points.',
     ),
     'jumpman': _GameCopy(
-      goal: 'Run right, jump the gaps and stomp the goombas. Bump the ? blocks for coins, '
+      goal:
+          'Run right, jump the gaps and stomp the goombas. Bump the ? blocks for coins, '
           'grab a mushroom to take an extra hit, and reach the flagpole.',
     ),
   };
@@ -516,6 +526,90 @@ class _GameScreenState extends State<GameScreen>
   /// missing library is presented in place of the picker instead of crashing
   /// the screen during startup.
   String? _libraryError;
+
+  // ---------------------------------------------------------- the campaign
+  //
+  // Jumpman ships as a three-course campaign whose ceiling this phone
+  // remembers (jumpman_progress.dart). The picker therefore offers one more
+  // decision than "which game": which course, of the ones already earned. The
+  // runtime is told both numbers when a campaign round opens, and it reports
+  // the ceiling back the moment a course is beaten - not when the player gives
+  // up - so an unlock is never lost by leaving the round.
+
+  /// The highest course this phone has unlocked. Read from the progress store
+  /// before any campaign round may start; course 1 until then.
+  int _jumpmanUnlocked = 1;
+
+  /// The course a fresh campaign round starts at: the picker's selection. The
+  /// loaded ceiling picks the first one, a course the player earns during a run
+  /// moves it to that course (the runtime has already handed the run over to it),
+  /// and replaying an earlier course leaves it where the player put it - which
+  /// it must, because a run below the frontier can never raise the ceiling.
+  int _jumpmanCourse = 1;
+
+  /// Whether the player has chosen a course on this screen. The loaded ceiling
+  /// only picks the initial selection; a choice made here is never overridden
+  /// by it.
+  bool _jumpmanCourseChosen = false;
+
+  /// Whether the stored campaign ceiling has been read. Until it has, no
+  /// campaign round starts: a round opened with a guessed ceiling would gate
+  /// the courses wrongly, and its first win would be saved over progress the
+  /// player had long since earned past.
+  bool _jumpmanLoaded = false;
+
+  /// The course the local round on screen is on. It starts at the course that
+  /// was picked and follows the runtime as the campaign hands the run over to
+  /// the next course - so the header names the course actually being played,
+  /// and Restart starts over on it. Null when the round is not a campaign one.
+  int? _jumpmanRoundCourse;
+
+  /// The course this round earned, or null. The runtime raises its ceiling the
+  /// moment a flag is reached, mid-run, so this is set while the round that did
+  /// the earning is still on screen, and cleared with the round.
+  int? _jumpmanEarnedCourse;
+
+  /// An unlock the runtime reported that the store has not accepted yet. Kept
+  /// as the newest ceiling, so a later successful write never saves a lower one.
+  int? _unsavedJumpmanUnlocked;
+
+  /// Whether a progress write is in flight, so one at a time goes out.
+  bool _savingJumpman = false;
+
+  /// Why the campaign progress could not be read or saved, or null. Shown
+  /// where the campaign is offered and beside the round it affects, so a
+  /// progress that was not stored is visible instead of quietly lost.
+  String? _jumpmanError;
+
+  /// The mirror's own campaign progress, from `game progress jumpman`: which
+  /// course the device is running (0 when idle) and the highest one it has
+  /// unlocked. Null until the device has answered, and on firmware that does
+  /// not have the command - the mirror's campaign is then offered as the single
+  /// course such a device ships.
+  MirrorGameProgress? _mirrorProgress;
+
+  /// Why the mirror's own campaign progress could not be read, or null. A
+  /// device that refuses the question - its storage is unavailable - says so
+  /// rather than being mistaken for firmware that has no campaign at all.
+  String? _mirrorProgressError;
+
+  /// The course a fresh mirror campaign round asks the device for. Set to the
+  /// mirror's own unlocked course when its progress is first read, and left
+  /// where the player puts it after that.
+  int _mirrorCourse = 1;
+
+  /// Whether the player has chosen the mirror's course on this screen.
+  bool _mirrorCourseChosen = false;
+
+  /// The course this phone asked the mirror to start, or null when it asked for
+  /// none. Restart replays it; the device's own progress is what decides what
+  /// may be asked for.
+  int? _mirrorRoundCourse;
+
+  /// The course the mirror raised its ceiling to while this screen had a round
+  /// on it, or null. The device is the authority on its own progress, so this
+  /// only reports what the device said happened during the round on screen.
+  int? _mirrorEarnedCourse;
 
   DesignerController get _c => widget.controller;
   MirrorConnection get _connection => widget.connection;
@@ -743,6 +837,14 @@ class _GameScreenState extends State<GameScreen>
     }
     _ticker = Ticker(_onTick);
     _gameplayFocus = FocusNode();
+    // The campaign's ceiling is asked for as the screen opens, so it is in
+    // hand long before a course is picked: a Jumpman round does not start
+    // until it has been read, and a store that cannot be read is said on
+    // screen rather than played over from course 1. Only asked for where the
+    // build actually has the campaign to offer.
+    if (_games.any((GameInfo game) => game.id == kJumpmanGameId)) {
+      unawaited(_loadJumpmanProgress());
+    }
     // The app leaving the foreground is an interruption like any other: a
     // suspended phone must not keep driving (or keep a mirror game running
     // unattended).
@@ -896,11 +998,167 @@ class _GameScreenState extends State<GameScreen>
   /// How many seats a fresh Start asks the mirror for. Two only for a game
   /// this build knows to take a second player and only in two-phone mode, so
   /// the count and the chips can never disagree.
-  int get _mirrorStartPlayers =>
-      _playerMode == _PlayerMode.two &&
-              _mirrorTakesTwo(_mirrorPlayableSelection)
-          ? 2
-          : 1;
+  int get _mirrorStartPlayers => _playerMode == _PlayerMode.two &&
+          _mirrorTakesTwo(_mirrorPlayableSelection)
+      ? 2
+      : 1;
+
+  // ------------------------------------------------------ campaign progress
+
+  /// Read the highest course this phone has unlocked. A store that cannot be
+  /// read leaves the campaign closed, with the reason and a way to ask again on
+  /// screen: guessing course 1 would gate the courses wrongly and the first win
+  /// would be saved over progress the player had already earned past.
+  Future<void> _loadJumpmanProgress() async {
+    try {
+      final unlocked = await loadJumpmanUnlocked();
+      if (!mounted) return;
+      setState(() {
+        _jumpmanUnlocked = unlocked;
+        // The campaign continues where it was left, unless the player has
+        // already picked a course on this screen.
+        if (!_jumpmanCourseChosen) _jumpmanCourse = unlocked;
+        _jumpmanLoaded = true;
+        _jumpmanError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _jumpmanLoaded = false;
+        _jumpmanError = 'Could not read the campaign progress: $error';
+      });
+    }
+  }
+
+  /// Drain earned unlocks in order, including a newer one earned while a write
+  /// was pending. Failure leaves the pending value available for explicit retry.
+  Future<void> _flushJumpmanProgress() async {
+    if (_unsavedJumpmanUnlocked == null || _savingJumpman) return;
+    _savingJumpman = true;
+    try {
+      while (_unsavedJumpmanUnlocked != null) {
+        final value = _unsavedJumpmanUnlocked!;
+        await saveJumpmanUnlocked(value);
+        if (_unsavedJumpmanUnlocked == value) _unsavedJumpmanUnlocked = null;
+        if (mounted) setState(() => _jumpmanError = null);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _jumpmanError =
+            'Course $_unsavedJumpmanUnlocked was unlocked but could not be saved: $error');
+      }
+    } finally {
+      _savingJumpman = false;
+    }
+  }
+
+  /// Take the campaign's own report of where the round has got to, read after
+  /// every step.
+  ///
+  /// Two numbers matter and both come from the runtime: the course the run is
+  /// on - it hands over to the next one at a flag, score and lives intact - and
+  /// the ceiling, which rises at that same moment rather than when the run ends.
+  /// The store is touched only when the ceiling actually rose, never once per
+  /// frame, and the header only rebuilds when one of the two numbers changed.
+  void _syncLocalCampaign(GameEngine engine) {
+    final int course, unlocked;
+    try {
+      course = engine.course;
+      unlocked = engine.unlockedCourse;
+    } on StateError {
+      return;
+    }
+    final int? live = course >= 1 ? course : null;
+    final int clamped = clampJumpmanCourse(unlocked);
+    final bool rose = _jumpmanLoaded && clamped > _jumpmanUnlocked;
+    if (live == _jumpmanRoundCourse && !rose) return;
+    setState(() {
+      if (live != null) _jumpmanRoundCourse = live;
+      if (rose) {
+        _jumpmanUnlocked = clamped;
+        // Only a run that reached the frontier can raise the ceiling, so a
+        // fresh start follows the course just earned; a replay below the
+        // frontier never gets here and leaves the picker where the player put
+        // it.
+        _jumpmanCourse = clamped;
+        _jumpmanEarnedCourse = clamped;
+        _unsavedJumpmanUnlocked = clamped;
+      }
+    });
+    if (rose) unawaited(_flushJumpmanProgress());
+  }
+
+  /// The course a fresh mirror campaign round asks the device for, or null when
+  /// there is nothing to ask: an earlier course, or firmware that does not
+  /// report its progress, which is left to start its own default course.
+  ///
+  /// The device is the authority on what its campaign has unlocked, so a course
+  /// this phone has selected but the mirror has not earned is capped rather
+  /// than sent to be refused.
+  int? _mirrorStartCourse(String id) {
+    final progress = _mirrorProgress;
+    if (id != kJumpmanGameId || progress == null) return null;
+    final unlocked = clampJumpmanCourse(progress.unlockedCourse);
+    final selected = clampJumpmanCourse(_mirrorCourse);
+    return selected > unlocked ? unlocked : selected;
+  }
+
+  /// Ask the mirror how far its own campaign has got. Never fatal, and never
+  /// silent about a refusal: firmware without the command answers null (the
+  /// mirror's campaign is then offered as the single course such a device
+  /// ships), while a device that refuses - its storage is unavailable - says so
+  /// where the course picker would be.
+  Future<void> _refreshMirrorProgress(BleSession session) async {
+    MirrorGameProgress? progress;
+    String? failure;
+    try {
+      progress = await session.gameProgress();
+    } on BlePushException catch (e) {
+      failure = e.message;
+    } catch (error) {
+      failure = error.toString();
+    }
+    if (!mounted || !identical(_connection.session, session)) return;
+    setState(() {
+      _mirrorProgressError = failure;
+      _applyMirrorProgress(progress);
+    });
+  }
+
+  /// The mirror pushed its own progress: the course it is running (0 when idle
+  /// or when the round is not Jumpman) and the highest one unlocked on the
+  /// device.
+  ///
+  /// The device is the authority - nothing here is written to this phone's own
+  /// progress, and a course it has not earned is not selected - and its report
+  /// is also what decides which courses this screen may offer to start.
+  void _onMirrorProgress(MirrorGameProgress progress) {
+    setState(() {
+      _mirrorProgressError = null;
+      _applyMirrorProgress(progress);
+    });
+  }
+
+  /// Record one report from the device. [progress] is null when the device has
+  /// no progress to report at all: the campaign is then offered as one course
+  /// and no course is named on a start.
+  void _applyMirrorProgress(MirrorGameProgress? progress) {
+    final int? previous = _mirrorProgress?.unlockedCourse;
+    _mirrorProgress = progress;
+    if (progress == null) return;
+    if (!_mirrorCourseChosen) {
+      _mirrorCourse = clampJumpmanCourse(progress.unlockedCourse);
+    }
+    // A ceiling the device raised while this screen had a round on it: what
+    // the round on screen just earned, said beside it. A ceiling that was
+    // already higher - a round joined after the device got there - is not this
+    // round's doing and is not claimed as such.
+    if (_mirrorGameId != null &&
+        previous != null &&
+        progress.unlockedCourse > previous) {
+      _mirrorEarnedCourse = clampJumpmanCourse(progress.unlockedCourse);
+    }
+  }
 
   /// Start the game the picker shows.
   void _startGame() {
@@ -944,16 +1202,36 @@ class _GameScreenState extends State<GameScreen>
   /// Start (or restart) one local game. A library failure leaves the setup
   /// view in place with the reason on screen: nothing is indexed blindly.
   ///
+  /// [course] names the campaign course to open. Null means the picker's
+  /// selection, which is what a fresh Start uses; Restart passes the course the
+  /// round on screen was started at, so playing it again replays it.
+  ///
   /// A restart opens a fresh session: the previous engine and its frame are
   /// destroyed rather than resumed, its decode - if one is still in flight -
   /// is invalidated so it cannot draw over the new round, and every input
   /// source is released so a key that was down in the old round cannot appear
   /// pressed in the new one.
-  void _startLocalGame(GameInfo game) {
+  void _startLocalGame(GameInfo game, {int? course}) {
     // The last line of defence for the device contract, whatever called in:
     // while this screen is a device's gamepad, no native round is opened
     // here. A session that went away is not a reason to simulate instead.
     if (_isControllerMode) return;
+    final campaign = game.id == kJumpmanGameId;
+    // A campaign round needs the ceiling the store holds, and it is not
+    // guessed: opening one before the read lands could gate the courses wrongly
+    // and would save the first win over progress already earned.
+    if (campaign && !_jumpmanLoaded) {
+      _showMessage(_jumpmanError ?? 'The campaign progress is still loading');
+      return;
+    }
+    final startCourse =
+        campaign ? clampJumpmanCourse(course ?? _jumpmanCourse) : null;
+    // The picker disables the courses that are still locked; this is the same
+    // rule at the last moment before the runtime would refuse it.
+    if (campaign && startCourse! > _jumpmanUnlocked) {
+      _showMessage('Course $startCourse is not unlocked yet');
+      return;
+    }
     final panel = _panelSizes[_sizeIndex];
     _disposeLocalSession();
     final GameEngine engine;
@@ -967,6 +1245,11 @@ class _GameScreenState extends State<GameScreen>
         // engine. Rally's absent second player is the AI the runtime attaches;
         // multiplayer support stays in the runtime, the FFI, and the CLI.
         players: 1,
+        // The campaign opens at the course asked for, bounded by what the
+        // player has earned. Every other game - and an editor-injected level -
+        // is opened without a course, which is what leaves it a single round.
+        course: startCourse,
+        unlockedCourse: campaign ? _jumpmanUnlocked : 1,
       );
     } on GameLibraryException catch (e) {
       setState(() {
@@ -978,6 +1261,7 @@ class _GameScreenState extends State<GameScreen>
         _held = const <int>[];
         _localGame = null;
         _localControls = const <GameControl>[];
+        _jumpmanRoundCourse = null;
       });
       return;
     }
@@ -985,6 +1269,8 @@ class _GameScreenState extends State<GameScreen>
       _engine = engine;
       _localGame = game;
       _localControls = game.controls;
+      _jumpmanRoundCourse = startCourse;
+      _jumpmanEarnedCourse = null;
       _phase = _PlayPhase.playing;
       _libraryError = null;
       _playError = null;
@@ -1071,6 +1357,9 @@ class _GameScreenState extends State<GameScreen>
     _disposeLocalSession();
     _discardMotion();
     setState(() => _phase = _PlayPhase.idle);
+    // An unlock the store refused is asked for again now that the player is
+    // back at the picker, which is where a failure is visible.
+    unawaited(_flushJumpmanProgress());
   }
 
   // -------------------------------------------------- local frame lifecycle
@@ -1113,6 +1402,8 @@ class _GameScreenState extends State<GameScreen>
     _frame = null;
     _localGame = null;
     _localControls = const <GameControl>[];
+    _jumpmanRoundCourse = null;
+    _jumpmanEarnedCourse = null;
     _held = const <int>[];
     _playError = null;
     _lastTime = Duration.zero;
@@ -1579,6 +1870,8 @@ class _GameScreenState extends State<GameScreen>
     _mirrorGameId = null;
     _mirrorGame = null;
     _mirrorSession = null;
+    _mirrorRoundCourse = null;
+    _mirrorEarnedCourse = null;
     _playerId = 0;
     _mirrorNeed = 1;
     _pendingPaused = false;
@@ -1665,6 +1958,12 @@ class _GameScreenState extends State<GameScreen>
         _mirrorLoading = false;
         _mirrorListError = null;
         _mirrorSelected = null;
+        // The progress belonged to the link that went away; a replacement link
+        // is asked again rather than inheriting what the old device reported.
+        _mirrorProgress = null;
+        _mirrorProgressError = null;
+        _mirrorCourse = 1;
+        _mirrorCourseChosen = false;
         if (stale) _clearMirrorPlay();
         if (local) {
           _disposeLocalSession();
@@ -1695,6 +1994,10 @@ class _GameScreenState extends State<GameScreen>
       _mirrorLoading = false;
       _mirrorListError = null;
       _mirrorSelected = null;
+      _mirrorProgress = null;
+      _mirrorProgressError = null;
+      _mirrorCourse = 1;
+      _mirrorCourseChosen = false;
       if (ended) {
         _clearMirrorPlay();
       } else if (_engine == null && _phase != _PlayPhase.idle) {
@@ -2074,6 +2377,11 @@ class _GameScreenState extends State<GameScreen>
       // fatal: a device that does not know the command answers `unknown
       // command`, which leaves the screen exactly as it was before.
       unawaited(_refreshMirrorSession(session));
+      // The mirror's own campaign progress is asked for with the catalogue:
+      // the picker has to know which courses the device can start before it
+      // offers one, and a device that does not answer keeps the single-course
+      // view it had before.
+      unawaited(_refreshMirrorProgress(session));
     } on BlePushException catch (e) {
       // The device answered and refused: show its reason and offer a retry.
       if (!_opStillValid(session, generation)) return;
@@ -2130,6 +2438,26 @@ class _GameScreenState extends State<GameScreen>
     final seats = parseGamePlayers(line);
     if (seats != null) {
       _onMirrorPlayers(seats.seats, seats.need);
+      return;
+    }
+    // The device's own campaign progress: pushed when it changes and at the
+    // start of a Jumpman round. Nothing else on this screen may be gated on
+    // this phone's local progress, so this line is the only authority on which
+    // courses the mirror can start.
+    final progress = parseGameProgress(line);
+    if (progress != null) {
+      _onMirrorProgress(progress);
+      return;
+    }
+    // The device earned a course and could not commit it to its own storage.
+    // Nothing on this phone can fix that, and the player has to know the
+    // unlock will not survive a power cycle.
+    if (line == _mirrorUnsavedLine) {
+      _showMessage(
+        'Could not save course progress on the mirror. '
+        'Keep it powered on and retry.',
+        dismissible: true,
+      );
       return;
     }
     if (line == 'game stopped') {
@@ -2210,8 +2538,8 @@ class _GameScreenState extends State<GameScreen>
   /// they come from what the screen already knows.
   void _onMirrorPlayers(int seats, int need) {
     final previous = _mirrorSession;
-    final started = _phase == _PlayPhase.waiting && _playerId != 0 &&
-        seats >= need;
+    final started =
+        _phase == _PlayPhase.waiting && _playerId != 0 && seats >= need;
     setState(() {
       _mirrorSession = MirrorSessionInfo(
         id: previous?.id ?? _mirrorGameId,
@@ -2302,14 +2630,18 @@ class _GameScreenState extends State<GameScreen>
   /// instead" starts the one seat it needs without changing what the mode row
   /// says for the next round.
   ///
+  /// [course] overrides the course a fresh campaign round would ask for, which
+  /// is how Restart replays the course the round on screen was started at. Null
+  /// means the picker's choice, capped by what the mirror itself has unlocked.
+  ///
   /// Nothing starts until the diagnostics sheet is closed and, in motion mode,
   /// until neutral has been established: a round nothing can steer is worse
   /// than a refused start.
-  Future<void> _startMirrorGame([String? requestedId, int? players]) async {
+  Future<void> _startMirrorGame({String? id, int? players, int? course}) async {
     final session = _connection.session;
     if (session == null || _mirrorBusy) return;
-    final id = requestedId ?? _mirrorPlayableSelection;
-    if (id == null) return;
+    final gameId = id ?? _mirrorPlayableSelection;
+    if (gameId == null) return;
     final preparingGeneration = _opGeneration;
     await _closeDiagnostics();
     if (!_opStillValid(session, preparingGeneration) || _mirrorBusy) return;
@@ -2319,10 +2651,16 @@ class _GameScreenState extends State<GameScreen>
     // Decided before the command goes out, so the phase below and the count
     // the device was asked for are the same decision.
     final seats = players ?? _mirrorStartPlayers;
+    // Which course the round runs is decided the same way and travels on the
+    // same command: the picker's choice unless the caller named one. Null for
+    // anything but the mirror's campaign, which is what leaves the device on
+    // its own default course.
+    final startCourse = course ?? _mirrorStartCourse(gameId);
     _releaseMirrorInput();
     setState(() {
       _phase = _PlayPhase.starting;
-      _mirrorGameId = id;
+      _mirrorGameId = gameId;
+      _mirrorRoundCourse = startCourse;
       _mirrorGame = null;
       _pendingOver = false;
       _pendingPaused = false;
@@ -2336,7 +2674,8 @@ class _GameScreenState extends State<GameScreen>
     _attachStatusListener(session);
     final MirrorGame game;
     try {
-      game = await session.startGame(id, players: seats);
+      game =
+          await session.startGame(gameId, players: seats, course: startCourse);
     } on BlePushException catch (e) {
       // A named rejection: the device is alive and the round never started,
       // so the acknowledged state stays as it was.
@@ -2344,6 +2683,7 @@ class _GameScreenState extends State<GameScreen>
       setState(() {
         _phase = _PlayPhase.idle;
         _mirrorGameId = null;
+        _mirrorRoundCourse = null;
         _pendingInterruption = false;
         _pendingPaused = false;
         _pendingOver = false;
@@ -2373,7 +2713,7 @@ class _GameScreenState extends State<GameScreen>
       _playerId = 1;
       _mirrorNeed = seats;
       _mirrorSession = MirrorSessionInfo(
-        id: id,
+        id: gameId,
         seats: 1,
         need: seats,
         state: seats > 1 ? 'waiting' : 'playing',
@@ -2549,7 +2889,7 @@ class _GameScreenState extends State<GameScreen>
     if (!stopped || !_opStillValid(session, generation)) return;
     if (_phase != _PlayPhase.idle) return;
     if (!identical(_connection.session, session)) return;
-    await _startMirrorGame(id, 1);
+    await _startMirrorGame(id: id, players: 1);
   }
 
   /// Stop the mirror's game. The local round is cleared only once the device
@@ -2815,7 +3155,9 @@ class _GameScreenState extends State<GameScreen>
     // acknowledged.
     if (_phase != _PlayPhase.idle) return;
     if (!identical(_connection.session, session)) return;
-    await _startMirrorGame(id);
+    // The course this phone asked for is replayed as it was: Play again is the
+    // same round again, and the newly unlocked course is waiting in the picker.
+    await _startMirrorGame(id: id, course: _mirrorRoundCourse);
   }
 
   /// Whether a round that is about to start may run with the current
@@ -3633,6 +3975,12 @@ class _GameScreenState extends State<GameScreen>
       _releaseAllInput();
     }
 
+    // A campaign course is earned the moment its flag is reached, which the
+    // runtime reports through the session's own ceiling: read after every step
+    // so the unlock is remembered at once, and the store is written only when
+    // the number has actually risen.
+    if (_jumpmanRoundCourse != null) _syncLocalCampaign(engine);
+
     // The simulation keeps its cadence whether or not the decoder is busy;
     // only the copy-and-decode is skipped, so a slow decode costs the round
     // no time and the skipped frames cost it no allocation.
@@ -3680,8 +4028,8 @@ class _GameScreenState extends State<GameScreen>
     // being played, and its key repeat is not a new press.
     if (event.logicalKey == LogicalKeyboardKey.space) {
       const key = _KeySource(LogicalKeyboardKey.space);
-      final action = _controlIndexForLabel('Shoot') ??
-          _controlIndexForLabel('Jump');
+      final action =
+          _controlIndexForLabel('Shoot') ?? _controlIndexForLabel('Jump');
       if (action != null && _phase == _PlayPhase.playing) {
         if (down) _pressControl(action, key);
         if (up) _releaseControl(action, key);
@@ -3732,6 +4080,10 @@ class _GameScreenState extends State<GameScreen>
   /// started, otherwise the picker's selection. Restart, Play again and Space
   /// all go through this, so none of them can quietly swap the round for
   /// another game.
+  ///
+  /// A campaign round is replayed at the course it was started at, not at
+  /// whatever the picker has moved on to: playing a course again is the same
+  /// course again, and the newly earned one is waiting in the picker.
   Future<void> _replayOrStartLocal() async {
     // A round replayed after the app was suspended has no neutral left: the
     // suspension discarded it, so a motion replay asks for it again first.
@@ -3739,7 +4091,7 @@ class _GameScreenState extends State<GameScreen>
     if (!mounted) return;
     final current = _localGame;
     if (current != null) {
-      _startLocalGame(current);
+      _startLocalGame(current, course: _jumpmanRoundCourse);
       return;
     }
     _startGame();
@@ -4161,7 +4513,13 @@ class _GameScreenState extends State<GameScreen>
   /// What the picker selected, stated once: the game's name, what it asks for,
   /// and the controls that do it. A game this build does not know keeps its raw
   /// name and gets no invented instructions.
-  Widget _buildSelectedDetails({required String? id, String? note}) {
+  ///
+  /// [campaign] is the selected game's campaign picker, where it has one: it
+  /// belongs with the other pre-start choices, in the part of the setup that
+  /// scrolls, because a phone held sideways has room for the picker and the
+  /// Start action and not for another pinned row.
+  Widget _buildSelectedDetails(
+      {required String? id, String? note, Widget? campaign}) {
     if (id == null) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4181,6 +4539,10 @@ class _GameScreenState extends State<GameScreen>
         if (_copyControlLabels(id).isNotEmpty) ...<Widget>[
           const SizedBox(height: 8),
           _buildControlSummary(id, keyName: 'game-controls', compact: true),
+        ],
+        if (campaign != null) ...<Widget>[
+          const SizedBox(height: 12),
+          campaign,
         ],
         const SizedBox(height: 12),
         _buildInputModePicker(verbose: true),
@@ -4212,6 +4574,10 @@ class _GameScreenState extends State<GameScreen>
     final selected = playable.isEmpty
         ? null
         : playable[_gameIndex < playable.length ? _gameIndex : 0];
+    // The campaign adds one decision - which course, of the ones earned - and
+    // that decision is blocked until the ceiling has been read from the store.
+    final campaign = selected?.id == kJumpmanGameId;
+    final campaignReady = !campaign || _jumpmanLoaded;
     return _buildSetupView(
       // Where the game is shown: the panel painted right here, not the
       // mirror's hardware.
@@ -4249,10 +4615,17 @@ class _GameScreenState extends State<GameScreen>
         note: selected != null && selected.maxPlayers > 1
             ? 'Solo vs computer'
             : null,
+        // Which course the campaign round starts at, with the state of the
+        // progress store in the same place.
+        campaign: campaign ? _buildCampaignPicker() : null,
       ),
       footer: _buildStartFooter(
-        _setupHint(selected?.id),
-        selected == null || _motionBusy ? null : _startLocalFromSetup,
+        campaignReady
+            ? _setupHint(selected?.id)
+            : (_jumpmanError ?? 'Loading campaign progress...'),
+        selected == null || _motionBusy || !campaignReady
+            ? null
+            : _startLocalFromSetup,
       ),
     );
   }
@@ -4268,6 +4641,7 @@ class _GameScreenState extends State<GameScreen>
     if (failure != null) return _buildLocalFailure(failure);
     final game = _localGame;
     final terminal = _phase == _PlayPhase.over;
+    final campaignLines = _buildLocalCampaignLines();
     return Column(
       children: <Widget>[
         Padding(
@@ -4296,6 +4670,11 @@ class _GameScreenState extends State<GameScreen>
             ],
           ),
         ),
+        // The campaign's own lines: which course the round is on - it follows
+        // the runtime as the campaign hands the run over - and what this round
+        // has unlocked, which happens mid-round rather than at its end. Restart
+        // starts over on the course named here.
+        if (campaignLines != null) campaignLines,
         // Motion mode draws no movement pad - a pad under a thumb that is not
         // steering would fight the tilt - but the panel stays on screen, which
         // is where the probe's dot shows what the phone is doing.
@@ -4328,6 +4707,34 @@ class _GameScreenState extends State<GameScreen>
             ),
           ),
       ],
+    );
+  }
+
+  /// The campaign lines a local campaign round carries, or null for every other
+  /// round: the course it is on, the course it has just unlocked, and any
+  /// failure to read or save the progress behind either. Kept together so the
+  /// three can never disagree about what is on screen.
+  Widget? _buildLocalCampaignLines() {
+    final course = _jumpmanRoundCourse;
+    if (course == null) return null;
+    final earned = _buildCourseEarned(_jumpmanEarnedCourse);
+    final error = _jumpmanError;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _buildCourseLine(course: course, keyName: 'course-active'),
+          if (earned != null) earned,
+          if (error != null)
+            Text(
+              error,
+              key: const ValueKey<String>('campaign-status'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.red),
+            ),
+        ],
+      ),
     );
   }
 
@@ -4457,21 +4864,58 @@ class _GameScreenState extends State<GameScreen>
     return _buildMirrorPlaying(game);
   }
 
-  /// The live mirror round: the seat this phone holds, when there is more than
-  /// one, above the same play surface a solo round uses. The header is the only
-  /// thing a two-phone round adds here, and it is what tells the two players
-  /// apart on a panel that shows both paddles at once.
+  /// The live mirror round: the campaign's course line and the seat this phone
+  /// holds, when there is more than one, above the same play surface a solo
+  /// round uses. The header is the only thing a two-phone round adds here, and
+  /// it is what tells the two players apart on a panel that shows both paddles
+  /// at once.
   Widget _buildMirrorPlaying(MirrorGame game) {
     final surface = _inputMode == _InputMode.motion
         ? _buildMotionGamepad()
         : _buildPlaySurface(preview: null);
     final header = _mirrorSeatHeader(game);
-    if (header == null) return surface;
+    final campaignLines = _buildMirrorCampaignLines();
+    if (campaignLines == null) {
+      if (header == null) return surface;
+      return Column(
+        children: <Widget>[
+          header,
+          Expanded(child: surface),
+        ],
+      );
+    }
     return Column(
       children: <Widget>[
-        header,
+        campaignLines,
+        if (header != null) header,
         Expanded(child: surface),
       ],
+    );
+  }
+
+  /// The campaign lines a mirror campaign round carries, or null for every
+  /// other round.
+  ///
+  /// The course is the device's own report when it has one - a round another
+  /// phone started, or one this screen joined, is named by the device rather
+  /// than by what this phone happened to ask for - and what the round unlocked
+  /// is the ceiling the device raised while this round was on screen.
+  Widget? _buildMirrorCampaignLines() {
+    final progress = _mirrorProgress;
+    final reported =
+        progress != null && progress.course > 0 ? progress.course : null;
+    final course = reported ?? _mirrorRoundCourse;
+    if (course == null) return null;
+    final earned = _buildCourseEarned(_mirrorEarnedCourse);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _buildCourseLine(course: course, keyName: 'course-active'),
+          if (earned != null) earned,
+        ],
+      ),
     );
   }
 
@@ -4674,7 +5118,15 @@ class _GameScreenState extends State<GameScreen>
       // What the selected game asks for and which controls do it, before the
       // round starts. A mirror game this build does not know keeps its raw
       // name and gets no invented instructions.
-      details: offer ? _buildSelectedDetails(id: _copyGameId) : null,
+      details: offer
+          ? _buildSelectedDetails(
+              id: _copyGameId,
+              // The device's own campaign, where it has one to offer: what it
+              // has unlocked is the device's to say, and this screen says it
+              // where the other pre-start choices are.
+              campaign: _buildMirrorCampaignPicker(),
+            )
+          : null,
       footer: offer
           ? _buildStartFooter(
               _setupHint(_copyGameId),
@@ -4688,6 +5140,56 @@ class _GameScreenState extends State<GameScreen>
                   : null,
             )
           : null,
+    );
+  }
+
+  /// The mirror's campaign picker, or null when this build has nothing to show
+  /// for the selected game: the courses the device has unlocked can be chosen,
+  /// a device that refuses to report them says so with a retry, and firmware
+  /// without a campaign gets no row at all - its own default course is what a
+  /// start sends.
+  Widget? _buildMirrorCampaignPicker() {
+    if (_copyGameId != kJumpmanGameId) return null;
+    final progress = _mirrorProgress;
+    if (progress != null) {
+      return _buildCourseChips(
+        unlocked: clampJumpmanCourse(progress.unlockedCourse),
+        selected: _mirrorCourse,
+        onSelected: (course) => setState(() {
+          _mirrorCourse = course;
+          _mirrorCourseChosen = true;
+        }),
+      );
+    }
+    if (_mirrorProgressError != null) return _buildMirrorProgressFailure();
+    return null;
+  }
+
+  /// The device would not say how far its own campaign has got. Said where the
+  /// course picker would be, with the one action that can help.
+  Widget _buildMirrorProgressFailure() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          "Could not read the course progress on the mirror: "
+          '${_mirrorProgressError!}',
+          key: const ValueKey<String>('course-progress-error'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12, color: Colors.red),
+        ),
+        const SizedBox(height: 6),
+        TextButton.icon(
+          key: const ValueKey<String>('course-progress-retry'),
+          onPressed: () {
+            final session = _connection.session;
+            if (session == null) return;
+            unawaited(_refreshMirrorProgress(session));
+          },
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('Retry'),
+        ),
+      ],
     );
   }
 
@@ -4753,8 +5255,9 @@ class _GameScreenState extends State<GameScreen>
   Widget _buildJoinButton(String label) {
     return FilledButton.icon(
       key: const ValueKey<String>('join-round'),
-      onPressed:
-          _mirrorBusy || _motionBusy ? null : () => unawaited(_joinMirrorGame()),
+      onPressed: _mirrorBusy || _motionBusy
+          ? null
+          : () => unawaited(_joinMirrorGame()),
       icon: const Icon(Icons.login),
       label: Text(label),
     );
@@ -4788,6 +5291,155 @@ class _GameScreenState extends State<GameScreen>
   void _setPlayerMode(_PlayerMode mode) {
     if (_playerMode == mode) return;
     setState(() => _playerMode = mode);
+  }
+
+  /// One chip per campaign course, in play order, under the word that says what
+  /// they are. The courses the player has unlocked can be picked; a locked one
+  /// is listed but disabled, with the lock it carries, so what is still to come
+  /// is visible before it is earned. The chosen course is marked, and picking
+  /// another one is the whole of the replay-versus-progress decision - it is the
+  /// same row on both surfaces, because it is the same campaign.
+  Widget _buildCourseChips({
+    required int unlocked,
+    required int selected,
+    required ValueChanged<int> onSelected,
+  }) {
+    return Column(
+      key: const ValueKey<String>('course-picker'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        const Text(
+          'Course',
+          key: ValueKey<String>('course-label'),
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            for (int course = 1; course <= kJumpmanCourseCount; course++)
+              ChoiceChip(
+                key: ValueKey<String>('course-$course'),
+                // A locked course is disabled, not hidden: the player can see
+                // what beating the current one opens, and cannot start what
+                // they have not earned.
+                avatar: course > unlocked
+                    ? const Icon(Icons.lock_outline, size: 16)
+                    : null,
+                label: Text('$course ${jumpmanCourseName(course)}'),
+                tooltip: course > unlocked
+                    ? 'Beat course ${course - 1} to unlock'
+                    : null,
+                selected: course == selected,
+                onSelected:
+                    course > unlocked ? null : (_) => onSelected(course),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// The local campaign's course picker, with the state of the progress store
+  /// in the same place: still loading (no campaign round may start), a store
+  /// that could not be read (with the way to ask again), or the courses
+  /// themselves with any load or save failure said beside them.
+  Widget _buildCampaignPicker() {
+    final error = _jumpmanError;
+    if (!_jumpmanLoaded) {
+      return Column(
+        key: const ValueKey<String>('course-picker'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Text(
+            'Course',
+            key: ValueKey<String>('course-label'),
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            error ?? 'Loading campaign progress...',
+            key: const ValueKey<String>('campaign-status'),
+            style: TextStyle(
+              fontSize: 12,
+              color: error == null ? Colors.grey : Colors.red,
+            ),
+          ),
+          if (error != null)
+            TextButton.icon(
+              key: const ValueKey<String>('campaign-retry'),
+              onPressed: () => unawaited(_loadJumpmanProgress()),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+            ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _buildCourseChips(
+          unlocked: _jumpmanUnlocked,
+          selected: _jumpmanCourse,
+          onSelected: (course) => setState(() {
+            _jumpmanCourse = course;
+            _jumpmanCourseChosen = true;
+          }),
+        ),
+        if (error != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            error,
+            key: const ValueKey<String>('campaign-status'),
+            style: const TextStyle(fontSize: 12, color: Colors.red),
+          ),
+          TextButton(
+            onPressed: () => unawaited(_flushJumpmanProgress()),
+            child: const Text('Retry saving progress'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The line a campaign round carries: which course it is on, named as the
+  /// campaign names it. [course] is the runtime's own course for a local round
+  /// and the device's for a mirror one, so the line follows a handover to the
+  /// next course instead of going stale on the one the round started at.
+  Widget _buildCourseLine({
+    required int course,
+    required String keyName,
+  }) {
+    final name = jumpmanCourseName(course) ?? 'Course $course';
+    return Text(
+      'Course $course · $name',
+      key: ValueKey<String>(keyName),
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontSize: 13, color: Colors.grey),
+    );
+  }
+
+  /// What the round on screen earned, or null when it earned nothing: the
+  /// course whose flag was reached while this round was up. The runtime raises
+  /// its ceiling at the flag rather than at the end of the run, so this appears
+  /// in the middle of a round that has just handed over to the next course -
+  /// which is exactly when the player has something to be told.
+  Widget? _buildCourseEarned(int? earned) {
+    if (earned == null) return null;
+    final name = jumpmanCourseName(earned) ?? 'Course $earned';
+    return Text(
+      'Course $earned $name unlocked',
+      key: const ValueKey<String>('course-earned'),
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        fontSize: 13,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    );
   }
 
   /// The round is on the mirror but holding for its second phone: the panel
@@ -4832,17 +5484,15 @@ class _GameScreenState extends State<GameScreen>
               children: <Widget>[
                 OutlinedButton.icon(
                   key: const ValueKey<String>('waiting-stop'),
-                  onPressed: _mirrorBusy
-                      ? null
-                      : () => unawaited(_stopMirrorGame()),
+                  onPressed:
+                      _mirrorBusy ? null : () => unawaited(_stopMirrorGame()),
                   icon: const Icon(Icons.stop),
                   label: const Text('Stop'),
                 ),
                 FilledButton.icon(
                   key: const ValueKey<String>('waiting-solo'),
-                  onPressed: _mirrorBusy
-                      ? null
-                      : () => unawaited(_playMirrorSolo()),
+                  onPressed:
+                      _mirrorBusy ? null : () => unawaited(_playMirrorSolo()),
                   icon: const Icon(Icons.person),
                   label: const Text('Play solo instead'),
                 ),

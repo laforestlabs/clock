@@ -7,6 +7,8 @@
 //   game join          -> "game joined <player> <id> <label>:<type>..."
 //   game session       -> "game session none"
 //                      | "game session <id> <seats> <need> <state> <me>"
+//   game progress <id> -> "game progress jumpman <course> <unlocked>"
+//                         (course 0 = no campaign session; broadcast too)
 //   game stop          -> "game stopped" | "game error no game"
 //   game error <why>   -> the device refused a game command
 //   game over <id>     -> pushed when the running game reaches its end
@@ -16,9 +18,11 @@
 // for a second link, and `game join` seats the phone that asks for one. The
 // `game ok`/`game joined`/`game session` replies and the `game error` refusals
 // go to the link that asked (so the predicates below say what can answer a
-// command), while `game stopped`, `game paused`, `game resumed`, `game over`
-// and `game players` are broadcast to every link and must never be read as a
-// reply to anything.
+// command), while `game stopped`, `game paused`, `game resumed`, `game over`,
+// `game players` and `game progress` are broadcast to every link and must
+// never be read as a reply to anything else. A `game progress` line is both
+// the answer to `game progress` and the unsolicited push that follows an
+// unlock, so it is the one broadcast a command also waits for.
 //
 // Game commands are answered out of band: `game over <id>` is pushed with no
 // command behind it, and the device answers `unknown command` to a command
@@ -111,6 +115,19 @@ bool isGameSessionReply(String line) =>
 /// joining twice is harmless), a device rejection, or `unknown command`.
 bool isGameJoinReply(String line) =>
     line.startsWith('game joined ') ||
+    line.startsWith('$gameErrorPrefix ') ||
+    line == unknownCommandReply;
+
+/// Whether [line] can answer `game progress <id>`: the progression line, a
+/// device rejection, or `unknown command`.
+///
+/// The progression line is deliberately accepted even though it is also
+/// broadcast on every unlock: it carries exactly the state a caller asked for,
+/// so a push arriving while the query is outstanding is a valid, current
+/// answer. The other predicates never accept a `game progress` line, so those
+/// broadcasts cannot satisfy an unrelated request.
+bool isGameProgressReply(String line) =>
+    line.startsWith('game progress jumpman') ||
     line.startsWith('$gameErrorPrefix ') ||
     line == unknownCommandReply;
 
@@ -214,8 +231,12 @@ class MirrorGame {
 /// seats it was started with, how many are filled, and which seat this phone
 /// holds.
 class MirrorSessionInfo {
-  const MirrorSessionInfo({this.id, required this.seats, required this.need,
-      required this.state, required this.me});
+  const MirrorSessionInfo(
+      {this.id,
+      required this.seats,
+      required this.need,
+      required this.state,
+      required this.me});
 
   /// The running game's id, or null for `game session none` — a mirror with
   /// no round, where the other fields are zero and [state] is "none".
@@ -230,6 +251,21 @@ class MirrorSessionInfo {
 
   /// This link's player id, 0 when it holds no seat.
   final int me;
+}
+
+/// A `game progress <id> <course> <unlocked>` reply: the course a campaign
+/// session is running and the highest course the mirror has unlocked.
+class MirrorGameProgress {
+  const MirrorGameProgress(
+      {required this.course, required this.unlockedCourse});
+
+  /// The course a live campaign session is on, or 0 when none is (the mirror
+  /// is idle, or the game has no campaign).
+  final int course;
+
+  /// The highest course the mirror has unlocked, 1 or more. Persisted on the
+  /// mirror, so it survives a power cycle and is not the phone's to change.
+  final int unlockedCourse;
 }
 
 /// The controls of a `game ok`/`game joined` tail: `<label>` for a button,
@@ -323,6 +359,31 @@ MirrorSessionInfo? parseGameSession(String line) {
       id: parts[2], seats: seats, need: need, state: state, me: me);
 }
 
+/// Parses a `game progress <id> <course> <unlocked>` status line: the course
+/// a campaign session is running (0 when none is) and the highest course the
+/// mirror has unlocked. Returns null for anything else, including a malformed
+/// or unrelated line, so an unsolicited status line never moves the campaign
+/// picker.
+///
+/// The two counts must be consistent - a running course is always one the
+/// mirror has unlocked - so a line that claims a course beyond its unlock is
+/// rejected rather than shown.
+MirrorGameProgress? parseGameProgress(String line) {
+  final parts = line.split(' ');
+  if (parts.length != 5 ||
+      parts[0] != 'game' ||
+      parts[1] != 'progress' ||
+      parts[2] != 'jumpman') {
+    return null;
+  }
+  final course = int.tryParse(parts[3]);
+  final unlocked = int.tryParse(parts[4]);
+  if (course == null || unlocked == null) return null;
+  if (course < 0 || unlocked < 1 || unlocked > 3) return null;
+  if (course > unlocked) return null;
+  return MirrorGameProgress(course: course, unlockedCourse: unlocked);
+}
+
 /// Parses a `game players <seats> <need>` status line, the broadcast that
 /// says how full the round is. Returns null for anything else.
 ({int seats, int need})? parseGamePlayers(String line) {
@@ -350,8 +411,16 @@ String? parseGameOver(String line) {
 /// ([players] == 1, the line older firmware already understands) and
 /// `game start <id> <players>` for a round that waits for that many seats to
 /// be filled.
-String encodeGameStart(String id, int players) =>
-    players == 1 ? 'game start $id' : 'game start $id $players';
+///
+/// A campaign start also names the course to play: `game start jumpman 1 3`.
+/// The seat count is spelled out even for a solo round there, because the
+/// course is the third token and the firmware reads the argument strictly.
+String encodeGameStart(String id, int players, {int? course}) {
+  if (course == null) {
+    return players == 1 ? 'game start $id' : 'game start $id $players';
+  }
+  return 'game start $id $players $course';
+}
 
 /// Encodes the full input state as one game_in packet: [values][i] is the
 /// i16 value for control code i (0/1 for buttons, -32768..32767 for axes).

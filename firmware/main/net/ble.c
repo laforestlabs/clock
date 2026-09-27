@@ -972,6 +972,13 @@ static void handle_cmd(uint16_t conn, char *line)
         /* Ask what round is live and which seat this link holds; the render
          * task answers "game session ..." or "game error ...". */
         game_runner_request_session(conn);
+    } else if (strncmp(line, "game progress ", 14) == 0) {
+        /* Ask a campaign game's progression ("game progress jumpman"); the
+         * render task answers the asking link with "game progress <id>
+         * <course> <unlocked>" even while idle, or "game error ...". Queued
+         * like start: reading the record touches NVS, which must not run on
+         * the NimBLE host task. */
+        game_runner_request_progress(line + 14, conn);
     } else if (strcmp(line, "game stop") == 0) {
         /* Queued like start; the render task answers "game stopped" or
          * "game error no game". */

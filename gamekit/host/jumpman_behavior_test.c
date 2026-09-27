@@ -12,7 +12,7 @@ uint32_t ml_ctx_rng(ml_game_ctx*c){(void)c;return 1;}
 static int openfx(fx*f){memset(f,0,sizeof* f);f->cfg.panel_w=64;f->cfg.panel_h=32;if(!ml_canvas_init(&f->cv,64,32,NULL))return 0;ml_view_compute(&f->view,64,32,ML_FIT_LETTERBOX,64,32);ml_game_jumpman.init(&f->st,&f->cfg,NULL);ml_game_jumpman.reset(&f->st,NULL);return 1;}
 static void closefx(fx*f){ml_canvas_free(&f->cv);} static void ticks(fx*f,int n){while(n--)ml_game_jumpman.update(&f->st,NULL);}
 static void inp(fx*f,int c,int v){ml_input_event e;memset(&e,0,sizeof e);e.player_id=1;e.code=c;e.value=v;e.type=ML_INPUT_BUTTON;ml_game_jumpman.input(&f->st,&e,NULL);}
-static void flat(fx*f){memset(f->st.surf,JUMP_GROUND_ROW,sizeof f->st.surf);memset(f->st.block,JM_NOBLK,sizeof f->st.block);for(int i=0;i<PIPE_SLOTS;i++)f->st.pipes[i].x=PM_NONE;for(int i=0;i<ENEMY_SLOTS;i++)f->st.enemies[i].kind=EK_NONE;for(int i=0;i<ITEM_SLOTS;i++)f->st.items[i].state=IS_NONE;f->st.px=jm_level_now->start_x<<8;f->st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;f->st.vx=f->st.vy=0;f->st.status=JM_PLAYING;f->st.super=0;f->st.invuln=0;f->st.score=f->st.coin_count=0;f->st.jump_held=f->st.jump_queued=0;}
+static void flat(fx*f){memset(f->st.surf,JUMP_GROUND_ROW,sizeof f->st.surf);memset(f->st.block,JM_NOBLK,sizeof f->st.block);for(int i=0;i<PIPE_SLOTS;i++)f->st.pipes[i].x=PM_NONE;for(int i=0;i<ENEMY_SLOTS;i++)f->st.enemies[i].kind=EK_NONE;for(int i=0;i<ITEM_SLOTS;i++)f->st.items[i].state=IS_NONE;f->st.px=jm_state_level(&f->st)->start_x<<8;f->st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;f->st.vx=f->st.vy=0;f->st.status=JM_PLAYING;f->st.super=0;f->st.invuln=0;f->st.score=f->st.coin_count=0;f->st.jump_held=f->st.jump_queued=0;}
 static int bk(const jumpman_state*s,int x){return s->block[x]==JM_NOBLK?0:jm_blk_kind(s->block[x]);}
 
 /* The level resolved the way jm_load_level resolves it: runs in order, a later
@@ -91,7 +91,147 @@ static void contract(void){
 }
 static void physics(void){fx f;openfx(&f);flat(&f);int g=JUMP_GROUND_ROW-PLAYER_H_SMALL,a=g;inp(&f,JUMP,1);for(int i=0;i<30;i++){ticks(&f,1);if((f.st.py>>8)<a)a=f.st.py>>8;}ck(a<=g-7&&a>=g-9&&f.st.py>>8==g,"jump");inp(&f,JUMP,0);f.st.block[20]=jm_blk_make(BM_COIN,6);f.st.block[21]=jm_blk_make(BM_COIN,6);f.st.px=20<<8;f.st.py=g<<8;f.st.jump_queued=1;ticks(&f,12);ck(bk(&f.st,20)==BM_USED&&f.st.coin_count==1,"question payout");f.st.super=1;f.st.px=30<<8;f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SUPER)<<8;f.st.block[30]=jm_blk_make(BM_BRICK,6);f.st.jump_queued=1;ticks(&f,12);ck(bk(&f.st,30)==BM_BROKEN,"brick break");closefx(&f);}
 static void damage(void){fx f;openfx(&f);flat(&f);jm_enemy*e=&f.st.enemies[0];e->kind=EK_GOOMBA;e->state=ES_WALK;e->awake=1;e->x=24<<8;e->y=(JUMP_GROUND_ROW-GOOMBA_H)<<8;f.st.px=24<<8;f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL-5)<<8;f.st.vy=128;ticks(&f,8);ck(e->state==ES_SQUASH,"goomba stomp");e->kind=EK_SHELL;e->state=ES_SHELL;e->x=30<<8;e->y=(JUMP_GROUND_ROW-SHELL_H)<<8;e->dir=0;f.st.px=28<<8;f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;(void)jm_enemy_touch(&f.st,NULL);ck(e->state==ES_SLIDE,"shell kick");closefx(&f);}
-static void wire(void){fx f;openfx(&f);uint8_t b[ML_SNAPSHOT_MAX];size_t n=0;fx saved=f;ck(!ml_game_jumpman.snapshot(&f.st,b,sizeof f.st-1,&n),"short snapshot");ck(ml_game_jumpman.snapshot(&f.st,b,sizeof f.st,&n)&&n==sizeof f.st,"snapshot");ticks(&f,2);ml_game_jumpman.restore(&f.st,b,n);ck(memcmp(&f.st,&saved.st,sizeof f.st)==0,"restore");f.st.px=(FLAG_X-PLAYER_W+1)<<8;f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;f.st.vx=JM_RUN;ticks(&f,1);ck(f.st.status==JM_WON,"flag finish");closefx(&f);}
+static void wire(void){fx f;openfx(&f);uint8_t b[ML_SNAPSHOT_MAX];size_t n=0;fx saved=f;ck(!ml_game_jumpman.snapshot(&f.st,b,sizeof f.st-1,&n),"short snapshot");ck(ml_game_jumpman.snapshot(&f.st,b,sizeof f.st,&n)&&n==sizeof f.st,"snapshot");ticks(&f,2);ml_game_jumpman.restore(&f.st,b,n);ck(memcmp(&f.st,&saved.st,sizeof f.st)==0,"restore");closefx(&f);}
+
+/* Put the player on the flagpole's first column, running into it. */
+static void at_flag(fx*f){f->st.px=(FLAG_X-PLAYER_W+1)<<8;f->st.py=(JUMP_GROUND_ROW-play_h(&f->st))<<8;f->st.vx=JM_RUN;}
+
+/* The campaign: a fresh session is course 1 with 1 unlocked, each course's flag
+ * unlocks and hands over to the next with the score and lives intact and no
+ * early game over, and only the third flag wins. */
+static void campaign(void)
+{
+    fx f;openfx(&f);
+    ck(ml_jumpman_course(&f.st)==1&&ml_jumpman_unlocked(&f.st)==1,"a fresh campaign is course 1, 1 unlocked");
+    ck(!ml_game_jumpman.is_over(&f.st),"a fresh campaign is not over");
+
+    f.st.super=1;f.st.score=500;f.st.lives=2;
+    at_flag(&f);ticks(&f,1);
+    ck(f.st.status==JM_TRANS,"course 1's flag opens the transition");
+    ck(ml_jumpman_course(&f.st)==2&&ml_jumpman_unlocked(&f.st)==2,"course 2 is unlocked and current");
+    ck(f.st.checkpoint==0,"the transition clears the checkpoint");
+    ck(f.st.score>=500&&f.st.lives==2,"score and lives carry into the next course");
+    ck(!ml_game_jumpman.is_over(&f.st),"no course before the last ends the run");
+    ticks(&f,TRANS_TICKS);
+    ck(f.st.status==JM_PLAYING&&f.st.super==0&&f.st.invuln==0,"the next course begins unpowered");
+    ck((f.st.px>>8)==jm_level_pipe_garden.start_x,"course 2 starts at its own column");
+    ck(f.st.surf[44]==JUMP_GROUND_ROW-3&&f.st.pipes[0].x==44,"course 2's first pipe is built");
+    ck(f.st.surf[0]==JUMP_GROUND_ROW,"course 2's plain ground is in the state");
+    ck(ml_jumpman_course(&f.st)==2,"still course 2 after the banner");
+
+    f.st.score=900;
+    at_flag(&f);ticks(&f,1);
+    ck(f.st.status==JM_TRANS&&ml_jumpman_course(&f.st)==3&&ml_jumpman_unlocked(&f.st)==3,"course 3 is unlocked");
+    ck(!ml_game_jumpman.is_over(&f.st),"course 3 is not over on arrival");
+    ticks(&f,TRANS_TICKS);
+    ck(f.st.status==JM_PLAYING&&(f.st.px>>8)==jm_level_koopa_quarry.start_x,"course 3 plays");
+    ck(f.st.surf[40]==16&&f.st.surf[70]==JM_NONE,"course 3's shelf and pit are built");
+
+    at_flag(&f);ticks(&f,1);
+    ck(f.st.status==JM_WON&&ml_game_jumpman.is_over(&f.st),"the third flag is the win");
+    ck(ml_jumpman_unlocked(&f.st)==3,"the win unlocks nothing past the campaign");
+    ck(f.st.score>=900,"the win's flag pays");
+    closefx(&f);
+}
+
+/* An explicit course start: any unlocked course may begin a run, a locked or
+ * nonsense one is refused with the state untouched, and a start is a fresh run
+ * of three lives and no score. */
+static void refusal(void)
+{
+    fx f;openfx(&f);
+    ck(!ml_jumpman_start_course(NULL,1,1),"no state, no start");
+    ck(ml_jumpman_start_course(&f.st,2,2),"course 2 of 2 unlocked starts");
+    ck(ml_jumpman_course(&f.st)==2&&ml_jumpman_unlocked(&f.st)==2,"course 2 is selected");
+    ck(ml_game_jumpman_state_int(&f.st,"status")==JM_PLAYING,"a started course is being played");
+    ck((f.st.px>>8)==jm_level_pipe_garden.start_x&&f.st.surf[44]==JUMP_GROUND_ROW-3,
+       "the selected course's level is loaded");
+    const uint8_t course=f.st.course,unlocked=f.st.unlocked;const uint16_t score=f.st.score;const uint8_t lives=f.st.lives;
+    ck(!ml_jumpman_start_course(&f.st,3,2),"a locked course is refused");
+    ck(!ml_jumpman_start_course(&f.st,0,3),"course 0 is not a course");
+    ck(!ml_jumpman_start_course(&f.st,ML_JUMPMAN_COURSES+1,ML_JUMPMAN_COURSES+1),"past the last course is refused");
+    ck(!ml_jumpman_start_course(&f.st,2,0),"an unlocked count below one is refused");
+    ck(!ml_jumpman_start_course(&f.st,2,ML_JUMPMAN_COURSES+1),"an unlocked count past the campaign is refused");
+    ck(f.st.course==course&&f.st.unlocked==unlocked&&f.st.score==score&&f.st.lives==lives
+       &&(f.st.px>>8)==jm_level_pipe_garden.start_x,"a refused start changes nothing");
+    f.st.score=2500;f.st.lives=1;f.st.super=1;
+    ck(ml_jumpman_start_course(&f.st,3,3),"the last course starts when unlocked");
+    ck(ml_jumpman_course(&f.st)==3&&f.st.lives==3&&f.st.score==0&&f.st.super==0,
+       "a new start is a fresh run");
+    ck((f.st.px>>8)==jm_level_koopa_quarry.start_x&&f.st.surf[40]==16&&f.st.surf[70]==JM_NONE,
+       "course 3's level is loaded");
+    closefx(&f);
+}
+
+/* A death keeps the course and, once passed, the checkpoint; it resets the
+ * power-up and costs a life, and running out of lives ends the run - course and
+ * unlock intact, so a host can still persist what the player reached. */
+static void death_replay(void)
+{
+    fx f;openfx(&f);
+    ck(ml_jumpman_start_course(&f.st,2,2),"start course 2");
+    f.st.checkpoint=1;f.st.score=777;f.st.lives=3;f.st.super=1;
+    f.st.status=JM_DYING;f.st.dying=1;f.st.vy=0;
+    ticks(&f,1);
+    ck(f.st.status==JM_PLAYING&&f.st.lives==2,"a death costs a life and rebuilds the level");
+    ck(ml_jumpman_course(&f.st)==2,"the death keeps the course");
+    ck(f.st.checkpoint==1&&(f.st.px>>8)==jm_level_pipe_garden.checkpoint_x,
+       "the death restarts at the checkpoint");
+    ck(f.st.super==0&&f.st.invuln==0,"the death drops the power-up");
+    ck(f.st.score==777,"the score carries through a death");
+    f.st.lives=1;f.st.status=JM_DYING;f.st.dying=1;f.st.vy=0;
+    ticks(&f,1);
+    ck(f.st.status==JM_OVER&&ml_game_jumpman.is_over(&f.st),"no lives ends the run");
+    ck(ml_jumpman_course(&f.st)==2&&ml_jumpman_unlocked(&f.st)==2,"game over keeps the course and unlock");
+    closefx(&f);
+}
+
+/* A snapshot carries the course and the unlock count, so a peer restored onto a
+ * course reloads that course, not the first one. */
+static void snapshot_course(void)
+{
+    fx f;openfx(&f);uint8_t b[ML_SNAPSHOT_MAX];size_t n=0;
+    ck(ml_jumpman_start_course(&f.st,2,3),"start course 2 with 3 unlocked");
+    f.st.px=(FLAG_X-PLAYER_W+1)<<8;f.st.score=1234;
+    ck(ml_game_jumpman.snapshot(&f.st,b,sizeof f.st,&n),"snapshot a campaign run");
+
+    fx peer;memset(&peer,0,sizeof peer);
+    ml_game_jumpman.init(&peer.st,&f.cfg,NULL);
+    ck(ml_jumpman_course(&peer.st)==0,"a session that has not started has no course");
+    ml_game_jumpman.restore(&peer.st,b,n);
+    ck(ml_jumpman_course(&peer.st)==2&&ml_jumpman_unlocked(&peer.st)==3,
+       "a restored snapshot carries the course and the unlock");
+    ck((peer.st.px>>8)==(FLAG_X-PLAYER_W+1)&&peer.st.score==1234,"and the run");
+    peer.st.lives=2;peer.st.status=JM_DYING;peer.st.dying=1;peer.st.vy=0;
+    ticks(&peer,1);
+    ck(ml_jumpman_course(&peer.st)==2&&peer.st.lives==1,"a death after a restore keeps the course");
+    ck(peer.st.surf[44]==JUMP_GROUND_ROW-3,"and reloads that course's level");
+    closefx(&f);
+}
+
+/* Authored shells wait to be kicked; they must not creep into the player as
+ * walkers before contact. Exercise the shell in the real quarry course. */
+static void quarry_shell(void)
+{
+    fx f;openfx(&f);
+    ck(ml_jumpman_start_course(&f.st,3,3),"open quarry");
+    jm_enemy *shell=NULL;
+    for(int i=0;i<ENEMY_SLOTS;i++)
+        if(f.st.enemies[i].kind==EK_SHELL) shell=&f.st.enemies[i];
+    ck(shell!=NULL,"quarry has its authored shell");
+    if(shell){
+        const int32_t x=shell->x;
+        shell->awake=1;
+        for(int i=0;i<12;i++)jm_update_enemies(&f.st,NULL);
+        ck(shell->x==x,"an un-kicked quarry shell stays in place");
+        f.st.px=x-((PLAYER_W-1)<<8);
+        f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;
+        ck(!jm_enemy_touch(&f.st,NULL),"touching the resting shell kicks, not hurts");
+        for(int i=0;i<3;i++)jm_update_enemies(&f.st,NULL);
+        ck(shell->x>x,"the kicked shell slides away from the player");
+    }
+    closefx(&f);
+}
 
 /* ---- a level handed in, the way the editor hands one in ----------------- */
 
@@ -114,6 +254,18 @@ static void injected(void)
     ck(openfx(&f),"a session opens on the level it was given");
     ck(f.st.surf[40]==19&&f.st.surf[41]==JM_NONE&&f.st.surf[70]==JM_NONE&&f.st.surf[71]==19,"the injected ground");
     ck(f.st.start_x==5&&f.st.checkpoint_x==100&&(f.st.px>>8)==5,"the injected columns");
+    ck(ml_jumpman_course(&f.st)==0&&ml_jumpman_unlocked(&f.st)==0,"an injected level is not a campaign");
+    /* Its flag is its win and unlocks nothing: the editor's playtest must not
+     * move a player's campaign forward. */
+    f.st.px=(FLAG_X-PLAYER_W+1)<<8;f.st.py=(JUMP_GROUND_ROW-PLAYER_H_SMALL)<<8;f.st.vx=JM_RUN;
+    ticks(&f,1);
+    ck(f.st.status==JM_WON&&ml_game_jumpman.is_over(&f.st),"an injected level's flag is its win");
+    ck(ml_jumpman_course(&f.st)==0&&ml_jumpman_unlocked(&f.st)==0,"and it unlocks nothing");
+    /* An explicit course start leaves the injected mode for the campaign even
+     * while the override is still the current level. */
+    ck(ml_jumpman_start_course(&f.st,1,1),"a course start takes over an injected session");
+    ck(ml_jumpman_course(&f.st)==1&&(f.st.px>>8)==jm_level_authored.start_x,"and plays course 1");
+    ck(f.st.surf[105]==JM_NONE&&f.st.surf[0]==JUMP_GROUND_ROW,"course 1's terrain, not the injected level's");
     closefx(&f);
 }
 static void refused(void)
@@ -197,4 +349,4 @@ static void readout(void)
     closefx(&f);
 }
 
-int main(void){contract();physics();damage();wire();injected();refused();readout();printf("jumpman: %d checks, %d failures\n",checks,fail);return fail!=0;}
+int main(void){contract();physics();damage();wire();campaign();refusal();death_replay();snapshot_course();quarry_shell();injected();refused();readout();printf("jumpman: %d checks, %d failures\n",checks,fail);return fail!=0;}

@@ -70,6 +70,17 @@ ML_GAME_EXPORT ml_game_session *ml_game_open(const char *game_id,
 
 ML_GAME_EXPORT void ml_game_close(ml_game_session *s);
 
+/* Configure a fresh (tick zero) Jumpman campaign. Courses are one-based;
+ * unlocked comes from trusted persistent storage, not a player's selection.
+ * Invalid/locked courses and non-Jumpman sessions return 0 without mutation.
+ * This explicitly selects built-in courses rather than an editor override. */
+ML_GAME_EXPORT int ml_game_start_course(ml_game_session *s, int course, int unlocked);
+
+/* Current course and highest unlocked course; 0 for non-campaign sessions.
+ * Poll unlocked after stepping and persist increases even before game over. */
+ML_GAME_EXPORT int ml_game_course(const ml_game_session *s);
+ML_GAME_EXPORT int ml_game_unlocked(const ml_game_session *s);
+
 /* ------------------------------------------------------------- geometry */
 
 ML_GAME_EXPORT int ml_game_width(const ml_game_session *s);

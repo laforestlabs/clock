@@ -14,6 +14,7 @@ import 'package:mirror_designer/src/services/mirror_ble_status.dart';
 import 'package:mirror_designer/src/services/mirror_connection.dart';
 import 'package:mirror_designer/src/services/tilt_sensor.dart';
 import 'package:mirror_designer/src/ui/game_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Characteristic extends Fake implements BluetoothCharacteristic {}
 
@@ -67,6 +68,11 @@ class _Session extends Fake implements BleSession {
   /// The player count each start asked the device for, in order: a two-phone
   /// round is one `game start <id> 2` on the wire.
   final startCounts = <int>[];
+
+  /// The course each start named, in order. Null is a start that named none,
+  /// which is what a device with no campaign is sent.
+  final startCourses = <int?>[];
+
   final inputs = <List<int>>[];
 
   /// The round the device reports from `game session`, and what it reports
@@ -74,6 +80,16 @@ class _Session extends Fake implements BleSession {
   /// that does not know the command answers.
   MirrorSessionInfo? sessionInfo;
   MirrorSessionInfo? joinInfo;
+
+  /// The campaign progress the device reports from `game progress jumpman`:
+  /// which course it is running (0 when idle) and the highest it has unlocked.
+  /// Null - the default - is firmware without the command.
+  MirrorGameProgress? progress;
+
+  /// Why the device refuses to report its progress, as `gameProgress` throws
+  /// it. The firmware's own storage being unavailable reads
+  /// `game error progress storage`.
+  Object? progressFailure;
 
   /// The controls a join comes back with.
   MirrorGame joinResult = const MirrorGame('rally', _buttonsOnly);
@@ -89,10 +105,17 @@ class _Session extends Fake implements BleSession {
   }
 
   @override
-  Future<MirrorGame> startGame(String id, {int players = 1}) {
+  Future<MirrorGame> startGame(String id, {int players = 1, int? course}) {
     started.add(id);
     startCounts.add(players);
+    startCourses.add(course);
     return start.future;
+  }
+
+  @override
+  Future<MirrorGameProgress?> gameProgress() async {
+    if (progressFailure != null) throw progressFailure!;
+    return progress;
   }
 
   @override
@@ -167,6 +190,14 @@ class _Connection extends MirrorConnection {
   }
 }
 
+/// Whether the campaign picker offers [course] to start: a course the device
+/// has not unlocked is drawn disabled, which is what "locked" means here.
+bool _courseOffered(WidgetTester tester, int course) =>
+    tester
+        .widget<ChoiceChip>(find.byKey(ValueKey<String>('course-$course')))
+        .onSelected !=
+    null;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const sensorChannel = 'dev.fluttercommunity.plus/sensors/accelerometer';
@@ -177,6 +208,9 @@ void main() {
     // These tests stand in for a phone: the probe asks the platform whether
     // the plugin can exist before it subscribes, and the host is not one.
     TiltSensor.debugPlatformSupported = true;
+    // The screen also reads this phone's own campaign progress as it opens.
+    // None of these tests is about that store, so it is a fresh install.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(sensorMethods, (_) async => null);
@@ -1396,8 +1430,8 @@ void main() {
 
   testWidgets('a two-phone start holds the round until the second seat is in',
       (tester) async {
-    final (session, _) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
     expect(find.byKey(const ValueKey<String>('players-two')), findsOneWidget);
     await startRound(tester, session);
     // Two is the default, and Rally is the only game this build knows to take
@@ -1407,7 +1441,8 @@ void main() {
     session.acknowledge();
     await tester.pump();
     await tester.pump();
-    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
     expect(find.text('1 of 2 players are in.'), findsOneWidget);
     expect(session.inputs, isEmpty,
         reason: 'a round that has not started is not fed a heartbeat');
@@ -1415,9 +1450,10 @@ void main() {
 
   testWidgets('the solo chip asks for the one seat a solo round needs',
       (tester) async {
-    final (session, _) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
-    await tester.ensureVisible(find.byKey(const ValueKey<String>('players-solo')));
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey<String>('players-solo')));
     await tester.tap(find.byKey(const ValueKey<String>('players-solo')));
     await tester.pump();
     await startRound(tester, session);
@@ -1433,13 +1469,14 @@ void main() {
 
   testWidgets('the second seat completes the round and the board starts',
       (tester) async {
-    final (session, _) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
     await startRound(tester, session);
     session.acknowledge();
     await tester.pump();
     await tester.pump();
-    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
 
     // The other phone takes the free seat and the device pushes the new count.
     // The wait is over: the round is running, its grace window opened with the
@@ -1479,8 +1516,8 @@ void main() {
 
   testWidgets('a two-phone round refuses to resume while a seat is empty',
       (tester) async {
-    final (session, _) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
     await startRound(tester, session);
     session.acknowledge();
     await tester.pump();
@@ -1525,8 +1562,8 @@ void main() {
 
   testWidgets('a round stopped on the other phone returns this one to setup',
       (tester) async {
-    final (session, connection) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
+    final (session, connection) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
     await startRound(tester, session);
     session.acknowledge();
     await tester.pump();
@@ -1569,19 +1606,181 @@ void main() {
   });
 
   testWidgets('leaving a waiting round ends it on the mirror', (tester) async {
-    final (session, _) = await boot(tester,
-        configure: (s) => s.catalogue = <String>['rally']);
+    final (session, _) =
+        await boot(tester, configure: (s) => s.catalogue = <String>['rally']);
     await startRound(tester, session);
     session.acknowledge();
     await tester.pump();
     await tester.pump();
-    expect(find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('mirror-waiting')), findsOneWidget);
 
     // The round belongs to the shared panel, so leaving this screen ends it -
     // including a round still waiting for its second phone.
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     expect(session.stops, 1);
+  });
+
+  // ------------------------------------------------ the mirror's campaign
+
+  testWidgets('the mirror\'s own unlocked courses decide what may start',
+      (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      // The device has earned its second course; this phone has never played
+      // Jumpman at all, and that is not what gates the mirror.
+      s.progress = const MirrorGameProgress(course: 0, unlockedCourse: 2);
+    });
+    expect(_courseOffered(tester, 1), isTrue);
+    expect(_courseOffered(tester, 2), isTrue,
+        reason: 'the device has unlocked it');
+    expect(_courseOffered(tester, 3), isFalse,
+        reason: 'the device has not unlocked it');
+
+    // The locked course is listed and refuses to be chosen; the round then
+    // starts at the course the device actually has.
+    await tester.tap(find.byKey(const ValueKey<String>('course-3')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey<String>('course-1')));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Start Game'));
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(session.started, <String>['jumpman']);
+    expect(session.startCounts, <int>[1]);
+    expect(session.startCourses, <int?>[1],
+        reason:
+            'the course the player picked is what the device was asked for');
+  });
+
+  testWidgets(
+      'a progress push unlocks the course it names, and the next start '
+      'asks for it', (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      s.progress = const MirrorGameProgress(course: 0, unlockedCourse: 1);
+    });
+    expect(_courseOffered(tester, 2), isFalse);
+
+    // The device earned a course: it says so on the status channel, and the
+    // picker follows at once.
+    session.statuses.add('game progress jumpman 1 2');
+    await tester.pump();
+    expect(_courseOffered(tester, 2), isTrue);
+    expect(
+        tester
+            .widget<ChoiceChip>(find.byKey(const ValueKey<String>('course-2')))
+            .selected,
+        isTrue,
+        reason: 'the campaign continues where the device got to');
+
+    await tester.ensureVisible(find.text('Start Game'));
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    await tester.pump();
+    expect(session.startCourses, <int?>[2]);
+  });
+
+  testWidgets('a course the mirror could not save is said', (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      s.progress = const MirrorGameProgress(course: 0, unlockedCourse: 1);
+    });
+    session.statuses.add('game progress jumpman 1 2');
+    await tester.pump();
+    // The device earned the course but could not write it, which only the
+    // player can do anything about.
+    session.statuses.add('game progress unsaved');
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Could not save course progress on the mirror'),
+        findsOneWidget);
+    expect(find.text('Dismiss'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a device that refuses to report its progress says so, and no '
+      'course is asked for', (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      s.progressFailure = BlePushException('progress storage');
+    });
+    expect(find.byKey(const ValueKey<String>('course-progress-error')),
+        findsOneWidget);
+    expect(find.textContaining('Could not read the course progress'),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('course-1')), findsNothing,
+        reason: 'no campaign is offered off a guess');
+
+    // A start is still possible: it names no course, leaving the device on its
+    // own default rather than on one this phone invented.
+    await tester.ensureVisible(find.text('Start Game'));
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    await tester.pump();
+    expect(session.startCourses, <int?>[null]);
+  });
+
+  testWidgets('a device without the command starts its own default course',
+      (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      // Null is the `unknown command` of firmware that has no campaign at all.
+      s.progress = null;
+    });
+    expect(find.byKey(const ValueKey<String>('course-1')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('course-progress-error')),
+        findsNothing,
+        reason: 'an older firmware is not a failure');
+
+    await tester.ensureVisible(find.text('Start Game'));
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    await tester.pump();
+    expect(session.startCourses, <int?>[null]);
+  });
+
+  testWidgets('a mirror campaign round names its course and what it unlocked',
+      (tester) async {
+    final (session, _) = await boot(tester, configure: (s) {
+      s.catalogue = const <String>['jumpman'];
+      s.progress = const MirrorGameProgress(course: 0, unlockedCourse: 2);
+    });
+    await tester.ensureVisible(find.text('Start Game'));
+    await tester.tap(find.text('Start Game'));
+    await tester.pump();
+    session.acknowledge(controls: _buttonsOnly);
+    await tester.pump();
+    await tester.pump();
+
+    // The round is on the course this phone asked for, and the device says so
+    // in its own words once it is running it.
+    session.statuses.add('game progress jumpman 2 2');
+    await tester.pump();
+    expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('course-active')))
+            .data,
+        'Course 2 · Pipe Garden');
+    expect(find.byKey(const ValueKey<String>('course-earned')), findsNothing);
+
+    // The device's flag goes up mid-round: the course it opened is said beside
+    // the round that earned it.
+    session.statuses.add('game progress jumpman 3 3');
+    await tester.pump();
+    expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('course-active')))
+            .data,
+        'Course 3 · Koopa Quarry');
+    expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey<String>('course-earned')))
+            .data,
+        'Course 3 Koopa Quarry unlocked');
   });
 }
 

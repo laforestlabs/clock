@@ -51,9 +51,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_core_ffi/mirror_core_ffi.dart';
 import 'package:mirror_designer/src/controller.dart';
 import 'package:mirror_designer/src/engine/engine.dart';
+import 'package:mirror_designer/src/services/jumpman_progress.dart';
 import 'package:mirror_designer/src/services/mirror_connection.dart';
 import 'package:mirror_designer/src/services/tilt_sensor.dart';
 import 'package:mirror_designer/src/ui/game_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// A blank 64x32 layout. The Games screen only borrows the veneer and LED
 /// settings from the designer, so its contents do not matter.
@@ -727,6 +729,100 @@ Rect _surfaceRect(WidgetTester tester) =>
 Offset _blankSpot(WidgetTester tester) =>
     _surfaceRect(tester).topLeft + const Offset(6, 6);
 
+// ------------------------------------------------------ the Jumpman campaign
+
+/// The session the round on screen is running. Every frame the screen submits
+/// to the decode seam carries the engine that rendered it, so this is the real
+/// simulation, read through its own public course and ceiling rather than
+/// through anything the screen tells the test about itself.
+GameEngine _engineOf(_Scene scene) => scene.decodes.requests.last.engine;
+
+/// Whether the picker offers [course] to start: a course the player has not
+/// earned is drawn disabled, which is exactly what "locked" means here.
+bool _courseOffered(WidgetTester tester, int course) =>
+    tester
+        .widget<ChoiceChip>(find.byKey(ValueKey<String>('course-$course')))
+        .onSelected !=
+    null;
+
+/// The campaign course the picker has marked as the one a Start would open.
+int _courseChosen(WidgetTester tester) {
+  for (var course = 1; course <= kJumpmanCourseCount; course++) {
+    final chip = tester
+        .widget<ChoiceChip>(find.byKey(ValueKey<String>('course-$course')));
+    if (chip.selected) return course;
+  }
+  return 0;
+}
+
+/// What the app has stored as the highest unlocked course, read back through
+/// the same store the app writes to.
+Future<int?> _storedUnlocked() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getInt(kJumpmanUnlockedPrefsKey);
+}
+
+/// The campaign's header line: the course the round on screen is on.
+String _courseLine(WidgetTester tester) => tester
+    .widget<Text>(find.byKey(const ValueKey<String>('course-active')))
+    .data!;
+
+/// Select a course while the campaign setup is up.
+Future<void> _chooseCourse(_Scene scene, int course) async {
+  final chip = find.byKey(ValueKey<String>('course-$course'));
+  await scene.tester.ensureVisible(chip);
+  await scene.tester.pumpAndSettle();
+  await scene.tester.tap(chip);
+  await scene.tester.pumpAndSettle();
+}
+
+/// One frame of a campaign run at the screen's own cadence: 25 ms of clock,
+/// then the real decode given its own time to land.
+///
+/// Deliberately not [_Scene.frame]: that helper pumps a second, zero-length
+/// frame afterwards, which steps the round another millisecond, and a course's
+/// jumps are timed to the frame they are pressed in. The decoded image is still
+/// drawn - the next pump of this run picks it up.
+Future<void> _campaignFrame(WidgetTester tester) async {
+  await tester.pump(const Duration(milliseconds: 25));
+  await tester.runAsync(() => Future<void>.delayed(_decodeSettle));
+}
+
+/// Play the campaign's second course with the run-right-and-hop script the
+/// published course is winnable with, one screen frame at a time, until the
+/// run's ceiling rises or [frames] run out. Returns the frame the ceiling rose
+/// on, or [frames] if it never did.
+///
+/// The input goes in through the same keys a player has: Right held from the
+/// first frame of the round, and Space tapped for three frames of every
+/// eighteen - a beat the published course is winnable on, and one that wins from
+/// several frames either side of it.
+Future<int> _hopToTheFlag(_Scene scene, {int frames = 600}) async {
+  final tester = scene.tester;
+  final engine = _engineOf(scene);
+  // Right is already held by the caller and stays held for the whole run: only
+  // the jump beat changes below. This helper releases it at the end.
+  var jumpHeld = false;
+  var frame = 0;
+  for (; frame < frames; frame++) {
+    final phase = frame % 18;
+    final wantJump = phase >= 3 && phase <= 5;
+    if (wantJump != jumpHeld) {
+      jumpHeld = wantJump;
+      if (wantJump) {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.space);
+      } else {
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+      }
+    }
+    await _campaignFrame(tester);
+    if (engine.unlockedCourse > 2) break;
+  }
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+  if (jumpHeld) await tester.sendKeyUpEvent(LogicalKeyboardKey.space);
+  return frame;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -738,6 +834,10 @@ void main() {
   setUp(() {
     TiltSensor.debugPlatformSupported = true;
     mockSensorChannels();
+    // A fresh install: the campaign has nothing stored, so it opens at course
+    // 1. A test that wants a played campaign writes the value it wants before
+    // it opens a scene.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
   });
   tearDown(() {
     TiltSensor.debugPlatformSupported = null;
@@ -1653,7 +1753,8 @@ void main() {
                 reason: '$id is reachable after scrolling');
             expect(_onScreen(tester.getRect(start), surface), isTrue,
                 reason: 'Start Game stays pinned while selecting $id');
-            expect(tester.takeException(), isNull, reason: '$id setup overflow');
+            expect(tester.takeException(), isNull,
+                reason: '$id setup overflow');
           }
 
           // Picking one selects it, states what it asks for once, and leaves
@@ -2363,5 +2464,161 @@ void main() {
       expect(
           find.byKey(const ValueKey<String>('menu-restart')), findsOneWidget);
     }, simplified: true);
+  });
+
+  // ------------------------------------------------- the Jumpman campaign
+
+  testWidgets('a fresh campaign offers course 1 and locks the rest',
+      (tester) async {
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      expect(_courseOffered(tester, 1), isTrue);
+      expect(_courseOffered(tester, 2), isFalse,
+          reason: 'course 2 has not been earned');
+      expect(_courseOffered(tester, 3), isFalse,
+          reason: 'course 3 has not been earned');
+      expect(_courseChosen(tester), 1);
+
+      await scene.start();
+      await scene.frame();
+      // The round the player is in opened the course the picker offered, and
+      // says so: the engine's own course is the one that was asked for.
+      expect(_engineOf(scene).course, 1);
+      expect(_courseLine(tester), 'Course 1 · Original');
+    });
+  });
+
+  testWidgets('an earned course is offered, and a locked one cannot be started',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kJumpmanUnlockedPrefsKey: 2,
+    });
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      expect(_courseOffered(tester, 1), isTrue,
+          reason: 'an earlier course can be replayed');
+      expect(_courseOffered(tester, 2), isTrue);
+      expect(_courseOffered(tester, 3), isFalse);
+
+      // Course 3 is listed, so the player can see what is still to come, and
+      // tapping it changes nothing: the round still starts at course 2.
+      await _chooseCourse(scene, 3);
+      expect(_courseChosen(tester), 2);
+
+      await _chooseCourse(scene, 2);
+      await scene.start();
+      await scene.frame();
+      expect(_engineOf(scene).course, 2);
+      expect(_courseLine(tester), 'Course 2 · Pipe Garden');
+    });
+    // Starting a round writes nothing: the ceiling is only ever raised by the
+    // course that earns it.
+    expect(await _storedUnlocked(), 2);
+  });
+
+  testWidgets('Restart replays the course on screen, not the picker\'s',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kJumpmanUnlockedPrefsKey: 2,
+    });
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      // Replay the first course while the campaign stands at the second.
+      await _chooseCourse(scene, 1);
+      await scene.start();
+      await scene.frame();
+      expect(_engineOf(scene).course, 1);
+
+      await scene.restart();
+      await scene.frame();
+      expect(_engineOf(scene).course, 1,
+          reason: 'start over is the same course again');
+      expect(_courseLine(tester), 'Course 1 · Original');
+    });
+    expect(await _storedUnlocked(), 2,
+        reason: 'replaying an earlier course takes nothing back');
+  });
+
+  testWidgets(
+      'beating a course unlocks the next one, saves it, and offers it '
+      'on the next visit', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kJumpmanUnlockedPrefsKey: 2,
+    });
+    late int frames;
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      await _chooseCourse(scene, 2);
+      // Right is held as soon as the round is on screen, so the script below
+      // runs a running player from its first frame.
+      await scene.start();
+      expect(_engineOf(scene).course, 2,
+          reason: 'the round opened the course the picker offered');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+
+      frames = await _hopToTheFlag(scene);
+      // The flag was reached: the runtime raised its ceiling on the spot, and
+      // the run carried on into the course it opened.
+      expect(frames, lessThan(600), reason: 'the course was won');
+      expect(_engineOf(scene).unlockedCourse, 3);
+      expect(_engineOf(scene).course, 3,
+          reason: 'the campaign hands the run over to the next course');
+      await _pumpFor(tester);
+      expect(_courseLine(tester), 'Course 3 · Koopa Quarry');
+      expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey<String>('course-earned')))
+              .data,
+          'Course 3 Koopa Quarry unlocked');
+    });
+    // The unlock is in the store, which is what makes it outlive the app.
+    expect(await _storedUnlocked(), 3);
+
+    // Leaving and coming back: the picker offers what the win earned, with
+    // course 3 already chosen and the two earlier courses still replayable.
+    late int openedCourse;
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      expect(_courseOffered(tester, 3), isTrue);
+      expect(_courseChosen(tester), 3,
+          reason: 'the campaign carries on where it was left');
+      await scene.start();
+      await scene.frame();
+      openedCourse = _engineOf(scene).course;
+    });
+    expect(openedCourse, 3);
+  });
+
+  testWidgets(
+      'campaign progress that cannot be read is said, and is not '
+      'played over', (tester) async {
+    // A stored value the app cannot read as a course: the store answers, but
+    // not with a progress.
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kJumpmanUnlockedPrefsKey: <String, Object>{'not': 'a course'},
+    });
+    await _scene(tester, (scene) async {
+      await scene.pick('jumpman');
+      // Nothing is started off a guessed ceiling, and the reason is on screen
+      // with the way to ask the store again.
+      expect(
+          find.byKey(const ValueKey<String>('campaign-retry')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('course-1')), findsNothing,
+          reason: 'no course is offered before the ceiling is known');
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.byKey(const ValueKey<String>('start-game')))
+              .onPressed,
+          isNull);
+      expect(find.textContaining('Could not read the campaign progress'),
+          findsWidgets);
+
+      // A tap on the disabled action starts nothing at all.
+      await tester.tap(find.byKey(const ValueKey<String>('start-game')));
+      await _pumpFor(tester);
+      expect(find.byKey(const ValueKey<String>('start-game')), findsOneWidget,
+          reason: 'the setup view is still what is on screen');
+    });
   });
 }

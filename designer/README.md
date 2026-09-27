@@ -291,6 +291,20 @@ identity before attaching it to the LAN record. Catalogue browsing is read-only;
 Missing or lost Bluetooth never starts a local substitute. Local **Preview**
 games remain available only through the explicit simulator workspace.
 
+**Jumpman** includes three courses: **Original**, **Pipe Garden**, and
+**Koopa Quarry**. Its **Course** picker starts at the highest unlocked course
+and lets you replay any earlier one; locked courses stay disabled. Reaching a
+flag immediately unlocks and advances to the next course, preserving score and
+remaining lives. The final flag wins the campaign. **Restart** replays the
+course currently on screen with fresh lives.
+
+Unlocks survive losses and restarts. A mirror saves its own progress in NVS;
+local Preview saves separate progress on that phone. Connecting another phone
+to the same mirror therefore shows that mirror's earned courses, not the
+phone's local progress. Storage failures are shown rather than silently losing
+an unlock. Older firmware without campaign support retains its single-course
+view; update the mirror to use the campaign.
+
 Tilt is the controller. A round establishes neutral first, by having the phone
 held still, and the angle it is then held at *is* the player's position, so a
 held angle holds the player where they are. The app finds out whether the

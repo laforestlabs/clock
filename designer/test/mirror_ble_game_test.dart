@@ -1,8 +1,8 @@
 // parseGameList / parseGameOk / parseGameJoined / parseGameSession /
-// parseGamePlayers / parseGameOver / encodeGameStart / encodeGameInput and the
-// game reply predicates + waitForGameReply: the BLE game protocol from
-// firmware/main/net/ble.c. Kept pure so the app's gamepad is testable without
-// a device.
+// parseGamePlayers / parseGameProgress / parseGameOver / encodeGameStart /
+// encodeGameInput and the game reply predicates + waitForGameReply: the BLE
+// game protocol from firmware/main/net/ble.c. Kept pure so the app's gamepad
+// is testable without a device.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -93,6 +93,24 @@ void main() {
       expect(isGameJoinReply('game players 2 2'), isFalse);
       expect(isGameJoinReply('game joined'), isFalse);
       expect(isGameJoinReply('game stopped'), isFalse);
+    });
+
+    test('isGameProgressReply accepts the line, a rejection and old firmware',
+        () {
+      expect(isGameProgressReply('game progress jumpman 2 3'), isTrue);
+      expect(isGameProgressReply('game progress jumpman 0 1'), isTrue);
+      expect(isGameProgressReply('game error no campaign'), isTrue);
+      expect(isGameProgressReply(unknownCommandReply), isTrue);
+      // A progression push must never answer a different command, and no
+      // other broadcast may answer a progression query.
+      expect(isGameProgressReply('game session rally 1 2 playing 1'), isFalse);
+      expect(isGameProgressReply('game ok jumpman Left:b'), isFalse);
+      expect(isGameProgressReply('game players 1 2'), isFalse);
+      expect(isGameProgressReply('game progress'), isFalse);
+      expect(isGameProgressReply('game progress unsaved'), isFalse);
+      // A prefix match is only a candidate, as for the session predicate: the
+      // parser is what rejects a malformed tail.
+      expect(isGameProgressReply('game progress jumpman'), isTrue);
     });
 
     test('gameErrorReason strips the prefix, or keeps a bare line', () {
@@ -360,6 +378,50 @@ void main() {
     });
   });
 
+  group('parseGameProgress', () {
+    test('parses a running campaign course', () {
+      final p = parseGameProgress('game progress jumpman 2 3');
+      expect(p, isNotNull);
+      expect(p!.course, 2);
+      expect(p.unlockedCourse, 3);
+    });
+
+    test('parses an idle mirror with the unlock it holds', () {
+      final p = parseGameProgress('game progress jumpman 0 1');
+      expect(p, isNotNull);
+      expect(p!.course, 0);
+      expect(p.unlockedCourse, 1);
+    });
+
+    test('parses a first-course session', () {
+      final p = parseGameProgress('game progress jumpman 1 1');
+      expect(p, isNotNull);
+      expect(p!.course, 1);
+      expect(p.unlockedCourse, 1);
+    });
+
+    test('rejects a course beyond the unlock', () {
+      expect(parseGameProgress('game progress jumpman 3 2'), isNull);
+    });
+
+    test('rejects truncated, malformed and unrelated lines', () {
+      expect(parseGameProgress('game progress jumpman'), isNull);
+      expect(parseGameProgress('game progress jumpman 1 1 1'), isNull);
+      expect(parseGameProgress('game progress 1 1'), isNull);
+      expect(parseGameProgress('game progress jumpman x 1'), isNull);
+      expect(parseGameProgress('game progress jumpman 1 x'), isNull);
+      expect(parseGameProgress('game progress jumpman -1 1'), isNull);
+      expect(parseGameProgress('game progress jumpman 1 0'), isNull);
+      expect(parseGameProgress('game progress jumpman 1 4'), isNull);
+      expect(parseGameProgress('game progress other 1 3'), isNull);
+      expect(parseGameProgress('game progress unsaved'), isNull);
+      expect(parseGameProgress('game session none'), isNull);
+      expect(parseGameProgress('game players 1 2'), isNull);
+      expect(parseGameProgress('unknown command'), isNull);
+      expect(parseGameProgress(''), isNull);
+    });
+  });
+
   group('parseGameOver', () {
     test('parses a game over line', () {
       expect(parseGameOver('game over tetris'), 'tetris');
@@ -413,6 +475,17 @@ void main() {
 
     test('names the seat count for a two-phone round', () {
       expect(encodeGameStart('rally', 2), 'game start rally 2');
+    });
+
+    test('names the course after an explicit seat count for a campaign', () {
+      expect(
+          encodeGameStart('jumpman', 1, course: 3), 'game start jumpman 1 3');
+      expect(
+          encodeGameStart('jumpman', 2, course: 1), 'game start jumpman 2 1');
+    });
+
+    test('omitting the course leaves the line unchanged', () {
+      expect(encodeGameStart('jumpman', 1, course: null), 'game start jumpman');
     });
   });
 

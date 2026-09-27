@@ -23,6 +23,9 @@ typedef _DestroyD = void Function(_VoidPtr);
 typedef _GameOpenC = _VoidPtr Function(Pointer<Utf8>, Int, Int, Uint32, Int);
 typedef _GameOpenD = _VoidPtr Function(Pointer<Utf8>, int, int, int, int);
 
+typedef _StartCourseC = Int Function(_VoidPtr, Int, Int);
+typedef _StartCourseD = int Function(_VoidPtr, int, int);
+
 typedef _PtrToIntC = Int Function(_VoidPtr);
 typedef _PtrToIntD = int Function(_VoidPtr);
 
@@ -70,35 +73,36 @@ class GameLibraryException implements Exception {
 
 class GameBindings {
   GameBindings._(DynamicLibrary lib)
-      : gameCount = lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_game_count'),
+      : gameCount =
+            lib.lookupFunction<_VoidToIntC, _VoidToIntD>('ml_game_count'),
         gameId = lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_game_id'),
         gameName = lib.lookupFunction<_IntToStrC, _IntToStrD>('ml_game_name'),
         gameMaxPlayers =
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_game_max_players'),
         gameControlCount =
             lib.lookupFunction<_IntToIntC, _IntToIntD>('ml_game_control_count'),
-        gameControlLabel =
-            lib.lookupFunction<_IntIntToStrC, _IntIntToStrD>('ml_game_control_label'),
-        gameControlType =
-            lib.lookupFunction<_IntIntToIntC, _IntIntToIntD>('ml_game_control_type'),
-        gameOpen =
-            lib.lookupFunction<_GameOpenC, _GameOpenD>('ml_game_open'),
-        gameClose =
-            lib.lookupFunction<_DestroyC, _DestroyD>('ml_game_close'),
-        gameWidth =
-            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_width'),
+        gameControlLabel = lib.lookupFunction<_IntIntToStrC, _IntIntToStrD>(
+            'ml_game_control_label'),
+        gameControlType = lib.lookupFunction<_IntIntToIntC, _IntIntToIntD>(
+            'ml_game_control_type'),
+        gameOpen = lib.lookupFunction<_GameOpenC, _GameOpenD>('ml_game_open'),
+        gameClose = lib.lookupFunction<_DestroyC, _DestroyD>('ml_game_close'),
+        gameStartCourse = lib.lookupFunction<_StartCourseC, _StartCourseD>(
+            'ml_game_start_course'),
+        gameCourse =
+            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_course'),
+        gameUnlocked =
+            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_unlocked'),
+        gameWidth = lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_width'),
         gameHeight =
             lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_height'),
-        gameTick =
-            lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_tick'),
-        gameInput =
-            lib.lookupFunction<_InputC, _InputD>('ml_game_input'),
-        gameStep =
-            lib.lookupFunction<_StepC, _StepD>('ml_game_step'),
+        gameTick = lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_tick'),
+        gameInput = lib.lookupFunction<_InputC, _InputD>('ml_game_input'),
+        gameStep = lib.lookupFunction<_StepC, _StepD>('ml_game_step'),
         gameIsOver =
             lib.lookupFunction<_PtrToBoolC, _PtrToBoolD>('ml_game_is_over'),
-        gameRenderRgba =
-            lib.lookupFunction<_PtrToUint8C, _PtrToUint8D>('ml_game_render_rgba'),
+        gameRenderRgba = lib
+            .lookupFunction<_PtrToUint8C, _PtrToUint8D>('ml_game_render_rgba'),
         gameRgbaSize =
             lib.lookupFunction<_PtrToIntC, _PtrToIntD>('ml_game_rgba_size'),
         gameSetLevel =
@@ -115,6 +119,9 @@ class GameBindings {
   final int Function(int, int) gameControlType;
   final _VoidPtr Function(Pointer<Utf8>, int, int, int, int) gameOpen;
   final void Function(_VoidPtr) gameClose;
+  final int Function(_VoidPtr, int, int) gameStartCourse;
+  final int Function(_VoidPtr) gameCourse;
+  final int Function(_VoidPtr) gameUnlocked;
   final int Function(_VoidPtr) gameWidth;
   final int Function(_VoidPtr) gameHeight;
   final int Function(_VoidPtr) gameTick;

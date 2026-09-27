@@ -115,6 +115,38 @@ static uint32_t run_game(const char *id, uint32_t seed)
 
 int main(void)
 {
+    /* A launch can choose an earned course, but cannot skip its unlock bound
+     * or replace a course after play has started. Reopening preserves access
+     * only through the saved highest unlock supplied by the caller. */
+    ml_game_session *campaign = ml_game_open("jumpman", 64, 32, 1, 1);
+    if (!campaign) return 1;
+    if (ml_game_start_course(campaign, 2, 1) ||
+        ml_game_course(campaign) != 1 ||
+        !ml_game_start_course(campaign, 2, 2) ||
+        ml_game_course(campaign) != 2 ||
+        ml_game_unlocked(campaign) != 2) {
+        fprintf(stderr, "campaign launch/unlock guard failed\n");
+        ml_game_close(campaign);
+        return 1;
+    }
+    ml_game_step(campaign, 25);
+    if (ml_game_start_course(campaign, 1, 2) ||
+        ml_game_course(campaign) != 2) {
+        fprintf(stderr, "campaign changed after play began\n");
+        ml_game_close(campaign);
+        return 1;
+    }
+    ml_game_close(campaign);
+    campaign = ml_game_open("jumpman", 64, 32, 1, 1);
+    if (!campaign) return 1;
+    if (!ml_game_start_course(campaign, 1, 2) ||
+        ml_game_unlocked(campaign) != 2) {
+        fprintf(stderr, "replaying an earlier course lost the saved unlock\n");
+        ml_game_close(campaign);
+        return 1;
+    }
+    ml_game_close(campaign);
+
     int ngames = ml_game_count();
     printf("games compiled in: %d\n", ngames);
     for (int i = 0; i < ngames; i++)

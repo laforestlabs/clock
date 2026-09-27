@@ -1,12 +1,20 @@
 /*
- * game_jumpman.c - Jumpman: a hand-authored level, run right and jump the gaps.
+ * game_jumpman.c - Jumpman: a campaign of three courses, run right and jump the
+ * gaps.
  *
  * The Mario-shaped game of the set. A 4x6 character runs a 256-column level
- * authored for a 64x32 window that follows it, and the level is const data in
+ * authored for a 64x32 window that follows it, and the levels are const data in
  * this translation unit: the ground runs, the pits between them, the pipes, the
  * blocks, the coins, the enemies, the checkpoint and the flag. Nothing here is
  * rolled from the session PRNG, so a peer that rebuilds after a death plays the
  * one level that was designed rather than another soup of it.
+ *
+ * There are three such levels and they are the campaign (see mirror/jumpman.h):
+ * Original, Pipe Garden and Koopa Quarry, in that order. A run begins on one
+ * course and, when its flag is reached, unlocks the next and hands over to it
+ * with the score and lives intact; only the last course's flag is the win. A
+ * session can start on any course its host has unlocked, and a peer that
+ * restores a snapshot knows which course that was.
  *
  * What the player meets, in order: a mushroom block and a "?" row in the
  * opening, a goomba, a brick row to jump for, a second goomba, a pipe with a
@@ -35,12 +43,14 @@
  * playable on the pad alone. Every animation is driven by a state counter and
  * never by the tick, so a peer's frame for the same state is the same frame.
  *
- * The level a device plays is compiled in: the tables below are the level, and
- * the level's shape - its width, its ground row, its flag column - is read from
+ * The level a device plays is compiled in: the tables below are the levels, and
+ * a level's shape - its width, its ground row, its flag column - is read from
  * this file's constants rather than repeated anywhere else. A development
  * caller may hand a session a level at run time instead (ML_GAME_AUTHORING,
  * near the end of the file), which is how the level editor plays what it
- * painted back against this game before it writes the tables out.
+ * painted back against this game before it writes the tables out. Such a
+ * session is that one level and nothing else: it has no course, and its flag
+ * ends the run without unlocking anything.
  */
 #include <stdio.h>
 #include <string.h>
@@ -48,6 +58,7 @@
 #include "mirror/font.h"
 #include "mirror/game.h"
 #include "mirror/gamerun.h"
+#include "mirror/jumpman.h"
 
 /* The logical panel the game is authored for: 64 columns of level in a window,
  * letterboxed by the runtime, so the physics below is always in these
@@ -144,6 +155,7 @@
 #define INVULN_TICKS 80    /* 2 s of flashing after a hit while super */
 #define DIE_TICKS    55    /* the world is frozen for this long */
 #define BUMP_TICKS   6     /* how long a bumped block is jerked up for */
+#define TRANS_TICKS  40    /* the between-course banner, one second */
 
 /* Score and the coin count, both capped so the HUD never runs out of digits. */
 #define SCORE_COIN    200
@@ -168,7 +180,7 @@
  * degrees off neutral. */
 #define JM_TILT_TURN (32767 / 4)
 
-enum { JM_PLAYING = 0, JM_DYING, JM_WON, JM_OVER };
+enum { JM_PLAYING = 0, JM_DYING, JM_WON, JM_OVER, JM_TRANS };
 enum { JM_IN_LEFT = 0, JM_IN_RIGHT = 1, JM_IN_JUMP = 2, JM_IN_TILT = 3 };
 enum { EK_GOOMBA = 0, EK_KOOPA = 1, EK_SHELL = 2 };
 enum { ES_WALK = 0, ES_SHELL, ES_SLIDE, ES_SQUASH };
@@ -176,7 +188,7 @@ enum { IS_EMERGE = 0, IS_WALK };
 enum {
     JM_EVENT_COIN = 1, JM_EVENT_STOMP, JM_EVENT_DEATH, JM_EVENT_FLAG,
     JM_EVENT_HURT, JM_EVENT_BUMP, JM_EVENT_BREAK, JM_EVENT_KICK,
-    JM_EVENT_CHECKPOINT, JM_EVENT_POWERUP
+    JM_EVENT_CHECKPOINT, JM_EVENT_POWERUP, JM_EVENT_COURSE
 };
 
 /* ---- the level, authored ------------------------------------------------ */
@@ -248,8 +260,7 @@ typedef char jm_level_enemies_fit[
     (sizeof jm_level_enemies / sizeof jm_level_enemies[0] <= ENEMY_SLOTS) ? 1 : -1];
 typedef char jm_level_block_cols_fit[(JM_LEVEL_BLOCK_COLS <= JUMP_COLS) ? 1 : -1];
 
-/* The level a (re)start builds. Only a development caller moves it off the
- * authored one: a device plays the level compiled into it. */
+/* Course 1, the level a run begins on. */
 static const jm_level jm_level_authored = {
     jm_level_ground,  (int)(sizeof jm_level_ground  / sizeof jm_level_ground[0]),
     jm_level_blocks,  (int)(sizeof jm_level_blocks  / sizeof jm_level_blocks[0]),
@@ -258,6 +269,105 @@ static const jm_level jm_level_authored = {
     jm_level_enemies, (int)(sizeof jm_level_enemies / sizeof jm_level_enemies[0]),
     JM_LEVEL_START_X, JM_LEVEL_CHECKPOINT_X,
 };
+
+/*
+ * Courses 2 and 3. These are not authored here: they are the levels in
+ * jumpman_editor/levels, compiled in exactly as the editor exported them, runs
+ * and all, so the campaign's later courses are the ones a designer painted and
+ * can play back without the editor's playtest path. The ground runs are
+ * maximal and cover every column - a run between two others is not a gap, and a
+ * gap between runs is a pit - which is the same invariant the wire form states.
+ */
+
+/* Course 2, Pipe Garden: plain ground end to end, four planted pipes and a
+ * "?" block between a pair of them. */
+static const jm_ground_def jm_lv2_ground[] = {
+    {   0, 255, 19 }, { 255,   1, 19 },
+};
+static const jm_block_def jm_lv2_blocks[] = {
+    {  60, 4, 6, BM_COIN }, { 180, 4, 6, BM_COIN },
+};
+static const jm_pipe_def jm_lv2_pipes[] = {
+    {  44, 3, 1 }, { 100, 3, 1 }, { 164, 3, 1 }, { 220, 3, 1 },
+};
+static const jm_coin_def jm_lv2_coins[] = {
+    {  25, 11 }, {  45, 11 }, {  80, 11 }, { 101, 11 },
+    { 146, 11 }, { 165, 11 }, { 200, 11 }, { 221, 11 },
+};
+static const jm_enemy_def jm_lv2_enemies[] = {
+    {  23, 19, -1, EK_GOOMBA }, {  78, 19, -1, EK_GOOMBA },
+    { 144, 19, -1, EK_GOOMBA }, { 206, 19, -1, EK_GOOMBA },
+};
+
+/* Course 3, Koopa Quarry: raised ground shelves with pits cut between them,
+ * koopas on the low ground and a shell loose among them. */
+static const jm_ground_def jm_lv3_ground[] = {
+    {   0,  40, 19 }, {  40,  22, 16 }, {  62,   8, 19 }, {  70,   3, JML_PIT },
+    {  73,  15, 19 }, {  88,  16, 17 }, { 104,  42, 19 }, { 146,  22, 16 },
+    { 168,   8, 19 }, { 176,   3, JML_PIT }, { 179,  19, 19 }, { 198,  18, 17 },
+    { 216,  14, 19 }, { 230,   3, JML_PIT }, { 233,  23, 19 },
+};
+static const jm_block_def jm_lv3_blocks[] = {
+    { 110, 4, 6, BM_BRICK }, { 238, 4, 6, BM_BRICK },
+};
+/* No pipes in this course, but C has no empty array: a record that is not a
+ * pipe is what the header's shape rules say to write, exactly as an authored
+ * level with no coins does. (h == 0 is ignored by jm_load_level.) */
+static const jm_pipe_def jm_lv3_pipes[] = {
+    { 0, 0, 0 },
+};
+static const jm_coin_def jm_lv3_coins[] = {
+    {  44,  9 }, {  54,  9 }, {  71, 12 }, {  92, 10 }, { 100, 10 }, { 150,  9 },
+    { 160,  9 }, { 177, 12 }, { 202, 10 }, { 212, 10 }, { 231, 12 },
+};
+static const jm_enemy_def jm_lv3_enemies[] = {
+    {  25, 19, -1, EK_KOOPA }, { 130, 19, -1, EK_KOOPA },
+    { 190, 19,  0, EK_SHELL },
+};
+
+typedef char jm_lv2_pipes_fit[
+    (sizeof jm_lv2_pipes / sizeof jm_lv2_pipes[0] <= PIPE_SLOTS) ? 1 : -1];
+typedef char jm_lv2_coins_fit[
+    (sizeof jm_lv2_coins / sizeof jm_lv2_coins[0] <= COIN_SLOTS) ? 1 : -1];
+typedef char jm_lv2_enemies_fit[
+    (sizeof jm_lv2_enemies / sizeof jm_lv2_enemies[0] <= ENEMY_SLOTS) ? 1 : -1];
+typedef char jm_lv3_pipes_fit[
+    (sizeof jm_lv3_pipes / sizeof jm_lv3_pipes[0] <= PIPE_SLOTS) ? 1 : -1];
+typedef char jm_lv3_coins_fit[
+    (sizeof jm_lv3_coins / sizeof jm_lv3_coins[0] <= COIN_SLOTS) ? 1 : -1];
+typedef char jm_lv3_enemies_fit[
+    (sizeof jm_lv3_enemies / sizeof jm_lv3_enemies[0] <= ENEMY_SLOTS) ? 1 : -1];
+
+static const jm_level jm_level_pipe_garden = {
+    jm_lv2_ground,  (int)(sizeof jm_lv2_ground  / sizeof jm_lv2_ground[0]),
+    jm_lv2_blocks,  (int)(sizeof jm_lv2_blocks  / sizeof jm_lv2_blocks[0]),
+    jm_lv2_pipes,   (int)(sizeof jm_lv2_pipes   / sizeof jm_lv2_pipes[0]),
+    jm_lv2_coins,   (int)(sizeof jm_lv2_coins   / sizeof jm_lv2_coins[0]),
+    jm_lv2_enemies, (int)(sizeof jm_lv2_enemies / sizeof jm_lv2_enemies[0]),
+    3, 120,
+};
+static const jm_level jm_level_koopa_quarry = {
+    jm_lv3_ground,  (int)(sizeof jm_lv3_ground  / sizeof jm_lv3_ground[0]),
+    jm_lv3_blocks,  (int)(sizeof jm_lv3_blocks  / sizeof jm_lv3_blocks[0]),
+    jm_lv3_pipes,   (int)(sizeof jm_lv3_pipes   / sizeof jm_lv3_pipes[0]),
+    jm_lv3_coins,   (int)(sizeof jm_lv3_coins   / sizeof jm_lv3_coins[0]),
+    jm_lv3_enemies, (int)(sizeof jm_lv3_enemies / sizeof jm_lv3_enemies[0]),
+    3, 120,
+};
+
+/* The campaign, in play order. A session's course field indexes this, and a
+ * course advances by adding one, so the ordering here is the campaign order. */
+static const jm_level *const jm_courses[ML_JUMPMAN_COURSES] = {
+    &jm_level_authored, &jm_level_pipe_garden, &jm_level_koopa_quarry,
+};
+static const char *const jm_course_names[ML_JUMPMAN_COURSES] = {
+    "ORIGINAL", "PIPE GARDEN", "KOOPA QUARRY",
+};
+
+/* The level a built-in course plays. This pointer is the editor's override and
+ * is only ever consulted by a session that was handed a level at run time; a
+ * campaign session resolves its level from its own course field, so what the
+ * editor last injected can never change a built-in course. */
 static const jm_level *jm_level_now = &jm_level_authored;
 
 /* ---- state -------------------------------------------------------------- */
@@ -308,6 +418,10 @@ typedef struct {
     uint16_t coin_count;
     uint8_t  lives;
     uint8_t  status;        /* JM_* */
+    uint8_t  course;        /* built-in course 1..ML_JUMPMAN_COURSES, 0 = injected level */
+    uint8_t  unlocked;      /* highest built-in course unlocked, 1..ML_JUMPMAN_COURSES */
+    uint8_t  injected;      /* 1: play the level handed in at run time, not a course */
+    uint8_t  trans;         /* ticks of the between-course transition left */
     uint8_t  facing;        /* 1 right, 0 left */
     uint8_t  jump_queued;   /* a press waiting for the ground */
     uint8_t  jump_held;
@@ -519,7 +633,7 @@ static int jm_enemy_gap(const jumpman_state *s, const jm_enemy *e)
     return d < 0 ? -d : d;
 }
 
-/* ---- loading the authored level ---------------------------------------- */
+/* ---- loading a level --------------------------------------------------- */
 
 static int jm_pipe_slot(const jumpman_state *s)
 {
@@ -547,16 +661,32 @@ static int jm_enemy_slot(const jumpman_state *s)
 static bool jm_col_inside(int x) { return x >= 0 && x < JUMP_COLS; }
 
 /*
- * Build the level the session was given and put the player at its start.
- * This is the whole of (re)starting: reset calls it once, and the death path
- * calls it again, so the level a death reloads is the level being played - a
- * bumped block is live again, a taken coin is back, and every enemy is at its
- * spawn. The score, the coin count, the lives and the checkpoint are the only
- * things a death carries, and this function deliberately does not touch them.
+ * The level a session plays: its built-in course, or the level a development
+ * caller handed in at run time. The course is a number in the state rather than
+ * a pointer, which is what lets a peer that restores a snapshot know which
+ * level - and which course of the campaign - it is showing.
+ */
+static const jm_level *jm_state_level(const jumpman_state *s)
+{
+    if (s->injected) return jm_level_now;
+    if (s->course >= 1 && s->course <= ML_JUMPMAN_COURSES)
+        return jm_courses[s->course - 1];
+    return &jm_level_authored;
+}
+
+/*
+ * Build the level the session plays and put the player at its start.
+ * This is the whole of (re)starting: reset calls it once, the death path calls
+ * it again, and a course transition calls it once the banner is over, so the
+ * level a death or a transition reloads is the level being played - a bumped
+ * block is live again, a taken coin is back, and every enemy is at its spawn.
+ * The score, the coin count, the lives and the checkpoint are the only things a
+ * death carries, and this function deliberately does not touch them; a
+ * transition is the one caller that clears the checkpoint first.
  */
 static void jm_load_level(jumpman_state *s)
 {
-    const jm_level *lv = jm_level_now;
+    const jm_level *lv = jm_state_level(s);
 
     memset(s->surf, JM_NONE, sizeof s->surf);
     memset(s->block, JM_NOBLK, sizeof s->block);
@@ -641,7 +771,7 @@ static void jm_load_level(jumpman_state *s)
         e->vx = 0;
         e->vy = 0;
         e->kind = d->kind;
-        e->state = ES_WALK;
+        e->state = d->kind == EK_SHELL ? ES_SHELL : ES_WALK;
         e->dir = d->dir;
         e->anim = 0;
         e->awake = 0;
@@ -1013,12 +1143,12 @@ static bool jm_plant_touch(const jumpman_state *s)
 static void jm_enemy_walk(const jumpman_state *s, jm_enemy *e)
 {
     const int h = jm_enemy_h(e->kind);
-    const int dir = e->dir < 0 ? -1 : 1;
+    const int dir = e->state == ES_SHELL ? 0 : (e->dir < 0 ? -1 : 1);
     const int lead = dir > 0 ? (e->x >> 8) + ENEMY_W : (e->x >> 8) - 1;
     const int top = e->y >> 8, bot = (e->y >> 8) + h - 1;
 
-    bool turn = jm_col_solid(s, lead, top, bot);
-    if (!turn && e->state != ES_SLIDE) {
+    bool turn = dir != 0 && jm_col_solid(s, lead, top, bot);
+    if (!turn && dir != 0 && e->state != ES_SLIDE) {
         bool ground = false;
         for (int y = bot + 1; y < JUMP_ROWS; y++)
             if (jm_solid(s, lead, y)) { ground = true; break; }
@@ -1271,6 +1401,30 @@ static void jm_end_death(jumpman_state *s)
     jm_load_level(s);
 }
 
+/*
+ * Begin a run: the bookkeeping a (re)start and an explicit course selection
+ * share, then the level. injected says which level source the session plays -
+ * the built-in campaign or a level handed in at run time - and an explicit
+ * course start always chooses the built-in campaign, so a stale editor override
+ * cannot steer a campaign run.
+ */
+static void jm_begin(jumpman_state *s, int course, int unlocked, bool injected)
+{
+    s->course = (uint8_t)course;
+    s->unlocked = (uint8_t)unlocked;
+    s->injected = (uint8_t)(injected ? 1 : 0);
+    s->score = 0;
+    s->coin_count = 0;
+    s->lives = 3;
+    s->checkpoint = 0;
+    s->trans = 0;
+    s->status = JM_PLAYING;
+    s->held_left = 0;
+    s->held_right = 0;
+    s->tilt_x = ML_AXIS_IDLE;
+    jm_load_level(s);
+}
+
 static void jm_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
 {
     (void)cfg; (void)ctx;
@@ -1279,19 +1433,42 @@ static void jm_init(void *state, const ml_game_cfg *cfg, ml_game_ctx *ctx)
     s->tilt_x = ML_AXIS_IDLE;
 }
 
+/*
+ * A reset begins the campaign at its first course, unless a development caller
+ * handed this game a level at run time: an injected session is one level rather
+ * than a campaign, and it has to survive a close and reopen of the playtest.
+ */
 static void jm_reset(void *state, ml_game_ctx *ctx)
 {
     (void)ctx;
     jumpman_state *s = state;
-    s->score = 0;
-    s->coin_count = 0;
-    s->lives = 3;
-    s->checkpoint = 0;
-    s->status = JM_PLAYING;
-    s->held_left = 0;
-    s->held_right = 0;
-    s->tilt_x = ML_AXIS_IDLE;
-    jm_load_level(s);
+    jm_begin(s, 1, 1, jm_level_now != &jm_level_authored);
+}
+
+/* ---- the campaign surface (see mirror/jumpman.h) ------------------------ */
+
+bool ml_jumpman_start_course(void *state, int course, int unlocked)
+{
+    if (!state) return false;
+    if (course < 1 || course > ML_JUMPMAN_COURSES) return false;
+    if (unlocked < 1 || unlocked > ML_JUMPMAN_COURSES) return false;
+    if (course > unlocked) return false;
+    jm_begin(state, course, unlocked, false);
+    return true;
+}
+
+int ml_jumpman_course(const void *state)
+{
+    if (!state) return 0;
+    const jumpman_state *s = state;
+    return s->injected ? 0 : (int)s->course;
+}
+
+int ml_jumpman_unlocked(const void *state)
+{
+    if (!state) return 0;
+    const jumpman_state *s = state;
+    return s->injected ? 0 : (int)s->unlocked;
 }
 
 static void jm_input(void *state, const ml_input_event *e, ml_game_ctx *ctx)
@@ -1335,6 +1512,15 @@ static void jm_update(void *state, ml_game_ctx *ctx)
         s->py += s->vy;
         if (s->dying > 0) s->dying--;
         if (s->dying == 0) jm_end_death(s);
+        return;
+    }
+
+    /* A course transition is a pause too: the flag is taken, the next course
+     * named on screen, and the new level built once the banner is over. The
+     * run's score and lives carry; its checkpoint and power-up do not. */
+    if (s->status == JM_TRANS) {
+        if (s->trans > 0) s->trans--;
+        if (s->trans == 0) jm_load_level(s);
         return;
     }
     if (s->status != JM_PLAYING) return;
@@ -1399,8 +1585,24 @@ static void jm_update(void *state, ml_game_ctx *ctx)
     }
     if (jm_right(s) >= FLAG_X) {
         jm_award(s, SCORE_FLAG, 0);
-        s->status = JM_WON;
         ml_ctx_emit_event(ctx, JM_EVENT_FLAG, 0);
+        /* A built-in course that is not the last hands over to the next: the
+         * next course is unlocked on the spot, so a host that polls the unlock
+         * can persist it even if the player stops here, and the run carries its
+         * score and lives into the new level. The last course's flag - and an
+         * injected single level's - ends the run with the win. */
+        if (!s->injected && s->course < ML_JUMPMAN_COURSES) {
+            if (s->unlocked < s->course + 1) s->unlocked = (uint8_t)(s->course + 1);
+            s->course = (uint8_t)(s->course + 1);
+            s->checkpoint = 0;
+            s->jump_queued = 0;
+            s->jump_held = 0;
+            s->status = JM_TRANS;
+            s->trans = TRANS_TICKS;
+            ml_ctx_emit_event(ctx, JM_EVENT_COURSE, (int32_t)s->course);
+            return;
+        }
+        s->status = JM_WON;
         return;
     }
     jm_follow(s);
@@ -1721,8 +1923,73 @@ static void jm_draw_hud(ml_canvas *c, const jumpman_state *s)
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->coin_count);
     ml_text_draw(c, f, 37, 0, buf, gold, ML_SCALE_1X);
 
+    /* The campaign indicator: one pip per course, so which course is being
+     * played and how far the campaign has been unlocked read at a glance. The
+     * course in play is brightest, an unlocked course behind it is gold, and a
+     * locked one is dark. An injected single level has no campaign and shows
+     * none of this. */
+    if (!s->injected) {
+        const ml_rgb current = ML_RGB(255, 248, 176);
+        const ml_rgb open    = ML_RGB(255, 200, 64);
+        const ml_rgb locked  = ML_RGB(56, 72, 112);
+        for (int i = 0; i < ML_JUMPMAN_COURSES; i++) {
+            ml_rgb col = locked;
+            if (s->course == i + 1) col = current;
+            else if (s->unlocked >= i + 1) col = open;
+            ml_canvas_fill_rect(c, ML_RECT(19 + i * 5, 3, 3, 3), col);
+        }
+    }
+
     snprintf(buf, sizeof(buf), "%u", (unsigned)s->lives);
     ml_text_draw(c, f, 58, 0, buf, jm_sprite_col('r'), ML_SCALE_1X);
+}
+
+/* One line of text centred on the logical panel. */
+static void jm_draw_centered(ml_canvas *c, const ml_font *f, const char *text,
+                             int y, ml_rgb col)
+{
+    const int w = ml_text_width(f, text, ML_SCALE_1X);
+    ml_text_draw(c, f, (JUMP_W - w) / 2, y, text, col, ML_SCALE_1X);
+}
+
+/* The between-course banner: which course is about to be played. The flag the
+ * player just took is behind them and the next course is what the pause is for,
+ * so the number and the name are the whole picture. A name wider than the panel
+ * - the sans8 face is fixed at one scale - breaks at its space onto two lines,
+ * so the whole name is always readable rather than clipped. */
+static void jm_draw_transition(const jumpman_state *s, ml_canvas *c)
+{
+    const ml_font *f = ml_font_find("sans8");
+    if (!f) f = ml_font_default();
+    const ml_rgb gold = ML_RGB(255, 232, 80);
+    const ml_rgb cyan = ML_RGB(160, 232, 255);
+    char buf[16];
+
+    const char *name = (s->course >= 1 && s->course <= ML_JUMPMAN_COURSES)
+        ? jm_course_names[s->course - 1] : "";
+
+    if (ml_text_width(f, name, ML_SCALE_1X) <= JUMP_W) {
+        snprintf(buf, sizeof(buf), "COURSE %u", (unsigned)s->course);
+        jm_draw_centered(c, f, buf, 4, gold);
+        jm_draw_centered(c, f, name, 18, cyan);
+        return;
+    }
+
+    /* Break the name at its space: the title on the top line, the two words
+     * under it. */
+    const char *sp = strchr(name, ' ');
+    const size_t n1 = sp ? (size_t)(sp - name) : strlen(name);
+    char first[16], second[16];
+    if (n1 >= sizeof first) return;
+    memcpy(first, name, n1);
+    first[n1] = '\0';
+    snprintf(buf, sizeof(buf), "COURSE %u", (unsigned)s->course);
+    jm_draw_centered(c, f, buf, 2, gold);
+    jm_draw_centered(c, f, first, 12, cyan);
+    if (sp) {
+        snprintf(second, sizeof(second), "%s", sp + 1);
+        jm_draw_centered(c, f, second, 22, cyan);
+    }
 }
 
 static void jm_draw_terminal(const jumpman_state *s, ml_canvas *c)
@@ -1754,6 +2021,12 @@ static void jm_draw(const void *state, const ml_view *view, ml_canvas *c,
      * with the body falling through it. */
     if (s->status == JM_WON || s->status == JM_OVER) {
         jm_draw_terminal(s, c);
+        return;
+    }
+    /* The between-course pause is its own board: the next course is named
+     * while the level behind it is built. */
+    if (s->status == JM_TRANS) {
+        jm_draw_transition(s, c);
         return;
     }
 

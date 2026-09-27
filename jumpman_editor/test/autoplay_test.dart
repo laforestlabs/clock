@@ -11,11 +11,16 @@
 //   cd jumpman_editor && flutter build linux --debug
 //   LD_LIBRARY_PATH=build/linux/x64/debug/bundle/lib flutter test
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jumpman_editor/src/autoplay.dart';
 import 'package:jumpman_editor/src/jump_level.dart';
 import 'package:jumpman_editor/src/jumpman_spec.dart';
 import 'package:jumpman_editor/src/playtest.dart';
+import 'package:jumpman_editor/src/validate.dart';
+import 'package:mirror_core_ffi/mirror_core_ffi.dart';
 
 import 'support.dart';
 
@@ -83,7 +88,124 @@ _Run _autoPlay(JumpLevel level, JumpmanSpec spec,
   }
 }
 
+/// Runs compiled courses, not injected editor data. A fresh bot on each course
+/// follows the same per-course simulation profile as the editor.
+({bool won, int course, int unlocked, int lives}) _campaignPlay(
+    List<JumpLevel> levels, JumpmanSpec spec,
+    {int start = 1,
+    int unlocked = 1,
+    AutoSkill skill = AutoSkill.high,
+    bool stopAfterCourse = false}) {
+  final engine = GameEngine.open(
+    gameId: 'jumpman',
+    panelWidth: 64,
+    panelHeight: 32,
+    course: start,
+    unlockedCourse: unlocked,
+  );
+  var course = start;
+  var bot = AutoPlayer(level: levels[course - 1], spec: spec, skill: skill);
+  try {
+    while (engine.tick < 4000 && !engine.isOver) {
+      // JM_TRANS shows the next course's title over the previous course's
+      // frozen state. It is not a playable frame for that course's bot.
+      final input = engine.stateInt('status') == 4
+          ? const AutoInput(right: false, jump: false)
+          : bot.next(
+              playerX: engine.stateInt('player_x'),
+              onGround: engine.stateInt('on_ground') > 0,
+              enemyGap: engine.stateInt('enemy_gap'),
+              enemyKind: engine.stateInt('enemy_kind'),
+              plantOut: engine.stateInt('plant_out'),
+            );
+      engine.input(code: kJumpmanRight, value: input.right ? 1 : 0);
+      engine.input(code: kJumpmanJump, value: input.jump ? 1 : 0);
+      engine.step(spec.tickMs);
+      if (engine.course != course) {
+        if (stopAfterCourse) {
+          return (
+            won: true,
+            course: engine.course,
+            unlocked: engine.unlockedCourse,
+            lives: engine.stateInt('lives')
+          );
+        }
+        course = engine.course;
+        bot = AutoPlayer(level: levels[course - 1], spec: spec, skill: skill);
+      }
+      if (bot.isStuck) break;
+    }
+    return (
+      won: engine.stateInt('status') == kStatusWon,
+      course: engine.course,
+      unlocked: engine.unlockedCourse,
+      lives: engine.stateInt('lives')
+    );
+  } finally {
+    engine.dispose();
+  }
+}
+
 void main() {
+  test('three courses meet the user-simulation difficulty target', () {
+    final spec = readSpec();
+    final levels = <String, JumpLevel>{
+      'Original': readAuthoredLevel(spec),
+      for (final name in ['pipe-garden', 'koopa-quarry'])
+        name: JumpLevel.fromJson(
+          jsonDecode(File('${repoRoot.path}/jumpman_editor/levels/$name.json')
+              .readAsStringSync()) as Map<String, Object?>,
+          spec,
+          path: '$name.json',
+        ),
+    };
+    var mediumWins = 0;
+    final highFailures = <String>[];
+    for (final entry in levels.entries) {
+      expect(validateLevel(entry.value, spec), isEmpty, reason: entry.key);
+      for (final skill in AutoSkill.values) {
+        final run = _autoPlay(entry.value, spec, skill: skill);
+        final report = run.report;
+        print('${entry.key} ${skill.name}: '
+            '${report.isWon ? "WIN" : "FAIL"} '
+            'ticks=${report.tick} lives=${report.lives} '
+            'reached=${report.reached} stuck=${report.stuckAt}');
+        final compiled = _campaignPlay(levels.values.toList(), spec,
+            start: levels.keys.toList().indexOf(entry.key) + 1,
+            unlocked: 3,
+            skill: skill,
+            stopAfterCourse: true);
+        expect(compiled.won, report.isWon,
+            reason:
+                '${entry.key} ${skill.name}: compiled/editor outcome differs');
+        print('  compiled: ${compiled.won ? "CLEAR" : "FAIL"} '
+            'course=${compiled.course} lives=${compiled.lives}');
+        if (skill == AutoSkill.medium && report.isWon) mediumWins++;
+        if (skill == AutoSkill.high && !report.isWon) {
+          highFailures.add(entry.key);
+        }
+      }
+    }
+    expect(highFailures, isEmpty, reason: 'Every course must be completable');
+    expect(mediumWins, greaterThanOrEqualTo(2),
+        reason: 'Medium must finish at least two of the three courses');
+    final firstClear =
+        _campaignPlay(levels.values.toList(), spec, stopAfterCourse: true);
+    expect(firstClear.course, 2);
+    expect(firstClear.unlocked, 2,
+        reason: 'Course 2 must unlock before the campaign ends');
+    final resumed = _campaignPlay(levels.values.toList(), spec,
+        start: 2, unlocked: firstClear.unlocked, stopAfterCourse: true);
+    expect(resumed.won, isTrue,
+        reason: 'A fresh session must be able to start at the earned course');
+    expect(resumed.unlocked, 3);
+    final campaign = _campaignPlay(levels.values.toList(), spec);
+    expect(campaign.won, isTrue,
+        reason: 'High must finish the entire campaign');
+    expect(campaign.course, 3);
+    expect(campaign.unlocked, 3);
+  });
+
   test('all skills can finish an unobstructed level', () {
     final spec = readSpec();
     for (final skill in AutoSkill.values) {

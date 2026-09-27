@@ -527,12 +527,19 @@ class BleSession {
   /// seats before it runs, so the starter is seated as player 1 and the round
   /// stays waiting until the other phone joins.
   ///
+  /// [course] names a campaign course to start (the mirror validates it
+  /// against its own unlocked record); omit it for the device's default, the
+  /// first course. It is only meaningful for a campaign game such as jumpman.
+  ///
   /// Throws [BlePushException] with the device's reason when the mirror
-  /// rejects the start, and [FormatException] when the mirror answers for a
-  /// different game — the device is then running something the app did not
-  /// ask for, so the caller has to treat the session as unknown.
-  Future<MirrorGame> startGame(String id, {int players = 1}) async {
-    final line = await _gameCommand(encodeGameStart(id, players),
+  /// rejects the start — including a course it has not unlocked — and
+  /// [FormatException] when the mirror answers for a different game: the
+  /// device is then running something the app did not ask for, so the caller
+  /// has to treat the session as unknown.
+  Future<MirrorGame> startGame(String id,
+      {int players = 1, int? course}) async {
+    final line = await _gameCommand(
+        encodeGameStart(id, players, course: course),
         accepts: isGameStartReply);
     final g = parseGameOk(line);
     if (g != null) {
@@ -589,6 +596,28 @@ class BleSession {
       throw BlePushException(gameErrorReason(line));
     }
     throw FormatException('unexpected game session reply: $line');
+  }
+
+  /// The campaign progression the mirror holds: the course a live campaign
+  /// session is on (0 when none is) and the highest course it has unlocked.
+  /// The unlock lives on the mirror, so this reads it back after a power cycle
+  /// or a fresh connect. Served even while the mirror is idle, so a caller can
+  /// learn what it may start before starting anything.
+  ///
+  /// Returns null when the firmware does not answer the command (an older
+  /// build that has no campaign), which the caller reads as "this device
+  /// cannot tell me". Throws [BlePushException] on a device rejection and
+  /// [FormatException] on an unparseable reply.
+  Future<MirrorGameProgress?> gameProgress() async {
+    final line = await _gameCommand('game progress jumpman',
+        accepts: isGameProgressReply);
+    final progress = parseGameProgress(line);
+    if (progress != null) return progress;
+    if (line == unknownCommandReply) return null;
+    if (line.startsWith('$gameErrorPrefix ')) {
+      throw BlePushException(gameErrorReason(line));
+    }
+    throw FormatException('unexpected game progress reply: $line');
   }
 
   /// Stop the running game. "game stopped" and "game error no game" both mean
