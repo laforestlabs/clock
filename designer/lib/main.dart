@@ -38,9 +38,8 @@ class _MirrorDesignerAppState extends State<MirrorDesignerApp> {
   @override
   void initState() {
     super.initState();
-    // Remembered devices first, from prefs alone: no radio is opened, and no
-    // Bluetooth or permission prompt stands between the owner and the home
-    // screen. Discovery and the first status polls follow from the dashboard.
+    // Load remembered devices from prefs first. Discovery, status polls and
+    // the radio-off warning follow after the dashboard appears.
     unawaited(_devices.load());
   }
 

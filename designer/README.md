@@ -37,6 +37,17 @@ when its page is opened. A mirror that is switched off is retried every 30
 seconds while the dashboard is open, so switching it on brings its tile up
 without a tap.
 
+If the Bluetooth radio is off, the dashboard shows a **Bluetooth is off** popup
+with **Turn on** and **Not now** actions; Wi-Fi devices remain usable. Dismissing
+it does not repeat the warning while the radio stays off. Switching Bluetooth
+on and then off makes the warning eligible again. Warnings wait until the app
+is in the foreground and the dashboard is visible. If the platform cannot
+enable Bluetooth, the app directs the owner to system settings.
+A red Bluetooth-off button remains in the dashboard toolbar while the radio is
+off, even after dismissing the popup. Tap it to request Bluetooth activation
+directly (the operating system may still ask for confirmation). The button
+disappears when the adapter reports that Bluetooth is on.
+
 Select a device for **Smart clock**, **Games**, **Picture display**, and device
 settings. Opening its page or clock editor changes nothing on the panel. Actions
 stay bound to that device; equal names do not merge identities. Legacy firmware

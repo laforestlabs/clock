@@ -19,6 +19,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_blue_plus_platform_interface/flutter_blue_plus_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,6 +34,29 @@ import 'package:mirror_designer/src/ui/device_preview.dart';
 import 'package:mirror_designer/src/ui/device_routes.dart';
 import 'package:mirror_designer/src/ui/device_screen.dart';
 import 'package:mirror_designer/src/ui/devices_screen.dart';
+
+final class _BluetoothPlatform extends FlutterBluePlusPlatform {
+  final states = StreamController<BmBluetoothAdapterState>.broadcast();
+
+  @override
+  Stream<BmBluetoothAdapterState> get onAdapterStateChanged => states.stream;
+
+  @override
+  Future<bool> isSupported(BmIsSupportedRequest request) async => true;
+
+  @override
+  Stream<BmTurnOnResponse> get onTurnOnResponse =>
+      Stream.value(BmTurnOnResponse(userAccepted: true));
+
+  @override
+  Future<bool> turnOn(BmTurnOnRequest request) async {
+    emit(BmAdapterStateEnum.on);
+    return true;
+  }
+
+  void emit(BmAdapterStateEnum state) =>
+      states.add(BmBluetoothAdapterState(adapterState: state));
+}
 
 /// Temp preview directories to remove after each test.
 final List<Directory> _temps = <Directory>[];
@@ -440,12 +464,86 @@ Future<void> pumpHome(
 }
 
 void main() {
+  final bluetooth = _BluetoothPlatform();
+  FlutterBluePlusPlatform.instance = bluetooth;
+  setUp(() => bluetooth.emit(BmAdapterStateEnum.unknown));
+  tearDownAll(bluetooth.states.close);
   setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
   tearDown(() {
     for (final dir in _temps) {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
     }
     _temps.clear();
+  });
+
+  testWidgets('dashboard warns when Bluetooth is off without nagging',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    // Prime the plugin's cached state as if the app launched with its radio off.
+    await tester.runAsync(() => FlutterBluePlus.adapterState.first);
+    bluetooth.emit(BmAdapterStateEnum.off);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await pumpHome(tester, dashboard.registry);
+    await settleRoute(tester);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await settleRoute(tester);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Bluetooth is off'), findsOneWidget);
+
+    await tester.tap(find.text('Not now'));
+    await settleRoute(tester);
+    bluetooth.emit(BmAdapterStateEnum.off);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(seconds: 15));
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byIcon(Icons.bluetooth_disabled), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Bluetooth is off — turn on'));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await settleRoute(tester);
+    expect(find.byIcon(Icons.bluetooth_disabled), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+
+    bluetooth.emit(BmAdapterStateEnum.on);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    bluetooth.emit(BmAdapterStateEnum.off);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await settleRoute(tester);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await settleRoute(tester);
+  });
+
+  testWidgets('dashboard defers radio warning while another page is open',
+      (tester) async {
+    final dashboard = _Dashboard();
+    addTearDown(dashboard.registry.dispose);
+    await loadRegistry(tester, dashboard.registry);
+    await pumpHome(tester, dashboard.registry);
+    await settleRoute(tester);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(find.byType(AlertDialog), findsNothing);
+    final context = tester.element(find.byType(DevicesScreen));
+    unawaited(Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('Another page')),
+      ),
+    ));
+    await settleRoute(tester);
+    bluetooth.emit(BmAdapterStateEnum.off);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await settleRoute(tester);
+    expect(find.byType(AlertDialog), findsNothing);
+    Navigator.of(tester.element(find.text('Another page'))).pop();
+    await settleRoute(tester);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await settleRoute(tester);
+    expect(find.text('Bluetooth is off'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await settleRoute(tester);
   });
 
   testWidgets('the home screen appears without the render engine',
@@ -1054,8 +1152,7 @@ void main() {
     // not make one out of the address the owner typed.
     dashboard.lanAt('127.0.0.1:8080').statusError =
         MirrorApiException('could not reach 127.0.0.1');
-    await tester.runAsync(
-        () => dashboard.registry.addLan('127.0.0.1', 8080));
+    await tester.runAsync(() => dashboard.registry.addLan('127.0.0.1', 8080));
 
     await pumpHome(tester, dashboard.registry);
 

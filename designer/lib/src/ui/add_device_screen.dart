@@ -5,9 +5,8 @@
 // only after it confirms the same firmware identity, so picking the wrong
 // radio can never bind two mirrors together.
 //
-// This is also where Bluetooth is asked for: scanning, the permission prompt
-// and the adapter prompt all start from an explicit tap here, never from the
-// home screen appearing.
+// Scanning and its permission request start from an explicit tap here.
+// The dashboard also warns when the Bluetooth radio is off.
 
 import 'dart:async';
 

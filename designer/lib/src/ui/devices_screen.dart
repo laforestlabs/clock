@@ -14,10 +14,12 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../services/mirror_devices.dart';
 import 'add_device_screen.dart';
 import 'app_brand.dart';
+import 'ble_prompt.dart';
 import 'device_preview.dart';
 import 'device_routes.dart';
 import 'device_screen.dart';
@@ -52,6 +54,11 @@ class _DevicesScreenState extends State<DevicesScreen>
   bool _foreground = true;
   bool _onTop = true;
   bool _subscribed = false;
+  StreamSubscription<BluetoothAdapterState>? _adapterSubscription;
+  BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
+  bool _warnedBluetoothOff = false;
+  bool _bluetoothPromptOpen = false;
+  bool _enablingBluetooth = false;
 
   /// Whether the registry is holding this screen's Bluetooth link open.
   ///
@@ -86,6 +93,16 @@ class _DevicesScreenState extends State<DevicesScreen>
     unawaited(widget.devices.setAutoConnect(true));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _adapterSubscription = FlutterBluePlus.adapterState.listen(
+        (state) {
+          if (!mounted) return;
+          setState(() => _adapterState = state);
+          if (state == BluetoothAdapterState.on) _warnedBluetoothOff = false;
+          unawaited(_warnIfBluetoothOff());
+        },
+        // Missing or inaccessible adapters are not radios known to be off.
+        onError: (Object error) {},
+      );
       unawaited(widget.devices.refreshDiscovery());
       _pollVisible();
     });
@@ -104,6 +121,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   @override
   void dispose() {
+    unawaited(_adapterSubscription?.cancel());
     unawaited(widget.devices.setAutoConnect(false));
     _visibleTimer?.cancel();
     _visibleTimer = null;
@@ -112,6 +130,45 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (_subscribed) appRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  Future<void> _warnIfBluetoothOff() async {
+    if (!mounted ||
+        !_foreground ||
+        !_onTop ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _adapterState != BluetoothAdapterState.off ||
+        _warnedBluetoothOff ||
+        _bluetoothPromptOpen) {
+      return;
+    }
+    _warnedBluetoothOff = true;
+    _bluetoothPromptOpen = true;
+    try {
+      final enabled = await ensureBluetoothOn(context);
+      if (enabled && mounted) {
+        unawaited(widget.devices.refreshDiscovery());
+        _pollVisible();
+      }
+    } catch (_) {
+      // Adapter access can disappear while the prompt is open.
+    } finally {
+      _bluetoothPromptOpen = false;
+    }
+  }
+
+  Future<void> _enableBluetooth() async {
+    if (_enablingBluetooth) return;
+    setState(() => _enablingBluetooth = true);
+    try {
+      final enabled = await turnOnBluetooth(context);
+      if (enabled && mounted) {
+        unawaited(widget.devices.refreshDiscovery());
+        _pollVisible();
+      }
+    } finally {
+      if (mounted) setState(() => _enablingBluetooth = false);
+    }
   }
 
   // -------------------------------------------------------------- polling
@@ -178,6 +235,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (foreground == _foreground) return;
     _foreground = foreground;
     if (foreground) {
+      unawaited(_warnIfBluetoothOff());
       _startTimers();
       unawaited(widget.devices.refreshDiscovery());
       _pollVisible();
@@ -208,6 +266,9 @@ class _DevicesScreenState extends State<DevicesScreen>
   void didPopNext() {
     _onTop = true;
     _startTimers();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_warnIfBluetoothOff());
+    });
     // A device page can change the display; the tiles are stale the moment it
     // closes.
     _pollVisible();
@@ -318,6 +379,15 @@ class _DevicesScreenState extends State<DevicesScreen>
           ],
         ),
         actions: <Widget>[
+          if (_adapterState == BluetoothAdapterState.off)
+            IconButton(
+              tooltip: 'Bluetooth is off — turn on',
+              color: Colors.red,
+              icon: const Icon(Icons.bluetooth_disabled),
+              onPressed: _enablingBluetooth
+                  ? null
+                  : () => unawaited(_enableBluetooth()),
+            ),
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
