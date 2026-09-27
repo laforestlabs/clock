@@ -14,6 +14,7 @@ import '../engine/bindings.dart';
 import '../engine/engine.dart';
 import '../services/mirror_devices.dart';
 import 'app.dart';
+import 'app_brand.dart';
 
 /// Watches the app's navigator so a screen can tell whether it is the route on
 /// top.
@@ -92,7 +93,9 @@ class _WorkspaceRouteState extends State<WorkspaceRoute> {
     }
     final engine = _engine;
     if (engine == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: MirrorLoading(label: 'Preparing the workspace…'),
+      );
     }
     return WorkspaceScreen(engine: engine, device: widget.device);
   }

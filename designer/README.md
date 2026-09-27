@@ -1,6 +1,13 @@
 # Mirror Designer
 
-Device dashboard, layout designer and pixel-exact simulator for desktop and phone.
+Device dashboard, layout designer and pixel-exact simulator. **Android is the
+only current production target.** Desktop tooling remains available, but is
+not a substitute for Android UI review or verification.
+
+The Android UI uses an ink background, mint accents and a reflection-shaped
+mirror mark shared with its launcher icon and native splash. Loading states
+show real work without a timed splash delay; reduced-motion settings replace
+the animated progress indicator with a static waiting symbol.
 
 The app opens on **Devices**, without loading the native simulator. Tiles show
 actual framebuffer snapshots from each mirror. Offline devices remain selectable,
@@ -170,13 +177,15 @@ indistinguishable from a launcher that had done nothing at all.
 
 The middle two are also on the launcher's right-click menu.
 
-The launcher icon is a dedicated layout, `assets/icon.json`: a framed mirror
-panel showing a clock and weather, rendered by the core rather than kept as a
-raster. Linux renders it once per icon size, since a 5x7 glyph does not survive
-resampling. Android ships committed PNGs at fixed densities that are not
-multiples of the 64x64 canvas, so `tool/gen_icon.py` renders one 1024px master
-and resamples it: the icon's display face is anti-aliased, so Lanczos stays
-crisp where the hard pixel glyphs would not.
+The launcher icon is the brand mark: a rounded upright mirror frame, a diagonal
+reflection stroke and three pixels along the bottom. `tool/gen_icon.py` draws it
+in Pillow at four times the size and downsamples, so it needs no render core and
+leaves no raster blob in the repository. The same geometry is what
+`lib/src/ui/app_brand.dart` paints in the app, so the launcher icon, the loading
+screen and the Android assets are one drawing at several scales: the script
+writes the Linux hicolor icons, the Android legacy and adaptive icons, and the
+Android splash resources including the Android 12 splash screen, which a
+regenerated `android/` tree would otherwise leave stock white.
 
 ## Tests
 

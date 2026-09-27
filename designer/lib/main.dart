@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'src/services/mirror_devices.dart';
+import 'src/ui/app_theme.dart';
 import 'src/ui/device_routes.dart';
 import 'src/ui/devices_screen.dart';
 
@@ -54,13 +55,7 @@ class _MirrorDesignerAppState extends State<MirrorDesignerApp> {
     return MaterialApp(
       title: 'Mirror Designer',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00E5FF),
-          brightness: Brightness.dark,
-        ),
-      ),
+      theme: mirrorTheme(),
       // The routes under the home screen need to know when they are covered
       // (the device page stops polling while a nested route is on top).
       navigatorObservers: <NavigatorObserver>[appRouteObserver],

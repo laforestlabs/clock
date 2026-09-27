@@ -6,9 +6,10 @@
 # Paths are derived from where this script lives, so the repository can be
 # moved or cloned somewhere else and a re-run fixes the launcher up.
 #
-# The icon is rendered by the render core itself, once per icon size, rather
-# than by scaling one image down. A 5x7 glyph does not survive resampling, so a
-# downscaled icon turns to mush while a native render at each size stays crisp.
+# The icon is the brand mark drawn by tool/gen_icon.py, the same generator that
+# draws the Android launcher icons and the same geometry the app paints in
+# app_brand.dart. It needs nothing but Python and Pillow: there is no render
+# core to build and no raster blob in the repository.
 #
 # Usage:
 #   ./install-shortcut.sh                only the application grid entry
@@ -19,7 +20,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 DESIGNER="$(pwd)"
-REPO="$(cd .. && pwd)"
 
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
@@ -46,34 +46,10 @@ esac
 
 # ---------------------------------------------------------------------- icon
 
-# mirror-cli is host only and needs nothing but gcc, so build it if it is
-# missing rather than shipping the icon as a binary blob in the repository.
-CLI="$REPO/core/build/host/mirror-cli"
-if [ ! -x "$CLI" ]; then
-  info "Building mirror-cli to render the icon"
-  make -C "$REPO/core" -f Makefile.host >/dev/null 2>&1 || true
-fi
-
-if [ -x "$CLI" ]; then
-  info "Rendering icons"
-  # 64px is the raw framebuffer, so the small icon is pixel exact. The large
-  # one gets --led, which reads as an LED panel at desktop icon sizes.
-  # Rendered from the square 64x64 icon layout (designer/assets/icon.json),
-  # a dedicated mark rather than the stock single.json screen.
-  render() {  # size, scale, extra flags
-    local size="$1" scale="$2"; shift 2
-    mkdir -p "$ICONS/${size}x${size}/apps"
-    ( cd "$REPO" && "$CLI" designer/assets/icon.json -m typical -s "$scale" "$@" >/dev/null )
-    cp "$REPO/out/icon-typical.png" "$ICONS/${size}x${size}/apps/mirror-designer.png"
-  }
-  render 64 1
-  render 128 2
-  render 256 4 --led
-  # Leave out/ holding the plain default render the README documents.
-  ( cd "$REPO" && "$CLI" layouts/single.json -m typical >/dev/null ) || true
+if python3 "$DESIGNER/tool/gen_icon.py" --linux-dir "$ICONS"; then
   ICON_NAME="mirror-designer"
 else
-  warn "could not build mirror-cli, falling back to a stock icon"
+  warn "icon generation failed, falling back to a stock icon"
   ICON_NAME="applications-graphics"
 fi
 

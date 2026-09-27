@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 
 import '../services/mirror_devices.dart';
 import 'add_device_screen.dart';
+import 'app_brand.dart';
 import 'device_preview.dart';
 import 'device_routes.dart';
 import 'device_screen.dart';
@@ -306,7 +307,16 @@ class _DevicesScreenState extends State<DevicesScreen>
     _screen = MediaQuery.sizeOf(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Devices'),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            MirrorMark(size: 24),
+            SizedBox(width: 10),
+            Flexible(
+              child: Text('Devices', overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
         actions: <Widget>[
           IconButton(
             tooltip: 'Refresh',
@@ -359,7 +369,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           ),
         Expanded(
           child: !devices.loaded
-              ? const Center(child: CircularProgressIndicator())
+              ? const MirrorLoading(label: 'Loading your mirrors…')
               : devices.devices.isEmpty
                   ? _empty(context)
                   : _grid(context, _inTileOrder(devices.devices)),
@@ -368,32 +378,46 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
+  /// A scrollable, readable empty state even with large text or a short viewport.
   Widget _empty(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(Icons.devices_other,
-                size: 48, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text('No devices yet', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              'Add a mirror by its address, or pair one nearby over '
-              'Bluetooth.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const MirrorMark(size: 72),
+                const SizedBox(height: 20),
+                Text(
+                  'No devices yet',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(color: scheme.onSurface),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Add a mirror by its address, or pair one nearby over '
+                  'Bluetooth.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () => unawaited(_openAddDevice()),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add device'),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => unawaited(_openAddDevice()),
-              icon: const Icon(Icons.add),
-              label: const Text('Add device'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -415,28 +439,78 @@ class _DevicesScreenState extends State<DevicesScreen>
         final width = (available - gridGap * (columns - 1)) / columns;
         return SingleChildScrollView(
           padding: const EdgeInsets.all(gridPadding),
-          child: Wrap(
-            spacing: gridGap,
-            runSpacing: gridGap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              for (final device in devices)
-                SizedBox(
-                  width: width,
-                  child: _DeviceTile(
-                    key: _tileKeys.putIfAbsent(
-                      device.key,
-                      () => GlobalKey(),
+              _GridHeading(devices: devices),
+              const SizedBox(height: gridGap),
+              Wrap(
+                spacing: gridGap,
+                runSpacing: gridGap,
+                children: <Widget>[
+                  for (final device in devices)
+                    SizedBox(
+                      width: width,
+                      child: _DeviceTile(
+                        key: _tileKeys.putIfAbsent(
+                          device.key,
+                          () => GlobalKey(),
+                        ),
+                        device: device,
+                        onOpen: () => unawaited(_openDevice(device)),
+                      ),
                     ),
-                    device: device,
-                    onOpen: () => unawaited(_openDevice(device)),
-                  ),
-                ),
+                ],
+              ),
             ],
           ),
         );
       },
     );
   }
+}
+
+/// A live count above the fixed-order grid.
+class _GridHeading extends StatelessWidget {
+  const _GridHeading({required this.devices});
+
+  final List<MirrorDevice> devices;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final answering = devices.where(deviceIsOnline).length;
+    final mirrors =
+        devices.length == 1 ? '1 mirror' : '${devices.length} mirrors';
+    final presence = switch (answering) {
+      0 => 'none answering',
+      final n when n == devices.length => 'all answering',
+      final n => '$n answering',
+    };
+    return Text(
+      '$mirrors · $presence',
+      // One line whatever the text scale or window width; the ellipsis is a
+      // backstop, not the expected ending.
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.labelMedium
+          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+    );
+  }
+}
+
+/// The theme's card shape with the hairline swapped for [stroke].
+///
+/// Restating the theme's card rather than building a second one: the radius
+/// and any other corner geometry stay in one place, and a tile that answers
+/// differs from one that does not by the line around it alone.
+ShapeBorder _tileShape(ThemeData theme, Color stroke) {
+  final shape = theme.cardTheme.shape;
+  if (shape is OutlinedBorder) {
+    return shape.copyWith(side: BorderSide(color: stroke));
+  }
+  return RoundedRectangleBorder(side: BorderSide(color: stroke));
 }
 
 /// One device, as a tile: its actual panel, its name, its mode and whether it
@@ -494,12 +568,12 @@ class _DeviceTile extends StatelessWidget {
                   theme.cardTheme.color ?? scheme.surfaceContainerLow,
                 )
               : null,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: online
-                ? BorderSide(color: scheme.primary.withValues(alpha: 0.5))
-                : BorderSide.none,
-          ),
+          // An answering tile wears the theme's own card shape with the brand
+          // mint as its hairline; an absent one keeps the theme's card
+          // untouched. One geometry, defined once, in the theme.
+          shape: online
+              ? _tileShape(theme, scheme.primary.withValues(alpha: 0.55))
+              : null,
           child: InkWell(
             onTap: onOpen,
             child: Padding(
@@ -517,12 +591,15 @@ class _DeviceTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.titleSmall,
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         deviceModeLabel(device),
-                        style: theme.textTheme.labelMedium,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       // Presence as shape as well as colour: filled for a
                       // mirror that answers, hollow for one that does not, so
                       // the tile does not rest on hue alone.
@@ -535,8 +612,7 @@ class _DeviceTile extends StatelessWidget {
                               shape: BoxShape.circle,
                               color: online ? scheme.primary : null,
                               border: Border.all(
-                                color:
-                                    online ? scheme.primary : scheme.outline,
+                                color: online ? scheme.primary : scheme.outline,
                                 width: 1.5,
                               ),
                             ),
@@ -545,6 +621,8 @@ class _DeviceTile extends StatelessWidget {
                           Expanded(
                             child: Text(
                               deviceStatusText(device),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: online
                                     ? scheme.onSurface
@@ -557,13 +635,18 @@ class _DeviceTile extends StatelessWidget {
                       if (device.uploading)
                         Text(
                           'Sending picture…',
-                          style: theme.textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
                         )
                       else if (stale && frameAt != null)
                         Text(
                           'Last seen ${relativeTime(frameAt)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                     ],
@@ -578,7 +661,7 @@ class _DeviceTile extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
                         preview,
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         details,
                       ],
                     );
@@ -625,13 +708,23 @@ class _Notice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Material(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+      // A whisper of the brand mint over the quiet surface: a notice reads as
+      // part of this app rather than as a grey system bar, and stays far
+      // quieter than the tiles underneath it.
+      color: Color.alphaBlend(
+        scheme.primary.withValues(alpha: 0.06),
+        scheme.surfaceContainerHighest,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
         child: Row(
           children: <Widget>[
-            Icon(icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
+            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
             const SizedBox(width: 8),
             Expanded(
               child: Text(message, style: theme.textTheme.bodySmall),

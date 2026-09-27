@@ -204,12 +204,14 @@ for gradle_file in "$DESIGNER_DIR/android/app/build.gradle.kts" \
   fi
 done
 
-# -------------------------------------------------------------------- icons
+# ------------------------------------------------------------------- branding
 
-# Android launcher icons are rendered from the committed icon layout rather
-# than shipped as blobs, so generate them once the Android scaffolding exists.
+# Android launcher icons and the Android 12 splash screen are drawn from the
+# committed geometry in tool/gen_icon.py rather than shipped as blobs, so
+# generate them once the Android scaffolding exists. The stock launcher icon
+# and the white splash in that scaffolding are replaced here.
 if [ -d "$DESIGNER_DIR/android/app/src/main/res" ]; then
-  info "Generating launcher icons"
+  info "Generating launcher icons and splash resources"
   if ! python3 "$DESIGNER_DIR/tool/gen_icon.py"; then
     warn "icon generation failed; the stock launcher icon is left in place"
   fi
