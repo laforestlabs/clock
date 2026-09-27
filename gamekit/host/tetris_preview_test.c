@@ -468,9 +468,8 @@ static void test_score_whole(const panel_size *p)
         return;
     }
 
-    const ml_font *score_font = ml_font_find("micro7");
+    const ml_font *score_font = &ml_font_game8;
     const ml_rgb pc = tetris_piece_color(f.st.piece);
-    check(score_font != NULL, "the score face is in the build");
 
     /* The panel with no score in it, and the margin the whole string would
      * paint on its own. A score drawn through ml_text_draw_clipped in a face
@@ -480,8 +479,7 @@ static void test_score_whole(const panel_size *p)
     fx_draw(&f);
     memcpy(plain.px, f.cv.px, (size_t)p->w * p->h * sizeof(ml_rgb));
     ml_canvas_clear(&want, ml_black);
-    if (score_font)
-        ml_text_draw(&want, score_font, 1, 1, "12345", pc, ML_SCALE_1X);
+    ml_text_draw(&want, score_font, 1, 1, "12345", pc, ML_SCALE_1X);
 
     f.st.score = 12345;
     fx_draw(&f);
