@@ -48,9 +48,9 @@ static const uint8_t s_digits10_bitmap[140] = {
     0x7E,                   /* | ###### | */
     0x66,                   /* | ##  ## | */
     0x66,                   /* | ##  ## | */
-    0xC3,                   /* |##    ##| */
-    0xC3,                   /* |##    ##| */
-    0x66,                   /* | ##  ## | */
+    0xD3,                   /* |## #  ##| */
+    0xD3,                   /* |## #  ##| */
+    0x6E,                   /* | ## ### | */
     0x66,                   /* | ##  ## | */
     0x7E,                   /* | ###### | */
     0x3C,                   /* |  ####  | */
@@ -64,7 +64,7 @@ static const uint8_t s_digits10_bitmap[140] = {
     0x0C,                   /* |    ##  | */
     0x0C,                   /* |    ##  | */
     0x0C,                   /* |    ##  | */
-    0x0C,                   /* |    ##  | */
+    0x1E,                   /* |   #### | */
     /* 50 '2' width 8 */
     0x3C,                   /* |  ####  | */
     0x7E,                   /* | ###### | */
@@ -125,7 +125,7 @@ static const uint8_t s_digits10_bitmap[140] = {
     0x7E,                   /* | ###### | */
     0x06,                   /* |     ## | */
     0x06,                   /* |     ## | */
-    0x0C,                   /* |    ##  | */
+    0xFF,                   /* |########| */
     0x0C,                   /* |    ##  | */
     0x18,                   /* |   ##   | */
     0x18,                   /* |   ##   | */
@@ -188,6 +188,6 @@ const ml_font ml_font_digits10 = {
     .offsets  = s_digits10_offsets,
     .bitmap   = s_digits10_bitmap,
     .family   = "digits",
-    .smooth   = true,
+    .smooth   = false,
     .downscale = false,
 };

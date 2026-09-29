@@ -193,29 +193,59 @@ The weather's coordinates and place label, and the commute's two endpoints,
 label and routing API key, are device settings for the same reason: one layout
 can be pointed at a different home, or a different drive, without being edited.
 
-### Fonts: continuously scalable display faces
+### Fonts: ladders of set sizes
 
-New and stock layouts use the `display` family, with `display-thin` available
-as a lighter-stroked alternative. Each is stored once at 24px and area-resampled
-at render time, so dragging a box changes its scale continuously instead of
-switching cuts or jumping between integer multiples. Their figures are tabular,
-keeping clocks stable as digits change.
+Every text face is a ladder of set sizes, drawn at whole-pixel multiples, so a
+box steps to the cut that fits rather than stretching one drawing to any size.
+That is not a stylistic preference: a 1px stem rescaled by a fraction covers two
+panel cells part-way, and on a HUB75 panel a partly covered cell is a full-size
+emitter at part brightness. Measured across the stock layouts, the old 24px
+`display` masters drew at 0.29x to 0.33x and left 89 to 94 percent of their
+light in part-lit cells. Whole-multiple cuts put it at zero.
 
-Older font names remain registered so saved layouts continue to open:
+`display` is the face new layouts use, with `display-thin` a lighter-stroked
+alternative; `sans` is the body face older layouts name, and `digits` the clock
+face, whose figures are tabular so a time never reflows as its digits change.
 
 | family | role | cuts | source |
 |---|---|---|---|
-| `display` | all text and digits | one 24px scaling master | Open Sans Bold |
-| `display-thin` | all text and digits | one 24px scaling master | Open Sans Light |
-| `sans` | text | 8 to 24px | Open Sans Regular |
+| `display` | all text and digits | 6 to 24px | Open Sans Bold |
+| `display-thin` | all text and digits | 6 to 24px | Open Sans Light |
+| `sans` | text | 6 to 24px | Open Sans Regular |
 | `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
+| `micro` | digits | 3x7, hand-drawn | for a game HUD margin |
 | `wx` | icons | one 16px scaling master | hand-drawn |
 
-The display master scales both below and above its source size. Area coverage
-preserves counters and stroke proportions while gamma compensation prevents
-partially covered LED pixels from becoming too dim after panel correction.
-The weather symbols use the same continuous area-resampling and
-gamma-compensated coverage, including boxes smaller than their 16px master.
+The weather symbols are the one face that still scales continuously, with
+gamma-compensated area coverage, including boxes smaller than their 16px
+master. Every other cut is drawn at whole multiples only.
+
+### Making small text legible
+
+Two things a vector face cannot do at 8px, and what the rasterizer does about
+them.
+
+**A stroke thinner than a pixel.** A Light stem at 8px peaks below any fixed
+cutoff, so the cutoff either erases it (a blank `l`) or doubles it. The cutoff
+is chosen once per cut rather than per glyph — the level is a property of the
+size, and a per-glyph rule leaves one stem emboldened and its neighbour not, or
+reads antialiasing ghosts as marks and cuts a well-formed `X` in half. The cut
+takes the highest rung at which no glyph is blank; a short bar like a hyphen
+loses its ends and survives as a stub, which the same rule recovers.
+
+**Glyphs a reader cannot tell apart.** At 8px a proportional face draws `1`,
+`l`, `I` and `|` as the same stem, and `0` as the same oval as `O`. No amount
+of hinting separates those, because the difference is a design decision. The
+rasterizer draws the conventional marks: a slashed zero, a footed one, a barred
+seven, a tailed `l`, a serifed `I`, and a tail below `,` and `;`. Each mark is
+drawn inside the glyph's advance and only ever adds ink; where a narrow glyph
+fills its whole advance and leaves nowhere for a mark, the advance grows by a
+column or two rather than leaving two letters indistinguishable.
+
+`make -f core/Makefile.host audit` measures both, and its confusability table
+reports the pixels that actually carry a difference between two glyphs, compared
+from the same pen origin — a footed `1` and a tailed `l` are 90% identical by
+area and unmistakable to the eye, so overlap alone cannot judge them.
 
 The weather icons are multi-colour: `wx16` carries four colour planes (sun,
 cloud, precipitation, snow), each drawn in its own colour when the icon widget
@@ -241,10 +271,10 @@ the widget's box and scales it the rest of the way:
 ```
 
 Naming an exact cut, `"font": "digits16"`, still pins that cut, so every
-layout written before families existed renders as it always did. The `sans`
-and `digits` cuts are rasterized from Open Sans at build time by
-`tools/fontraster.py` into ASCII-art `.font` sources, so a bad glyph can be
-touched up by hand and everything still compiles through `tools/fontgen.py`.
+layout written before families existed renders as it always did. Every cut is
+rasterized from Open Sans at build time by `tools/fontraster.py` into
+ASCII-art `.font` sources, so a bad glyph can be touched up by hand and
+everything still compiles through `tools/fontgen.py`.
 
 ### Sizing text
 
@@ -253,17 +283,25 @@ pixel as a 3x3 block. Scale is capped at 8 and defaults to 1, so any layout
 written before it existed renders byte for byte as it always did.
 
 `"fit": true` derives the scale from the box instead, taking the largest scale
-that fits **both** the widget's width and its height. The derived scale is not
-limited to whole multiples: between them the glyphs anti-alias, each panel
-pixel inked in proportion to the area the scaled glyph covers, so dragging a
-widget in the designer grows its text one pixel at a time rather than parking
-at one size until the box reaches the next multiple. `fit` overrides `scale`
-when both are set.
+that fits **both** the widget's width and its height. That scale is a whole
+multiple: every text face here is a ladder of set sizes, so a box steps to the
+next cut rather than stretching one drawing across a fraction of a pixel. On a
+HUB75 panel a partly covered cell is a full-size emitter at part brightness,
+not a sub-pixel edge, so a fractional scale does not soften the text — it
+dims two thirds of it. A box with no cut small enough to fit falls to the
+family's shortest, clipped; the style is the author's and only the size is the
+box's.
 
-`"smooth"` controls that anti-aliasing per widget, as a tri-state. Unset, the
-font decides: the display and weather masters scale continuously, while legacy
-fonts retain their declared behavior. `"smooth": false` remains supported in
-hand-authored layouts for deliberate whole-pixel rendering.
+Which cut a box gets is decided by inked height, not by cell height. Cells are
+padded for ascenders and descenders and the padding is not the same share at
+every size, so ranking by cell let a 32px box draw *smaller* figures than the
+30px box before it. Ranked by ink, growing a box can only ever add candidates.
+
+`"smooth"` overrides that per widget, as a tri-state. Unset, the font decides,
+and every text and clock cut asks for whole-pixel steps. `"smooth": true`
+restores fractional anti-aliasing for a widget that wants it, which is
+supported for hand-authored layouts; the weather icon set is the one face that
+still scales continuously, since a pictogram has no strokes to smear.
 
 Width counts as much as height. Fitting on height alone was fine while every
 `fit` widget held one short string, and wrong the moment one did not: a 64x32
@@ -338,6 +376,48 @@ Fonts are authored as readable pixel art in `fonts/*.font` and compiled to C tab
 python3 tools/fontgen.py                    # regenerate core/src/fonts/
 python3 tools/fontgen.py --check            # fail if the tables are stale
 python3 tools/fontproof.py sans9 "Wed 29 Jul"    # see it in the terminal
+make -f core/Makefile.host audit            # legibility audit of every cut
+```
+
+### Auditing legibility
+
+Editing pixel art blind is one problem; knowing whether a cut survives being scaled is
+another. `core/host/font_audit.c` renders every glyph of every registered font through
+the real renderer and reports three things:
+
+- **1x structure** — thinnest stroke, counter count, and the smallest counter. A 1px
+  counter is the one that closes first.
+- **Scale sweep** — for each scale the engine can actually pick, the *grey load* (share
+  of emitted light landing in partially lit cells), whether any ink fell below half
+  light, whether a stroke split, and whether a counter closed. Only relevant scales are
+  swept: a non-smooth cut's fitted scale floors to a whole multiple, and a scale below
+  1x is clamped to 1x unless the cut declares `@downscale`, so those rows would just
+  re-report the 1x render.
+- **Confusability** — for the pairs that cost readers (`0/O`, `1/l/I/|`, `5/S`, `8/B`,
+  …), the pixels that actually carry a difference between the two glyphs, fewest first.
+  That list is the concrete redraw order.
+
+Why distinguishing pixels rather than a similarity score: a footed `1` and a tailed `l`
+are about 90% identical by area and unmistakable to the eye, so any figure normalised by
+overlap calls the marks pointless. The two are rendered from the same pen origin and
+compared cell by cell, because aligning them by ink box throws away the vertical position
+that separates `P` from `p` and a hyphen from an underscore. A pair under `--distinct`
+pixels (default 3) is flagged `AMBIGUOUS` and wants a mark, an advance widened, or a
+redrawn letterform.
+
+Why grey load: a whole-multiple scale replicates each glyph pixel into a block and
+scores 0%, but a fractional scale splits a 1px stroke across two cells. On a HUB75
+panel a partially covered cell is a *full-size emitter at part brightness*, not a
+sub-pixel edge — a 25%-lit cell is a quarter-bright dot. Half-light is the threshold the
+tool calls ink, so `FAINT` counts glyphs with a cell the eye may read as background.
+
+Grey load, `FAINT` and confusability are advisory. A split stroke, a closed counter and a
+blank glyph are structural, and `--strict` fails on those:
+
+```sh
+core/build/host/font-audit --font display-thin8 --scales 0.5,0.75,1  # one cut
+core/build/host/font-audit --json | jq .                             # for tooling
+core/build/host/font-audit --strict                                  # gate
 ```
 
 Every source declares a `@role`, which is required because it is the one thing
@@ -357,7 +437,8 @@ label with weather symbols.
 
 | Font | Size | Contents |
 |---|---|---|
-| `sans8` to `sans24` | 8 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
+| `display6` to `display24`, `display-thin6` to `display-thin24` | 6 to 24px cells | Full printable ASCII, plus a degree sign at codepoint 127. Bold and Light strokes |
+| `sans6` to `sans24` | 6 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
 | `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
 | `micro7` | 7px cells, hand-drawn | The ten digits, `0-9`, for a HUD margin and nothing else |
 | `wx16` | 16x16 master | Ten continuously scalable weather icons in four colour planes, indexed by category |
@@ -429,7 +510,7 @@ core/       portable C99 render engine. No platform dependencies. The contract.
   src/              canvas, fonts, json, layout, model, render, mock
   src/fonts/        GENERATED glyph tables
   ffi/              narrow JSON-in-pixels-out facade for the designer
-  host/             host-only: PNG writer and the CLI harness
+  host/             host-only: PNG writer, CLI harness, font audit
   test/             unit tests and golden-image regression tests
 fonts/      editable ASCII-art font sources
 layouts/    stock layouts, all 64x32 (the default); larger panels ship as size-suffixed presets

@@ -490,8 +490,11 @@ handle.
 ### Choosing a font
 
 The inspector's **Font** dropdown lists font *families*, read from the engine
-rather than from a list in Dart: `sans` and `digits`, both rasterized from
-Open Sans in many sizes, plus the `wx` icon set kept to its own picker.
+rather than from a list in Dart. It offers the `display` and `display-thin`
+ladders the stock layouts use — a style each, with the engine choosing the size
+cut. `sans`, `digits`, `micro` and the `wx` icon set stay registered so older
+layouts keep rendering and the icon-set picker still works, but they are not
+offered as body styles here.
 Choosing a family chooses a style; the engine chooses the size cut that fills
 the widget's box. A layout that names an exact cut (`sans9`, `digits16`)
 still pins it, and the dropdown shows such a value even though it is not a

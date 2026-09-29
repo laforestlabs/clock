@@ -7,7 +7,12 @@ touch-up-able by hand. But a smooth family wants a cut at many sizes, and
 drawing a dozen of those as pixel art is not a job for a person. This tool
 renders an open-licensed TTF at each target cell height with FreeType (via
 Pillow), thresholds the grayscale coverage to bits and writes the result as a
-.font, so the human only edits the cuts that come out wrong.
+.font, so the human only edits the cuts that come out wrong. The cutoff belongs
+to the cut rather than to the glyph: a stem narrower than a pixel peaks below
+any fixed threshold, so the cut is made at the highest rung where no glyph of
+it is blank (see cut_threshold). The marks that tell 0/1/7/l/I and , and ; from
+the glyphs they are confused with at small sizes are drawn on top of the bits
+(see distinguish), so regenerating a cut reproduces it exactly.
 
 The cell model matches the hand fonts: every glyph occupies a cell of @height
 rows, sits on @baseline measured from the top, and advances by its own width,
@@ -27,11 +32,19 @@ Usage:
     python3 tools/fontraster.py <ttf> <name-prefix> <role> <height...> \
         [--family NAME] [--codepoints text|digits] [--threshold N]
 
-Example (the two commands that build the shipped catalogue):
+Example (the commands that build the shipped catalogue):
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Regular.ttf \
-        sans text 8 9 10 11 12 13 14 16 18 20 24 --family sans
+        sans text 6 7 8 9 10 11 12 13 14 16 18 20 24 --family sans --smooth no
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Semibold.ttf \
-        digits digits 10 12 14 16 18 20 24 28 32 40 48 --family digits
+        digits digits 10 12 14 16 18 20 24 28 32 40 48 --family digits --smooth no
+    python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Bold.ttf \
+        display text 6 7 8 9 10 11 12 14 16 18 20 24 --family display --smooth no
+    python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Light.ttf \
+        display-thin text 6 7 8 9 10 11 12 14 16 18 20 24 --family display-thin --smooth no
+
+Every family is passed --smooth no: each is a ladder of set sizes, and a
+fractional scale would split a 1px stem across two panel cells. Regenerating
+these reproduces the committed .font sources byte for byte.
 """
 
 from __future__ import annotations
@@ -157,24 +170,179 @@ def mirror_average(img: Image.Image, horizontal: bool, vertical: bool) -> None:
                 px[x, y] = px[x, m] = avg
 
 
-def rasterize_glyph(font: ImageFont.FreeTypeFont, ch: str, cell: int,
-                    baseline: int, threshold: int, advance: int | None = None,
-                    x_off: int = 0, sym: tuple[bool, bool] = (False, False)) -> list[str]:
+# Thresholds a cut may be made at, highest first. The nominal threshold is the
+# top rung and a cut never goes above it, so a face is never emboldened by this;
+# a cut that needs a lower rung only gets back ink it was losing.
+THRESHOLD_LADDER = (128, 96, 80, 64, 48, 32, 24, 16)
+
+
+def render_gray(font: ImageFont.FreeTypeFont, ch: str, cell: int, baseline: int,
+                advance: int | None = None, x_off: int = 0,
+                sym: tuple[bool, bool] = (False, False)):
+    """Draw one glyph, unthresholded. Returns the image and its advance."""
     if advance is None:
         advance = max(1, round(font.getlength(ch)))
     img = Image.new("L", (advance, cell), 0)
     draw = ImageDraw.Draw(img)
     draw.text((x_off, baseline), ch, font=font, fill=255, anchor="ls")
     mirror_average(img, *sym)
-    px = img.load()
-    return [
-        "".join("#" if px[x, y] >= threshold else "." for x in range(advance))
-        for y in range(cell)
-    ]
+    return img, advance
+
+
+def has_ink(px, advance: int, cell: int, t: int) -> bool:
+    return any(px[x, y] >= t for y in range(cell) for x in range(advance))
+
+
+def bits(px, advance: int, cell: int, t: int) -> list[str]:
+    return ["".join("#" if px[x, y] >= t else "." for x in range(advance))
+            for y in range(cell)]
+
+
+def cut_threshold(gray: dict, nominal: int, cell: int) -> int:
+    """The highest rung at which no glyph of the cut is blank.
+
+    A face at a small cell has stems thinner than a pixel, and a fixed cutoff
+    either erases them or doubles them: the Light hyphen at 8px loses its ends
+    and survives as a stub, and its l vanishes outright. The cutoff is chosen
+    once for the whole cut rather than per glyph, because it is a property of
+    the size and not of a glyph. Choosing per glyph is what a face cannot
+    afford: it leaves one stem emboldened and its neighbour not, and a rule
+    sensitive enough to rescue a vanishing stem will also read antialiasing
+    ghosts as marks and cut a well-formed X into two halves.
+
+    Space is exempt; it is meant to be blank.
+    """
+    for t in THRESHOLD_LADDER:
+        if t > nominal:
+            continue
+        if all(cp == 32 or has_ink(img.load(), adv, cell, t)
+               for cp, (img, adv) in gray.items()):
+            return t
+    return THRESHOLD_LADDER[-1]
+
+
+def _bbox(rows: list[str]):
+    """The smallest box holding every inked pixel, or None for a blank glyph."""
+    xs = [x for r in rows for x, ch in enumerate(r) if ch == "#"]
+    ys = [y for y, r in enumerate(rows) if "#" in r]
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _counter(rows: list[str]):
+    """The box of the glyph's enclosed background, or None when it has none."""
+    h, w = len(rows), len(rows[0])
+    ink = [[rows[y][x] == "#" for x in range(w)] for y in range(h)]
+    seen = [[False] * w for _ in range(h)]
+    edge = [(x, y) for x in range(w) for y in (0, h - 1)]
+    edge += [(x, y) for y in range(h) for x in (0, w - 1)]
+    stack = []
+    for x, y in edge:
+        if not ink[y][x] and not seen[y][x]:
+            seen[y][x] = True
+            stack.append((x, y))
+    while stack:
+        x, y = stack.pop()
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < w and 0 <= ny < h and not ink[ny][nx] and not seen[ny][nx]:
+                seen[ny][nx] = True
+                stack.append((nx, ny))
+    inside = [(x, y) for y in range(h) for x in range(w)
+              if not ink[y][x] and not seen[y][x]]
+    if not inside:
+        return None
+    return (min(p[0] for p in inside), min(p[1] for p in inside),
+            max(p[0] for p in inside), max(p[1] for p in inside))
+
+
+def _room(rows: list[str], width: int, need: int):
+    """Widen the glyph to at least `need`+1 columns so its mark has somewhere
+    to go.
+
+    A narrow glyph can fill its whole advance -- at 8px an I and an l are both
+    two columns of stem -- and then there is nowhere to draw the mark that
+    tells them apart. One or two columns of extra advance is the cheapest fix
+    that keeps the letterforms intact; the alternative is leaving two letters
+    that a reader cannot tell apart, which is the whole problem being solved.
+    """
+    if need <= width - 1:
+        return rows, width
+    pad = need - (width - 1)
+    return [r + "." * pad for r in rows], width + pad
+
+
+def _foot(rows: list[str], xlo: int, xhi: int, y: int) -> None:
+    """Ink one row between two columns, inside the glyph's own advance."""
+    for x in range(max(0, xlo), min(len(rows[0]) - 1, xhi) + 1):
+        rows[y] = rows[y][:x] + "#" + rows[y][x + 1:]
+
+
+def distinguish(cp: int, rows: list[str]) -> list[str]:
+    """Add the mark that tells this glyph from the ones it is confused with.
+
+    At 8px a proportional face draws '1', 'l', 'I' and '|' as the same stem and
+    '0' as the same oval as 'O'. No amount of hinting separates them, because
+    the difference is a design decision, not a rendering one: the marks below
+    are the conventional ones -- a slashed zero, a footed one, a tailed l, a
+    serifed I, a barred seven.
+
+    Every mark is drawn inside the glyph's existing advance and only ever adds
+    ink, so widths, layout and the whole-multiple fit are untouched. A glyph
+    with no room for its mark (a 6px zero has a one-pixel counter) is left as it
+    was rather than smudged.
+    """
+    box = _bbox(rows)
+    if box is None:
+        return rows
+    xlo, ylo, xhi, yhi = box
+    out = list(rows)
+    width = len(rows[0])
+
+    # The stem the glyph stands on: the columns inked in its lowest rows.
+    band = range(max(ylo, yhi - 2), yhi + 1)
+    stem = [x for y in band for x, ch in enumerate(rows[y]) if ch == "#"]
+    sxlo, sxhi = (min(stem), max(stem)) if stem else (xlo, xhi)
+
+    if cp == 48:                                   # 0 -- slashed zero
+        hole = _counter(rows)
+        if hole is None:
+            return out
+        hx0, hy0, hx1, hy1 = hole
+        span = hy1 - hy0
+        if span >= 2:                              # a diagonal reads as a slash
+            for i in range(span + 1):
+                x = hx0 + (hx1 - hx0) * i // span
+                out[hy0 + i] = out[hy0 + i][:x] + "#" + out[hy0 + i][x + 1:]
+        else:                                      # too flat: a bar still tells
+            x = (hx0 + hx1) // 2
+            for y in range(hy0, hy1 + 1):
+                out[y] = out[y][:x] + "#" + out[y][x + 1:]
+    elif cp == 49:                                 # 1 -- baseline foot
+        if sxhi - sxlo <= 1:                       # a narrow stem, so it tells
+            _foot(out, sxlo - 1, sxhi + 1, yhi)
+    elif cp == 55:                                 # 7 -- mid crossbar
+        if yhi - ylo >= 3:
+            _foot(out, xlo, xhi, ylo + (yhi - ylo) // 2)
+    elif cp == 73:                                 # I -- top and bottom serifs
+        out, width = _room(out, width, sxhi + 1)
+        _foot(out, sxlo, sxhi + 1, ylo)
+        _foot(out, sxlo, sxhi + 1, yhi)
+    elif cp in (44, 59):                           # , ; -- tail below the mark
+        if yhi + 1 < len(rows):
+            x = xhi + 1 if xhi + 1 < width else xhi
+            out[yhi + 1] = out[yhi + 1][:x] + "#" + out[yhi + 1][x + 1:]
+    elif cp == 108:                                # l -- tail to the right
+        out, width = _room(out, width, sxhi + 1)
+        x = sxhi + 1
+        for y in (yhi, yhi - 1):
+            out[y] = out[y][:x] + "#" + out[y][x + 1:]
+        _foot(out, sxhi, x, yhi)
+    return out
 
 
 def emit(path: Path, name: str, role: str, family: str, cell: int,
-         baseline: int, gap: int, downscale: bool,
+         baseline: int, gap: int, smooth: bool, downscale: bool,
          glyphs: dict[int, list[str]]) -> None:
     out: list[str] = []
     out.append(f"# {name} - GENERATED by tools/fontraster.py, edit with care.")
@@ -188,7 +356,7 @@ def emit(path: Path, name: str, role: str, family: str, cell: int,
     out.append(f"@baseline {baseline}")
     out.append(f"@gap      {gap}")
     out.append(f"@family   {family}")
-    out.append("@smooth   yes")
+    out.append(f"@smooth   {'yes' if smooth else 'no'}")
     if downscale:
         out.append("@downscale yes")
     out.append("")
@@ -219,6 +387,13 @@ def main() -> None:
                     help="source-pixel gap between glyph advances")
     ap.add_argument("--tabular-digits", action="store_true",
                     help="give digits and '-' one common advance in a text face")
+    ap.add_argument("--smooth", choices=["yes", "no"], default="yes",
+                    help="whether a fitted scale may anti-alias. 'no' makes "
+                         "the cut a set size: fit floors to a whole multiple "
+                         "(default: yes)")
+    ap.add_argument("--no-distinguish", dest="distinguish", action="store_false",
+                    help="skip the conventional marks that tell 0/1/7/l/I from "
+                         "the glyphs they are confused with at small sizes")
     ap.add_argument("--downscale", action="store_true",
                     help="mark this cut as a high-resolution scaling master")
     args = ap.parse_args()
@@ -231,10 +406,9 @@ def main() -> None:
     sym_cache: dict[str, tuple[bool, bool]] = {}
 
     for cell in sorted(args.heights):
-        threshold = args.threshold if args.threshold is not None \
+        nominal = args.threshold if args.threshold is not None \
             else (80 if cell <= 11 else 128)
         font, baseline = fit_size(args.ttf, cell, probe)
-        glyphs: dict[int, list[str]] = {}
 
         # A clock face takes tabular figures: every digit the same advance, so
         # a time or a placeholder never reflows as its digits change. Without
@@ -246,6 +420,10 @@ def main() -> None:
                 round(font.getlength(chr(cp))) for cp in cps if 48 <= cp <= 57
             )
 
+        # Every glyph is drawn once, unthresholded, and the cut is made
+        # afterwards at a single level -- see cut_threshold for why the level
+        # belongs to the size and not to the glyph.
+        gray: dict[int, tuple] = {}
         for cp in cps:
             ch = DEGREE_CHAR if cp == DEGREE_SLOT else chr(cp)
             if ch not in sym_cache:
@@ -253,16 +431,22 @@ def main() -> None:
             sym = sym_cache[ch]
             if tabular and (48 <= cp <= 57 or cp == 45):
                 own = round(font.getlength(ch))
-                glyphs[cp] = rasterize_glyph(font, ch, cell, baseline, threshold,
-                                             advance=tabular,
-                                             x_off=(tabular - own) // 2, sym=sym)
+                gray[cp] = render_gray(font, ch, cell, baseline,
+                                       advance=tabular,
+                                       x_off=(tabular - own) // 2, sym=sym)
             else:
-                glyphs[cp] = rasterize_glyph(font, ch, cell, baseline, threshold,
-                                             sym=sym)
+                gray[cp] = render_gray(font, ch, cell, baseline, sym=sym)
+
+        threshold = cut_threshold(gray, nominal, cell)
+        glyphs = {cp: bits(px.load(), adv, cell, threshold)
+                  for cp, (px, adv) in gray.items()}
+        if args.distinguish:
+            glyphs = {cp: distinguish(cp, rows) for cp, rows in glyphs.items()}
+
         name = f"{args.prefix}{cell}"
         dest = FONT_SRC_DIR / f"{name}.font"
         emit(dest, name, args.role, family, cell, baseline, args.gap,
-             args.downscale, glyphs)
+             args.smooth == "yes", args.downscale, glyphs)
         print(f"  {name}: cell {cell}px, baseline {baseline}, threshold {threshold}, {len(cps)} glyphs")
 
 

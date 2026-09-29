@@ -441,14 +441,25 @@ static void test_fonts(void)
     CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
     CHECK(ml_font_find("sans24") != NULL, "sans24 registered");
     CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
-    CHECK(ml_font_find("display24") != NULL, "scalable display master registered");
+    CHECK(ml_font_find("display24") != NULL, "display ladder top cut registered");
     CHECK(ml_font_find("display-thin24") != NULL,
-          "scalable thin display master registered");
+          "thin display ladder top cut registered");
     CHECK(ml_font_find("micro7") != NULL, "the narrow-margin score face registered");
-    CHECK(ml_font_find("display24")->downscale,
-          "the display master supports continuous downscaling");
-    CHECK(ml_font_find("display-thin24")->downscale,
-          "the thin display master supports continuous downscaling");
+    /*
+     * The display families are ladders of set sizes, not one master scaled.
+     * A Light or Bold stroke one pixel wide at 24px is a fraction of a pixel
+     * at 7px, and a fraction of a pixel cannot be drawn on a LED panel: it
+     * comes out as a dim emitter beside a bright one. A cut per size, each
+     * drawn at a whole multiple, is the answer instead.
+     */
+    CHECK(!ml_font_find("display24")->downscale,
+          "the display family is a set-size ladder, not a scaling master");
+    CHECK(!ml_font_find("display-thin24")->downscale,
+          "the thin display family is a set-size ladder, not a scaling master");
+    CHECK(!ml_font_find("display24")->smooth && !ml_font_find("display-thin24")->smooth,
+          "and a fitted scale on either never anti-aliases");
+    CHECK(ml_font_find("display6") != NULL && ml_font_find("display-thin6") != NULL,
+          "the ladders reach the smallest stock box");
 
     /*
      * Families and smoothness. A layout naming a family gets the cut that
@@ -469,11 +480,20 @@ static void test_fonts(void)
     CHECK(strcmp(clock->family, "digits") == 0, "digits16 is in the digits family");
     CHECK(strcmp(ml_font_find("micro7")->family, "micro") == 0,
           "micro7 is in the micro family");
-    CHECK(body->smooth == true, "sans anti-aliases");
-    CHECK(ml_font_find("sans8")->smooth == true, "even the smallest cut anti-aliases");
-    CHECK(clock->smooth == true, "the digits face anti-aliases");
+    /*
+     * Every face a layout draws text with is a ladder of set sizes: a fitted
+     * scale floors to a whole multiple, so a box steps to another cut rather
+     * than stretching one drawing across a fraction of a pixel. Only the icon
+     * set still scales continuously, and only it declares @downscale.
+     */
+    CHECK(body->smooth == false, "sans is a set size");
+    CHECK(ml_font_find("sans8")->smooth == false,
+          "even the smallest cut is a set size");
+    CHECK(clock->smooth == false, "the digits face is a set size");
     CHECK(ml_font_find("micro7")->smooth == false,
-          "the 1px score face asks for whole-pixel steps instead");
+          "the 1px score face asks for whole-pixel steps too");
+    CHECK(ml_font_find("display-thin12")->smooth == false,
+          "the display ladders are set sizes");
     CHECK(icons->smooth == true, "wx16 scales smoothly");
     CHECK(icons->downscale == true, "wx16 supports boxes below its master size");
 
@@ -904,25 +924,29 @@ static void test_fit_axes(void)
  */
 static void test_fit_continuous(void)
 {
-    group("continuous fit");
+    group("set-size fit");
 
-    /* '8' fills the digits10 cell top to bottom and one narrow glyph leaves
-     * the 64px box width irrelevant: the height decides alone. Every added
-     * box row grows the text by exactly one row. */
+    /*
+     * Every face a layout draws text with is a ladder of set sizes. Growing
+     * the box steps the cut or the whole multiple; it never lands on a
+     * fraction of a pixel, which on an LED panel is a dim emitter rather than
+     * a softer edge. The ink only ever grows as the box does, and never
+     * outgrows it.
+     */
     int prev = 0;
-    for (int box_h = 10; box_h <= 20; box_h++) {
+    for (int box_h = 6; box_h <= 40; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,%d],"
-                 "\"text\":\"8\",\"font\":\"digits10\",\"color\":\"#FFFFFF\","
+                 "\"text\":\"8\",\"font\":\"digits\",\"color\":\"#FFFFFF\","
                  "\"fit\":true}]}",
                  box_h);
         ml_canvas c;
-        if (!render_doc(doc, 64, 64, &c)) { CHECK(false, "continuous doc parses"); return; }
+        if (!render_doc(doc, 64, 64, &c)) { CHECK(false, "set-size doc parses"); return; }
         const int rows = ink_rows(&c, 64, 64);
-        CHECK(rows == box_h, "every added box row grows the text by one row");
-        if (box_h > 10) CHECK(rows == prev + 1, "no dead bands and no jumps");
+        CHECK(rows <= box_h, "fitted set-size text never outgrows its box");
+        CHECK(rows >= prev, "growing the box never shrinks the text");
         prev = rows;
         ml_canvas_free(&c);
     }
@@ -950,10 +974,17 @@ static void test_fit_continuous(void)
         ml_canvas_free(&c);
     }
 
-    /* The display family is one 24px master, including below 1x. Resizing the
-     * box changes only its scale; it never jumps to a different optical cut. */
-    int previous_scale = 0;
-    for (int box_h = 6; box_h <= 24; box_h++) {
+    /*
+     * The display family is a ladder of set sizes, not one master scaled. Each
+     * box is answered by a cut of the family, drawn at a whole multiple: a
+     * fractional scale splits a 1px stem across two cells, and on an LED panel
+     * a partly lit cell is a dim emitter, not a softer edge.
+     *
+     * Growing the box may therefore step the cut up rather than the scale, and
+     * the ink must never shrink when it does.
+     */
+    int previous_ink = 0;
+    for (int box_h = 6; box_h <= 40; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"widgets\":["
@@ -962,15 +993,19 @@ static void test_fit_continuous(void)
         ml_layout l;
         ml_diag d;
         CHECK(ml_layout_parse(doc, strlen(doc), &l, &d),
-              "scalable display doc parses");
+              "set-size display doc parses");
         int scale = 0;
         const ml_font *f = ml_widget_resolve_font(&l.widgets[0], &(ml_model){0},
                                                   &scale);
-        CHECK(f && strcmp(f->name, "display24") == 0,
-              "every box size keeps the same display master");
-        CHECK(scale > previous_scale,
-              "each added box row increases the display scale");
-        previous_scale = scale;
+        CHECK(f && strcmp(f->family, "display") == 0,
+              "the box is answered by a cut of the named family");
+        CHECK(scale % ML_SCALE_1X == 0,
+              "a set-size family is only ever drawn at a whole multiple");
+        CHECK(f && f->height * (scale / ML_SCALE_1X) <= box_h,
+              "the chosen cut fits the box");
+        const int ink = f ? f->height * (scale / ML_SCALE_1X) : 0;
+        CHECK(ink >= previous_ink, "growing the box never shrinks the text");
+        previous_ink = ink;
     }
 }
 
@@ -982,7 +1017,7 @@ static bool same_canvas(const ml_canvas *a, const ml_canvas *b, int w, int h)
 
 /*
  * A layout naming a family leaves the size to the engine: the cut is picked
- * per box, and a smooth family fills the box continuously at any size.
+ * per box out of that family, and a set-size cut is drawn on a whole multiple.
  */
 static void test_family_pick(void)
 {
@@ -1006,20 +1041,23 @@ static void test_family_pick(void)
         CHECK(false, "family docs parse");
         return;
     }
-    CHECK(ink_rows(&a, 64, 64) == 17, "a wide 32px box gets a large cut, filled");
-    CHECK(ink_rows(&b, 64, 64) == 13, "a 13px box gets a small cut, filled exactly");
+    CHECK(ink_rows(&a, 64, 64) > ink_rows(&b, 64, 64),
+          "a wide 32px box draws larger than a 13px one");
+    CHECK(ink_rows(&a, 64, 64) <= 32 && ink_rows(&b, 64, 64) <= 13,
+          "and neither cut overflows its box");
     ml_canvas_free(&a);
     ml_canvas_free(&b);
 
-    /* An exact cut in the squat box for contrast: digits10 is smooth, so it
-     * still fills continuously, but the choice of cut was the layout's. */
+    /* An exact cut in the squat box for contrast: the engine did not choose
+     * this one, the layout did, and it draws at its own size. */
     static const char pinned[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,13],"
         "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     if (!render_doc(pinned, 64, 64, &a)) { CHECK(false, "pinned doc parses"); return; }
-    CHECK(ink_rows(&a, 64, 64) == 13, "a pinned smooth cut also fills the box");
+    CHECK(ink_rows(&a, 64, 64) == ml_font_find("digits10")->height,
+          "a pinned cut draws at its own size, on a whole multiple");
     ml_canvas_free(&a);
 
     /* A family that cannot carry the string is never picked for it. An agenda
@@ -1118,9 +1156,10 @@ static void test_auto_font(void)
         return;
     }
 
-    CHECK(ink_rows(&a, 64, 64) == 16, "a named font is left alone without auto_font");
-    CHECK(ink_rows(&b, 64, 64) == 18,
+    CHECK(ink_rows(&a, 64, 64) > 0, "a named font is left alone without auto_font");
+    CHECK(ink_rows(&b, 64, 64) > ink_rows(&a, 64, 64),
           "auto_font finds a font that fills the box better");
+    CHECK(ink_rows(&b, 64, 64) <= 32, "and the one it picks still fits the box");
     CHECK(ink_right(&b, 64, 64) < 64, "and the one it picks still fits the width");
     ml_canvas_free(&a);
     ml_canvas_free(&b);
@@ -1212,15 +1251,15 @@ static void test_resolve_font(void)
         "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     CHECK(ml_sim_load(s, fitted_smooth) == 1, "smooth fitted doc loads");
-    CHECK(ml_sim_widget_scale(s, 0) > ML_SCALE_1X &&
-          (ml_sim_widget_scale(s, 0) & 255) != 0,
-          "the font default keeps the fractional scale");
+    CHECK(ml_sim_widget_scale(s, 0) >= ML_SCALE_1X &&
+          (ml_sim_widget_scale(s, 0) % ML_SCALE_1X) == 0,
+          "a set-size font keeps the fitted scale on a whole multiple");
 
     /*
-     * auto_font shops every family. The renderer's choice inks 18 rows in
-     * this box (test_auto_font counts them), so drawing the reported cut at
-     * the reported scale must ink the same 18: the report has to describe
-     * what the renderer actually did.
+     * auto_font shops every family, so the reported cut may not be the named
+     * one. Drawing the reported cut at the reported scale must ink exactly
+     * what the renderer inked: the report has to describe what happened, not
+     * what was asked for.
      */
     static const char automatic[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
@@ -1232,12 +1271,15 @@ static void test_resolve_font(void)
     CHECK(picked != NULL && strcmp(picked->name, "digits10") != 0,
           "auto_font reports the font it upgraded to");
     if (picked) {
-        ml_canvas probe;
+        ml_canvas probe, drawn;
         ml_canvas_init(&probe, 64, 64, NULL);
         ml_text_draw(&probe, picked, 0, 0, "09:41", ML_RGB(255, 255, 255),
                      ml_sim_widget_scale(s, 0));
-        CHECK(ink_rows(&probe, 64, 64) == 18,
-              "and the report agrees with what the renderer drew");
+        if (render_doc(automatic, 64, 64, &drawn)) {
+            CHECK(ink_rows(&probe, 64, 64) == ink_rows(&drawn, 64, 64),
+                  "and the report agrees with what the renderer drew");
+            ml_canvas_free(&drawn);
+        }
         ml_canvas_free(&probe);
     }
 
@@ -1440,10 +1482,24 @@ static void test_scale_floor(void)
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
         "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
-    static const char list_face[] =
-        "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
-        "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
-        "\"font\":\"sans8\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
+    /*
+     * Whichever text cut is shortest stands in. The rule is the point, not the
+     * name: the catalogue grows, and when it grew a 6px text cut the shortest
+     * compatible face became that one rather than sans8. Naming the shortest
+     * cut rather than hard-coding it keeps the assertion about the rule.
+     */
+    const ml_font *shortest_text = NULL;
+    for (int i = 0; i < ml_font_count(); i++) {
+        const ml_font *f = ml_font_at(i);
+        if (f->role != ML_FONT_TEXT) continue;
+        if (!shortest_text || f->height < shortest_text->height) shortest_text = f;
+    }
+    char list_face[256];
+    snprintf(list_face, sizeof(list_face),
+             "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
+             "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
+             "\"font\":\"%s\",\"color\":\"#FFFFFF\",\"show_time\":true}]}",
+             shortest_text->name);
     if (!render_doc(list_named, 64, 64, &a) || !render_doc(list_face, 64, 64, &b)) {
         CHECK(false, "list docs parse");
         return;

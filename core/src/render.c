@@ -306,6 +306,25 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
 }
 
 /*
+ * The rows a cut actually inks for this sample, or its cell height when the
+ * caller has no single string to measure.
+ *
+ * Ranking by inked rows rather than by cell is what keeps a bigger box from
+ * drawing smaller text. A cell is padded for ascenders and descenders, and the
+ * padding is not the same share at every size: a 32px cut's figures may ink 26
+ * rows where a 10px cut's ink all 10. Ranked by cell, the 32px cut wins at a
+ * 32px box and the text visibly shrinks from the 30 rows the box before it
+ * drew. Ranked by ink, growing the box can only ever add candidates, so the
+ * drawn text can never shrink.
+ */
+static int cut_height(const ml_font *f, const char *sample)
+{
+    if (!sample || !*sample) return f->height;
+    const int rows = sample_ink_rows(f, sample);
+    return rows > 0 ? rows : f->height;
+}
+
+/*
  * The cut of a family that fills the box best, and the scale to draw it at.
  * This is what a layout gets by naming a style, "digits" rather than
  * "digits16": the engine picks the size, the family keeps the style.
@@ -338,7 +357,7 @@ static const ml_font *family_pick(const ml_widget *w, const char *family,
         const int s = w->fit ? widget_scale(w, f, sample) : ML_SCALE_1X;
         if (!scale_fits(f, sample, s, &w->rect)) continue;
 
-        const int h = f->height * s;
+        const int h = cut_height(f, sample) * s;
         if (h > best_h || (h == best_h && best && f->height > best->height)) {
             best   = f;
             best_h = h;

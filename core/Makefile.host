@@ -32,22 +32,25 @@ HOST_SRC := host/png_write.c
 # Kept out of HOST_SRC because it defines main(), and HOST_OBJ also links into
 # the test binary. It still needs its own dependency file included below.
 CLI_SRC  := host/mirror_cli.c
+AUDIT_SRC := host/font_audit.c
 TEST_SRC := $(sort $(wildcard test/*.c))
 
 CORE_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRC))
 CORE_PIC := $(patsubst %.c,$(BUILD)/pic/%.o,$(CORE_SRC))
 HOST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(HOST_SRC))
 CLI_OBJ  := $(patsubst %.c,$(BUILD)/%.o,$(CLI_SRC))
+AUDIT_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(AUDIT_SRC))
 TEST_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(TEST_SRC))
 
 LIB_A  := $(BUILD)/libmirrorcore.a
 LIB_SO := $(BUILD)/libmirrorcore.so
 CLI    := $(BUILD)/mirror-cli
+AUDIT  := $(BUILD)/font-audit
 TEST   := $(BUILD)/mirror-test
 
-.PHONY: all clean test fonts fontcheck bindcheck check cli lib
+.PHONY: all clean test fonts fontcheck bindcheck check cli lib audit
 
-all: $(LIB_A) $(LIB_SO) $(CLI)
+all: $(LIB_A) $(LIB_SO) $(CLI) $(AUDIT)
 
 # Everything a change to the core should pass before it is committed.
 check: fontcheck test bindcheck
@@ -73,6 +76,11 @@ $(CLI): $(CLI_OBJ) $(HOST_OBJ) $(LIB_A)
 	$(CC) -o $@ $^ $(LDLIBS)
 	@echo "  LINK  $@"
 
+$(AUDIT): $(AUDIT_OBJ) $(LIB_A)
+	@mkdir -p $(dir $@)
+	$(CC) -o $@ $^ $(LDLIBS)
+	@echo "  LINK  $@"
+
 $(TEST): $(TEST_OBJ) $(HOST_OBJ) $(LIB_A)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $^ $(LDLIBS)
@@ -88,6 +96,12 @@ $(BUILD)/pic/%.o: %.c
 
 test: $(TEST)
 	@./$(TEST)
+
+# Legibility audit: render each cut through the real engine and report the
+# glyphs that smear, lose ink or collide with a neighbour. Report-only by
+# default; run $(AUDIT) --strict by hand to gate on structural defects.
+audit: $(AUDIT)
+	@./$(AUDIT)
 
 # Glyph tables are generated, not hand written. Edit ../fonts/*.font instead.
 fonts:
@@ -111,5 +125,6 @@ clean:
 # Every object must be listed. An object whose .d is missing here is rebuilt
 # only when its own .c changes, so a header change leaves it stale: it still
 # links, and then crashes at runtime the first time a struct layout moves.
--include $(CORE_OBJ:.o=.d) $(CORE_PIC:.o=.d) $(HOST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(CORE_OBJ:.o=.d) $(CORE_PIC:.o=.d) $(HOST_OBJ:.o=.d) $(CLI_OBJ:.o=.d) \
+	 $(AUDIT_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
 CFLAGS += -MMD -MP
