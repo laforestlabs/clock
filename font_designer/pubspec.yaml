@@ -1,0 +1,25 @@
+name: font_designer
+description: Font Designer — edits the fonts/ pixel art and previews it on a simulated RGB matrix.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Repository paths, and the walk up from the working directory that finds
+  # the checkout the tool is editing.
+  path: ^1.9.0
+  # Remembering the panel model and the sample string between launches.
+  shared_preferences: ^2.5.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

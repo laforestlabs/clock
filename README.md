@@ -377,7 +377,15 @@ python3 tools/fontgen.py                    # regenerate core/src/fonts/
 python3 tools/fontgen.py --check            # fail if the tables are stale
 python3 tools/fontproof.py sans9 "Wed 29 Jul"    # see it in the terminal
 make -f core/Makefile.host audit            # legibility audit of every cut
+cd font_designer && ./run.sh                # edit the art against a simulated panel
 ```
+
+### Editing the art
+
+`font_designer/` is a Linux desktop tool for touching up a cut pixel by pixel and seeing
+the result on a simulated RGB matrix — real pitch, real dead space between the emitters,
+the panel's own gamma. It edits `fonts/*.font` in place, writing back only the rows that
+changed, and can run `tools/fontgen.py` so the tables match the art. See its README.
 
 ### Auditing legibility
 
@@ -518,6 +526,7 @@ tools/      fontgen, fontproof, gamma table generator
 docs/       hardware notes
 firmware/   ESP-IDF application: panel, wifi, clock, data providers
 designer/   Flutter layout designer, desktop and mobile
+font_designer/  Flutter tool for editing the fonts against a simulated RGB matrix
 ```
 
 ## Designer

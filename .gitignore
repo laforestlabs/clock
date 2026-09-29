@@ -39,6 +39,11 @@ jumpman_editor/build/
 jumpman_editor/.flutter-plugins
 jumpman_editor/.flutter-plugins-dependencies
 jumpman_editor/pubspec.lock
+font_designer/.dart_tool/
+font_designer/build/
+font_designer/.flutter-plugins
+font_designer/.flutter-plugins-dependencies
+font_designer/pubspec.lock
 packages/*/.dart_tool/
 packages/*/pubspec.lock
 packages/*/build/
@@ -57,6 +62,9 @@ designer/windows/
 jumpman_editor/linux/
 jumpman_editor/macos/
 jumpman_editor/windows/
+font_designer/linux/
+font_designer/macos/
+font_designer/windows/
 packages/*/android/
 packages/*/ios/
 packages/*/linux/
