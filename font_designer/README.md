@@ -39,12 +39,37 @@ by the slider and released by **Fit**.
 
 **The glyph.** The strip is every glyph in the open font; clicking one selects
 it for editing. The grid below is the glyph, one emitter per pixel. Click to
-paint the selected ink, click a lit pixel to clear it, drag to paint a stroke,
-or use the right button to erase. The yellow line is the baseline and the red
-one is where the next glyph's pen starts, so the gap is visible as the space
-between them. The tools shift the glyph, insert or delete a column at the last
-clicked pixel, clear it, or put it back the way the file has it. `Ctrl+Z` and
-the toolbar arrows undo and redo.
+paint the selected ink, click a lit pixel to clear it, and drag to paint a
+stroke. The yellow line is the baseline and the red one is where the next
+glyph's pen starts, so the gap is visible as the space between them.
+
+**Columns.** The right button opens a menu on the cell it was pressed on:
+insert a column before or after it, delete it, trim the glyph's edges, or
+clear that one pixel. The three small buttons on the grid's edge do the same
+for the column the pointer marked, which is the tinted one in the grid and the
+one named above it ("Column 3 of 8"); they stay lit so a button pressed after
+the pointer left the grid still shows what it is about.
+
+**Trim edges**, in the title bar, drops the blank columns at both edges of
+every glyph in the open font. The pen already adds the font's gap between
+glyphs, so a column left blank at an edge is spacing counted twice, and it is
+the advance that inflates which throws a line's kerning out. This is the pass
+to run before judging a cut's spacing — as one undo step, so a look at the
+result costs one keystroke.
+
+Two cases are held back, because their blank columns are not slack:
+
+- A glyph with no ink at all is left alone. A space is nothing but advance,
+  and trimming it would close the word gap.
+- The ten digits of a cut are trimmed together, to the width the widest of
+  them needs. They are tabular — a clock must not reflow as its digits change —
+  and in a cut that draws one the hyphen goes with them, since the engine's
+  `--:--` placeholder has to be exactly as wide as a real time. The pass takes
+  the slack off the set as a whole and never leaves the ten at different
+  widths.
+
+The rest of the tools shift the glyph, clear it, or put it back the way the
+file has it. The title bar's arrows undo and redo.
 
 **Save + build** writes the `.font` and runs `tools/fontgen.py`, so the
 tables the engine links match the art. The status bar says when the C tables
@@ -111,9 +136,10 @@ flutter test
 
 The suite checks the source format against the real catalogue, the pen rules
 against what `core/src/font.c` does, the gamma table against the committed C
-table, and the click-paint-save path against a throwaway checkout in the
-system temp directory — never against the working tree, because this tool
-edits the art the product ships.
+table, what a trim does to a glyph's rows and advance, and the
+click-paint-save path against a throwaway checkout in the system temp
+directory — never against the working tree, because this tool edits the art
+the product ships.
 
 ## Verification on this machine
 

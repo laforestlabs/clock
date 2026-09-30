@@ -118,7 +118,13 @@ class GlyphStrip extends StatelessWidget {
 ///
 /// Click paints, drag paints a stroke, and the value painted is decided once,
 /// on the press: a toggle that re-decided per cell would flicker a dragged
-/// stroke between ink and background. The right button always erases.
+/// stroke between ink and background.
+///
+/// The right button opens the column menu on the cell it was pressed on, so a
+/// column is widened or dropped where it is rather than at a distance: the
+/// menu carries the pixel erase the right button used to do for the one cell
+/// it was opened on, and the left button's toggle already clears a pixel it is
+/// pressed on.
 class GlyphEditor extends StatefulWidget {
   const GlyphEditor({super.key, required this.state, required this.zoom});
 
@@ -128,6 +134,9 @@ class GlyphEditor extends StatefulWidget {
   @override
   State<GlyphEditor> createState() => _GlyphEditorState();
 }
+
+/// What the grid's right-click menu was answered with.
+enum _CellAction { insertLeft, insertRight, deleteColumn, trimGlyph, clearPixel }
 
 class _GlyphEditorState extends State<GlyphEditor> {
   String _painting = '.';
@@ -141,11 +150,73 @@ class _GlyphEditorState extends State<GlyphEditor> {
     return (row, column);
   }
 
-  void _paint(Offset local, {required bool erase}) {
+  void _paint(Offset local) {
     final cell = _cell(local);
     if (cell == null) return;
     final (row, column) = cell;
-    widget.state.setPixel(row, column, erase ? '.' : _painting);
+    widget.state.setPixel(row, column, _painting);
+  }
+
+  /// The menu the right button opens. Its items name the column and the row
+  /// they are about, because the point of opening it on a cell is not having
+  /// to guess which one the tool will act on.
+  Future<void> _openCellMenu(
+    PointerDownEvent event,
+    int row,
+    int column,
+  ) async {
+    final state = widget.state;
+    final glyph = state.glyph;
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (glyph == null || overlay is! RenderBox) return;
+    final at = RelativeRect.fromRect(
+      event.position & Size.zero,
+      Offset.zero & overlay.size,
+    );
+    final choice = await showMenu<_CellAction>(
+      context: context,
+      position: at,
+      items: <PopupMenuEntry<_CellAction>>[
+        PopupMenuItem<_CellAction>(
+          value: _CellAction.insertLeft,
+          child: Text('Insert a column before column ${column + 1}'),
+        ),
+        PopupMenuItem<_CellAction>(
+          value: _CellAction.insertRight,
+          child: Text('Insert a column after column ${column + 1}'),
+        ),
+        PopupMenuItem<_CellAction>(
+          value: _CellAction.deleteColumn,
+          enabled: glyph.width > 1,
+          child: Text('Delete column ${column + 1}'),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<_CellAction>(
+          value: _CellAction.trimGlyph,
+          enabled: state.canTrimGlyph,
+          child: const Text('Trim the blank edge columns'),
+        ),
+        PopupMenuItem<_CellAction>(
+          value: _CellAction.clearPixel,
+          enabled: state.inkAt(row, column) != '.',
+          child: Text('Clear the pixel at row ${row + 1}'),
+        ),
+      ],
+    );
+    if (choice == null || !mounted) return;
+    state.setCursorColumn(column);
+    switch (choice) {
+      case _CellAction.insertLeft:
+        state.insertColumn(column);
+      case _CellAction.insertRight:
+        state.insertColumn(column + 1);
+      case _CellAction.deleteColumn:
+        state.deleteColumn(column);
+      case _CellAction.trimGlyph:
+        state.trimGlyph();
+      case _CellAction.clearPixel:
+        state.setPixel(row, column, '.');
+    }
   }
 
   @override
@@ -184,20 +255,20 @@ class _GlyphEditorState extends State<GlyphEditor> {
               onPointerDown: (event) {
                 final cell = _cell(event.localPosition);
                 if (cell == null) return;
-                _drawing = true;
                 state.setCursorColumn(cell.$2);
-                final erase = event.buttons == kSecondaryButton;
-                if (!erase) {
-                  _painting = state.inkAt(cell.$1, cell.$2) == '.'
-                      ? state.paintInk
-                      : '.';
+                if (event.buttons == kSecondaryButton) {
+                  _openCellMenu(event, cell.$1, cell.$2);
+                  return;
                 }
-                _paint(event.localPosition, erase: erase);
+                _drawing = true;
+                _painting = state.inkAt(cell.$1, cell.$2) == '.'
+                    ? state.paintInk
+                    : '.';
+                _paint(event.localPosition);
               },
               onPointerMove: (event) {
                 if (!_drawing) return;
-                _paint(event.localPosition,
-                    erase: event.buttons == kSecondaryButton);
+                _paint(event.localPosition);
               },
               onPointerUp: (_) => _drawing = false,
               onPointerCancel: (_) => _drawing = false,
@@ -207,6 +278,7 @@ class _GlyphEditorState extends State<GlyphEditor> {
                   spec: state.panel,
                   zoom: widget.zoom,
                   cursor: _hover,
+                  marked: state.cursorColumn,
                   baseline: state.font?.baseline ?? 0,
                   gap: state.font?.gap ?? 1,
                 ),

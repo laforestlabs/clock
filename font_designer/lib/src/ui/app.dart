@@ -286,6 +286,15 @@ class _WorkspaceState extends State<Workspace> {
             icon: const Icon(Icons.settings_backup_restore),
             label: const Text('Revert'),
           ),
+          Tooltip(
+            message: 'Remove the blank columns at both edges of every glyph '
+                'in this font, so an advance is the ink\u2019s own width',
+            child: TextButton.icon(
+              onPressed: state.canTrimAnyGlyph ? state.trimAllGlyphs : null,
+              icon: const Icon(Icons.compress),
+              label: const Text('Trim edges'),
+            ),
+          ),
           FilledButton.icon(
             onPressed: state.dirty ? state.saveAndRegenerate : null,
             icon: const Icon(Icons.save),
@@ -991,6 +1000,44 @@ class _Inspector extends StatelessWidget {
               onChanged: onZoom,
             ),
           ),
+          // The column tools, on the grid's own edge rather than down with
+          // the rest of the toolbar: they act on the column the pointer
+          // marked, which is the tinted one in the grid just below, and the
+          // right button opens the same edits on the cell it was pressed on.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 8, 2),
+            child: Row(
+              children: <Widget>[
+                Text(
+                  'Column ${state.cursorColumn + 1} of ${glyph.width}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const Spacer(),
+                _ToolButton(
+                  compact: true,
+                  icon: Icons.add_box_outlined,
+                  label: 'Insert a blank column at column '
+                      '${state.cursorColumn + 1}, widening the advance',
+                  onPressed: () => state.insertColumn(state.cursorColumn),
+                ),
+                _ToolButton(
+                  compact: true,
+                  icon: Icons.indeterminate_check_box_outlined,
+                  label: 'Delete column ${state.cursorColumn + 1}, narrowing '
+                      'the advance',
+                  onPressed: glyph.width > 1
+                      ? () => state.deleteColumn(state.cursorColumn)
+                      : null,
+                ),
+                _ToolButton(
+                  compact: true,
+                  icon: Icons.compress,
+                  label: 'Trim the blank columns at this glyph\u2019s edges',
+                  onPressed: state.canTrimGlyph ? state.trimGlyph : null,
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -1013,16 +1060,6 @@ class _Inspector extends StatelessWidget {
                   icon: Icons.east,
                   label: 'Shift right',
                   onPressed: () => state.shiftGlyph(1),
-                ),
-                _ToolButton(
-                  icon: Icons.add_box_outlined,
-                  label: 'Insert column',
-                  onPressed: () => state.insertColumn(state.cursorColumn),
-                ),
-                _ToolButton(
-                  icon: Icons.indeterminate_check_box_outlined,
-                  label: 'Delete column',
-                  onPressed: () => state.deleteColumn(state.cursorColumn),
                 ),
                 _ToolButton(
                   icon: Icons.clear,
@@ -1048,11 +1085,16 @@ class _ToolButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.compact = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
+
+  /// The size the column tools sit at, on the grid's edge: the same action,
+  /// a quarter of the button.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -1060,6 +1102,11 @@ class _ToolButton extends StatelessWidget {
         child: IconButton.filledTonal(
           onPressed: onPressed,
           icon: Icon(icon),
+          iconSize: compact ? 17 : null,
+          padding: compact ? EdgeInsets.zero : null,
+          constraints: compact
+              ? const BoxConstraints.tightFor(width: 26, height: 26)
+              : null,
           visualDensity: VisualDensity.compact,
         ),
       );

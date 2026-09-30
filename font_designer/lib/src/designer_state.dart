@@ -16,14 +16,19 @@ import 'repo.dart';
 /// What the big preview is showing: a string, or the whole character set.
 enum PreviewMode { text, sheet }
 
-/// One glyph's rows as they were before an edit. Undo and redo are the same
-/// operation on opposite stacks: swap in the recorded rows and record what
-/// they replace.
+/// The rows of one or more glyphs as they were before an edit. Undo and redo
+/// are the same operation on opposite stacks: swap in the recorded rows and
+/// record what they replace. A map rather than a single glyph, because a
+/// font-wide pass -- trimming every glyph's edges -- is one edit and has to
+/// come back in one keystroke.
 class _GlyphEdit {
-  _GlyphEdit(this.codepoint, this.rows);
+  _GlyphEdit(this.rows);
 
-  final int codepoint;
-  final List<String> rows;
+  /// Pre-edit rows by codepoint, in the order they were touched.
+  final Map<int, List<String>> rows;
+
+  /// The glyph the edit was made on, so undo can put the editor back on it.
+  int get codepoint => rows.keys.first;
 }
 
 class DesignerState extends ChangeNotifier {
@@ -64,7 +69,9 @@ class DesignerState extends ChangeNotifier {
   String paintInk = '#';
 
   /// The column the column tools act on, set by the last click or the last
-  /// hover. Deliberately not a notify: a hover must not rebuild the app.
+  /// hover. Only a move that crosses into another column notifies: a hover
+  /// that stays inside one column must not rebuild the app, but the controls
+  /// acting on this column have to be able to name it.
   int cursorColumn = 0;
 
   int scale = 1;
@@ -324,11 +331,149 @@ class DesignerState extends ChangeNotifier {
       for (final row in g.rows)
         row.substring(0, index) + row.substring(index + 1),
     ];
+    _clampCursor();
     notifyListeners();
   }
 
-  void _record(GlyphSource glyph) {
-    _undo.add(_GlyphEdit(glyph.codepoint, List<String>.of(glyph.rows)));
+  // ----------------------------------------------------------------- trim
+
+  /// Whether the selected glyph has blank columns at an edge, so the trim
+  /// controls can show themselves as usable.
+  bool get canTrimGlyph {
+    final f = font;
+    final g = glyph;
+    return f != null && g != null && _trimmed(f, g) != null;
+  }
+
+  /// Whether any glyph in the open font has a blank column at an edge.
+  bool get canTrimAnyGlyph {
+    final f = font;
+    return f != null && f.glyphs.any((g) => _trimmed(f, g) != null);
+  }
+
+  /// Drop the blank columns at both edges of the selected glyph.
+  void trimGlyph() {
+    final f = font;
+    final g = glyph;
+    if (f == null || g == null) return;
+    final rows = _trimmed(f, g);
+    if (rows == null) return;
+    _record(g);
+    g.rows = rows;
+    _clampCursor();
+    notifyListeners();
+  }
+
+  /// Drop the blank columns at both edges of every glyph in the open font, as
+  /// one undo step: this is the pass an author runs when a cut's advances are
+  /// everywhere a column or two wider than its ink.
+  void trimAllGlyphs() {
+    final f = font;
+    if (f == null) return;
+    final before = <int, List<String>>{};
+    for (final g in f.glyphs) {
+      final rows = _trimmed(f, g);
+      if (rows == null) continue;
+      before[g.codepoint] = List<String>.of(g.rows);
+      g.rows = rows;
+    }
+    if (before.isEmpty) {
+      status = 'No blank edge columns in ${f.name}';
+      notifyListeners();
+      return;
+    }
+    _recordRows(before);
+    _clampCursor();
+    status = 'Trimmed the blank edge columns of ${before.length} of '
+        '${f.glyphs.length} glyphs in ${f.name}';
+    notifyListeners();
+  }
+
+  /// The rows [glyph] would have with its blank edge columns gone, or null
+  /// when it has none to lose.
+  ///
+  /// The pen adds the font's gap between glyphs, so a column left blank at an
+  /// edge is not spacing that was chosen -- it is spacing added twice, and the
+  /// advance it inflates is what throws a line's kerning out. A glyph with no
+  /// ink at all is the one case where that reading does not hold: a space is
+  /// nothing but width, and trimming it to the one column the format needs
+  /// would close the word gap, so it is left alone.
+  ///
+  /// The digits are the other: a cut's ten figures are tabular so a clock does
+  /// not reflow as its digits change, and in a face that draws one the hyphen
+  /// stands in for a digit in the engine's `--:--` placeholder, which is held
+  /// exactly as wide as a real time. Those glyphs are trimmed together, to the
+  /// width the widest of them needs, so the pass still takes the slack off the
+  /// set without ever leaving the ten at different widths.
+  static List<String>? _trimmed(FontSource font, GlyphSource glyph) {
+    final bounds = glyph.inkBounds;
+    if (bounds == null) return null;
+    final (left, right) = bounds;
+    if (_isTabular(font, glyph)) {
+      final cell = _tabularCell(font);
+      if (cell == null || cell == glyph.width) return null;
+      return _repad(glyph.rows, left, right, cell);
+    }
+    if (left == 0 && right == glyph.width - 1) return null;
+    return <String>[
+      for (final row in glyph.rows) row.substring(left, right + 1),
+    ];
+  }
+
+  /// Whether the trim holds [glyph] at the cut's tabular cell width rather
+  /// than cutting it back to its ink.
+  static bool _isTabular(FontSource font, GlyphSource glyph) =>
+      (glyph.codepoint >= 0x30 && glyph.codepoint <= 0x39) ||
+      (glyph.codepoint == 0x2d && font.role == 'digits');
+
+  /// The width the ten digits of [font] hold: the widest ink any of them
+  /// needs. Null for a cut with no digits to measure.
+  static int? _tabularCell(FontSource font) {
+    int? cell;
+    for (var cp = 0x30; cp <= 0x39; cp++) {
+      final bounds = font.glyph(cp)?.inkBounds;
+      if (bounds == null) continue;
+      final ink = bounds.$2 - bounds.$1 + 1;
+      if (cell == null || ink > cell) cell = ink;
+    }
+    return cell;
+  }
+
+  /// [rows] cut back to [target] columns, or widened to it, with the ink left
+  /// where the pen put it: the blank columns go from the right margin first,
+  /// and come back on the right when the cell has to grow.
+  static List<String> _repad(
+    List<String> rows,
+    int left,
+    int right,
+    int target,
+  ) {
+    final width = rows.first.length;
+    if (target == width) return rows;
+    if (target < width) {
+      final rightMargin = width - 1 - right;
+      final excess = width - target;
+      final fromRight = excess < rightMargin ? excess : rightMargin;
+      final fromLeft = excess - fromRight;
+      return <String>[
+        for (final row in rows) row.substring(fromLeft, width - fromRight),
+      ];
+    }
+    return <String>[
+      for (final row in rows) row.padRight(target, '.'),
+    ];
+  }
+
+  void _record(GlyphSource glyph) =>
+      _recordRows(<int, List<String>>{
+        glyph.codepoint: List<String>.of(glyph.rows),
+      });
+
+  /// Record an edit that touched several glyphs as one undo step. Called with
+  /// the rows as they were, before anything is changed.
+  void _recordRows(Map<int, List<String>> rows) {
+    if (rows.isEmpty) return;
+    _undo.add(_GlyphEdit(rows));
     _redo.clear();
     if (_undo.length > 256) _undo.removeAt(0);
   }
@@ -338,23 +483,44 @@ class DesignerState extends ChangeNotifier {
   void undo() {
     if (_undo.isEmpty || font == null) return;
     final edit = _undo.removeLast();
-    final target = font!.glyph(edit.codepoint);
-    if (target == null) return;
-    _redo.add(_GlyphEdit(edit.codepoint, List<String>.of(target.rows)));
-    target.rows = List<String>.of(edit.rows);
+    final replaced = _swapIn(edit.rows);
+    if (replaced.isEmpty) return;
+    _redo.add(_GlyphEdit(replaced));
     selected = edit.codepoint;
+    _clampCursor();
     notifyListeners();
   }
 
   void redo() {
     if (_redo.isEmpty || font == null) return;
     final edit = _redo.removeLast();
-    final target = font!.glyph(edit.codepoint);
-    if (target == null) return;
-    _undo.add(_GlyphEdit(edit.codepoint, List<String>.of(target.rows)));
-    target.rows = List<String>.of(edit.rows);
+    final replaced = _swapIn(edit.rows);
+    if (replaced.isEmpty) return;
+    _undo.add(_GlyphEdit(replaced));
     selected = edit.codepoint;
+    _clampCursor();
     notifyListeners();
+  }
+
+  /// Put [rows] into the font, returning what was there, so the caller can
+  /// make that the opposite edit. A glyph the font no longer holds is skipped.
+  Map<int, List<String>> _swapIn(Map<int, List<String>> rows) {
+    final replaced = <int, List<String>>{};
+    for (final entry in rows.entries) {
+      final target = font!.glyph(entry.key);
+      if (target == null) continue;
+      replaced[target.codepoint] = List<String>.of(target.rows);
+      target.rows = List<String>.of(entry.value);
+    }
+    return replaced;
+  }
+
+  /// Keep the column the column tools act on inside the glyph: an edit can
+  /// narrow the glyph out from under it.
+  void _clampCursor() {
+    final g = glyph;
+    if (g == null || g.width == 0) return;
+    cursorColumn = cursorColumn.clamp(0, g.width - 1);
   }
 
   // --------------------------------------------------------------- output
@@ -485,7 +651,11 @@ class DesignerState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setCursorColumn(int column) => cursorColumn = column;
+  void setCursorColumn(int column) {
+    if (column == cursorColumn) return;
+    cursorColumn = column;
+    notifyListeners();
+  }
 
   void _persistPanel() {
     _persistInt(_kColumns, panel.columns);

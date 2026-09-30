@@ -8,6 +8,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:font_designer/src/designer_state.dart';
@@ -146,6 +147,68 @@ void main() {
     expect(state.dirty, isFalse);
     final again = await tester.runAsync(() => state.save());
     expect(again, isFalse, reason: 'nothing to write');
+  });
+
+  testWidgets('the right button opens the column menu on the cell it marked',
+      (tester) async {
+    final glyph = state.glyph!;
+    const zoom = 12.0;
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: Center(child: GlyphEditor(state: state, zoom: zoom))),
+    ));
+
+    // Column 1 of 'A', which is '.#' with no ink under it.
+    final origin = tester.getTopLeft(find.byType(GlyphEditor));
+    await tester.tapAt(origin + const Offset(1.5 * zoom, 0.5 * zoom),
+        buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Insert a column before column 2'), findsOneWidget);
+    expect(find.text('Delete column 2'), findsOneWidget);
+    expect(find.text('Insert a column after column 2'), findsOneWidget);
+    expect(state.inkAt(0, 1), '.',
+        reason: 'the right button opens the menu, it does not erase');
+
+    await tester.tap(find.text('Delete column 2'));
+    await tester.pumpAndSettle();
+
+    expect(glyph.width, 1);
+    expect(glyph.rows, <String>['#', '#', '#']);
+    expect(state.canUndo, isTrue);
+
+    // The menu carries the erase the right button used to do, for the cell it
+    // was opened on.
+    final marked = tester.getTopLeft(find.byType(GlyphEditor));
+    await tester.tapAt(marked + const Offset(0.5 * zoom, 1.5 * zoom),
+        buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear the pixel at row 2'));
+    await tester.pumpAndSettle();
+
+    expect(glyph.rows[1], '.');
+  });
+
+  testWidgets('the column tools name the column the pointer marked',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MaterialApp(home: Workspace(state: state)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Column 1 of 2'), findsOneWidget);
+
+    // The workspace's own editor zoom.
+    const zoom = 18.0;
+    final origin = tester.getTopLeft(find.byType(GlyphEditor));
+    await tester.tapAt(origin + const Offset(1.5 * zoom, 0.5 * zoom));
+    await tester.pumpAndSettle();
+
+    expect(state.cursorColumn, 1);
+    expect(find.text('Column 2 of 2'), findsOneWidget,
+        reason: 'the buttons act on the column they name');
   });
 
   testWidgets('the window builds, and the sheet view renders every glyph',

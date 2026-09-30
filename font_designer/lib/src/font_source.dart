@@ -100,6 +100,23 @@ class GlyphSource {
     return false;
   }
 
+  /// The first and last column that hold ink, or null when the glyph holds
+  /// none at all. A glyph with no ink is all spacing -- a space, or a slot an
+  /// icon face leaves empty -- which is why this answers null rather than
+  /// pretending its first column is its edge.
+  (int, int)? get inkBounds {
+    var left = width;
+    var right = -1;
+    for (final row in rows) {
+      for (var x = 0; x < row.length; x++) {
+        if (row[x] == '.') continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+      }
+    }
+    return right < left ? null : (left, right);
+  }
+
   /// Every listed ink character actually present, so a plane with no pixels
   /// is not offered as something to paint with.
   Set<String> get usedInk => <String>{

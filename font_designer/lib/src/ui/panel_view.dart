@@ -142,6 +142,7 @@ class GlyphEditorPainter extends CustomPainter {
     required this.spec,
     required this.zoom,
     required this.cursor,
+    required this.marked,
     required this.baseline,
     required this.gap,
   });
@@ -153,6 +154,11 @@ class GlyphEditorPainter extends CustomPainter {
   /// The cell under the pointer as (column, row), or null.
   final Offset? cursor;
 
+  /// The column the column tools act on: the last one the pointer marked,
+  /// left visible so a button pressed after the pointer left the grid still
+  /// shows which column it is about.
+  final int marked;
+
   /// Rows from the top of the cell to the baseline, as the source declares it.
   final int baseline;
 
@@ -163,6 +169,13 @@ class GlyphEditorPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rect = cellRect(size, glyph.width, glyph.rows.length, zoom);
     canvas.drawRect(rect, Paint()..color = kDeadSpace);
+
+    if (marked >= 0 && marked < glyph.width) {
+      canvas.drawRect(
+        Rect.fromLTWH(rect.left + marked * zoom, rect.top, zoom, rect.height),
+        Paint()..color = const Color(0x1A64B5F6),
+      );
+    }
 
     final grid = Paint()
       ..color = kGridLine
