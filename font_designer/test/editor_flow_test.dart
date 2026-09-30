@@ -6,6 +6,7 @@
 // directory. The tool edits real fonts/*.font files, so a test that pointed
 // at the working tree would be one bug away from rewriting the product's art.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart' show kSecondaryButton;
@@ -147,6 +148,27 @@ void main() {
     expect(state.dirty, isFalse);
     final again = await tester.runAsync(() => state.save());
     expect(again, isFalse, reason: 'nothing to write');
+
+    // Every save is journalled: which glyph changed, what it held before, and
+    // the bytes that can put it back. This is what a lost edit is read from.
+    final journal = File('${repo.path}/out/font-journal/writes.jsonl');
+    expect(journal.existsSync(), isTrue);
+    final entry =
+        jsonDecode(journal.readAsLinesSync().single) as Map<String, Object?>;
+    expect(entry['file'], 'fonts/display12.font');
+    expect(entry['tool'], 'font_designer');
+    expect(entry['reason'], 'save');
+    expect(entry['pid'], isA<int>());
+    final glyphs = entry['glyphs'] as List<Object?>;
+    final logged = glyphs.single as Map<String, Object?>;
+    expect(logged['cp'], 65, reason: 'only the painted glyph is recorded');
+    expect((logged['before'] as List).first, '#.',
+        reason: 'the rows as the file had them before the save');
+    expect((logged['after'] as List).first, '##');
+    final blob = File(
+        '${repo.path}/out/font-journal/blobs/${entry['before']}');
+    expect(blob.existsSync(), isTrue, reason: 'the previous bytes are kept');
+    expect(blob.readAsStringSync(), _display12);
   });
 
   testWidgets('the right button opens the column menu on the cell it marked',

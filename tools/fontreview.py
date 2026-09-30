@@ -88,6 +88,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Every write to the art is journalled, so a lost edit can be explained and
+# undone: see tools/fontjournal.py. Imported both ways round because these
+# tools run as scripts and are also importable as package modules.
+try:
+    from fontjournal import record, record_run, relpath
+except ImportError:                        # pragma: no cover
+    from tools.fontjournal import record, record_run, relpath
 FONT_SRC_DIR = ROOT / "fonts"
 # The game faces live apart because fontgen compiles them into a different
 # directory: they never enter the layout registry, but they are still pixels
@@ -913,7 +921,11 @@ def main(argv):
         if any(g.dirty for g in font.glyphs):
             changed += 1
             if write:
-                font.path.write_text(font.render())
+                text = font.render()
+                before = font.path.read_text() if font.path.exists() else ""
+                font.path.write_text(text)
+                record(relpath(font.path), before, text,
+                       "fontreview", "repair")
         if not opts.json and not opts.quiet:
             report_text(rev)
 

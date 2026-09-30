@@ -407,6 +407,28 @@ make -f core/Makefile.host audit            # legibility audit of every cut
 cd font_designer && ./run.sh                # edit the art against a simulated panel
 ```
 
+### Nothing writes the art unrecorded
+
+Four things write `fonts/`: a save in Font Designer, a repair from
+`tools/fontreview.py`, a redraw from `tools/fontraster.py`, and the table rebuild in
+`tools/fontgen.py`. Hand edits have been lost here with nothing to point at afterwards —
+a glyph came back as a solid block and all that could be said about it was its
+modification time — so every write is journalled:
+
+```sh
+python3 tools/fontjournal.py log                        # what wrote what, oldest first
+python3 tools/fontjournal.py log --file fonts/display6.font
+python3 tools/fontjournal.py restore --entry 3          # put that version back
+```
+
+An entry records when, which tool and process (and its parent, since the app runs
+`fontgen` for the viewer), the glyphs the write changed with their rows on both sides,
+and the digest of the bytes it replaced, which are kept under `out/font-journal/blobs/`
+so a version can be put back. A rewrite of a whole cut records the count rather than
+every row. The journal is a local, append-only file in `out/` — gitignored, so it never
+shows up in a diff — and a restore is itself a logged write. The digest is FNV-1a 64,
+the one the golden images use: it names content, it does not protect it.
+
 ### Editing the art
 
 `font_designer/` is a Linux desktop tool for touching up a cut pixel by pixel and seeing

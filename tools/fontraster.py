@@ -60,6 +60,14 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Every write to the art is journalled, so a lost edit can be explained and
+# undone: see tools/fontjournal.py. Imported both ways round because these
+# tools run as scripts and are also importable as package modules.
+try:
+    from fontjournal import record, record_run, relpath
+except ImportError:                        # pragma: no cover
+    from tools.fontjournal import record, record_run, relpath
 FONT_SRC_DIR = ROOT / "fonts"
 
 # Codepoint 127 is DEL and unused by the runtime, so every font here carries
@@ -390,7 +398,10 @@ def emit(path: Path, name: str, role: str, family: str, cell: int,
         for row in glyphs[cp]:
             out.append(f"  |{row}|")
         out.append("")
-    path.write_text("\n".join(out))
+    text = "\n".join(out)
+    before = path.read_text() if path.exists() else ""
+    path.write_text(text)
+    record(relpath(path), before, text, "fontraster", "rasterize")
 
 
 def main() -> None:

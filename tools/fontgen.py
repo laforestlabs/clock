@@ -86,6 +86,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Rebuilding the tables is a write too, and it is logged: the entry records the
+# digest of the art they were built from, which is what ties a table to the
+# version of the sources that produced it. See tools/fontjournal.py.
+try:
+    from fontjournal import digest_bytes, record_run
+except ImportError:                        # pragma: no cover
+    from tools.fontjournal import digest_bytes, record_run
 FONT_SRC_DIR = ROOT / "fonts"
 FONT_OUT_DIR = ROOT / "core" / "src" / "fonts"
 GAME_FONT_SRC_DIR = ROOT / "gamekit" / "fonts"
@@ -479,6 +487,11 @@ def main(argv: list[str]) -> int:
             stale.append(path)
             if not check_only:
                 path.write_text(text)
+
+    if not check_only and stale:
+        art = digest_bytes(b"".join(
+            p.read_bytes() for p in sources + [f.path for f in game_fonts]))
+        record_run("fontgen", "regenerate", files=len(stale), art=art)
 
     if check_only:
         if stale:

@@ -75,6 +75,12 @@ file has it. The title bar's arrows undo and redo.
 tables the engine links match the art. The status bar says when the C tables
 are behind the sources.
 
+Every save is journalled to `out/font-journal/`: the glyphs it changed with the
+rows they held before and after, and the bytes of the file it replaced. The log
+is shared with the tools that rewrite the same art, so
+`python3 tools/fontjournal.py log` says which of them a change came from and
+`restore` puts a version back. See the **Fonts** section of the root README.
+
 ## The panel model
 
 The panel is described by the numbers the hardware comes in, not by taste.

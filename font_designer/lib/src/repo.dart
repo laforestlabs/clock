@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'font_journal.dart';
 import 'font_source.dart';
 
 /// One source file in the catalogue.
@@ -104,8 +105,31 @@ class Repository {
 
   /// Write [font] back. Only the rows that changed are different from what was
   /// read, so a one-pixel fix is a one-line diff.
+  ///
+  /// The write is journalled with the glyphs it changed and the bytes the file
+  /// held before, so an edit that something later overwrites can be traced to
+  /// its writer and put back. See lib/src/font_journal.dart.
   Future<void> save(FontSource font) async {
-    await File(absolute(font.path)).writeAsString(font.serialize());
+    final file = File(absolute(font.path));
+    final before = file.existsSync() ? file.readAsStringSync() : '';
+    final after = font.serialize();
+    file.writeAsStringSync(after);
+    FontJournal.record(
+      root: root,
+      file: font.path,
+      tool: 'font_designer',
+      reason: 'save',
+      before: before,
+      after: after,
+      glyphs: <Map<String, Object?>>[
+        for (final g in font.glyphs)
+          if (g.dirty) <String, Object?>{
+            'cp': g.codepoint,
+            'before': g.original,
+            'after': g.rows,
+          },
+      ],
+    );
   }
 
   /// Compile every source into the C tables the engine links.
