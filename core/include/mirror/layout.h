@@ -142,10 +142,13 @@ typedef struct {
 
     /*
      * Subpixel anti-aliasing on upscale, as a tri-state. Unset, the font
-     * decides: smooth families (sans, digits) grow a fraction of a pixel at
-     * a time under fit, anything else floors the box-derived scale to a
-     * whole-pixel multiple to keep hard edges. Set, it overrules the font:
-     * true anti-aliases any font, false forces whole-pixel steps.
+     * decides: a @smooth cut grows a fraction of a pixel at a time under fit,
+     * anything else floors the box-derived scale to a whole-pixel multiple to
+     * keep hard edges. Every text and clock cut declares @smooth no -- a
+     * partly covered cell on a HUB75 panel is a full-size emitter at part
+     * brightness, not a softer edge -- so the icon set is the one face left
+     * scaling continuously. Set, it overrules the font: true anti-aliases any
+     * font, false forces whole-pixel steps.
      */
     bool           smooth;
     bool           has_smooth;

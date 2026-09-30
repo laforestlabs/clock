@@ -413,11 +413,11 @@ static void test_fonts(void)
 {
     group("fonts");
 
-    const ml_font *body = ml_font_find("sans9");
+    const ml_font *body = ml_font_find("display-thin9");
     const ml_font *clock = ml_font_find("digits16");
     const ml_font *icons = ml_font_find("wx16");
 
-    CHECK(body != NULL, "sans9 registered");
+    CHECK(body != NULL, "display-thin9 registered");
     CHECK(clock != NULL, "digits16 registered");
     CHECK(icons != NULL, "wx16 registered");
     CHECK(ml_font_find("nosuchfont") == NULL, "unknown font not found");
@@ -429,17 +429,17 @@ static void test_fonts(void)
      * same height sorting earlier, would otherwise change what every widget
      * naming no font renders as. Adding a .font file must not do that.
      */
-    CHECK(ml_font_default() == body, "default font is sans9, not whatever sorts first");
+    CHECK(ml_font_default() == body, "default font is display-thin9, not whatever sorts first");
     CHECK(ml_font_at(0) != NULL, "registry entry zero exists");
 
     /* The rest of the catalogue. The cuts are what the designer's picker
      * groups into families: one text family from 6px up, one clock family,
      * one 3x7 score face, one icon set. */
-    CHECK(ml_font_find("sans8") != NULL, "sans8 registered");
-    CHECK(ml_font_find("sans9") != NULL, "sans9 registered");
+    CHECK(ml_font_find("display-thin8") != NULL, "display-thin8 registered");
+    CHECK(ml_font_find("display-thin9") != NULL, "display-thin9 registered");
     CHECK(ml_font_find("digits10") != NULL, "digits10 registered");
     CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
-    CHECK(ml_font_find("sans24") != NULL, "sans24 registered");
+    CHECK(ml_font_find("display-thin24") != NULL, "display-thin24 registered");
     CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
     CHECK(ml_font_find("display24") != NULL, "display ladder top cut registered");
     CHECK(ml_font_find("display-thin24") != NULL,
@@ -468,15 +468,15 @@ static void test_fonts(void)
      * score face keep hard pixels, and any widget can overrule its font with
      * "smooth".
      */
-    CHECK(ml_font_is_family("sans"), "sans is a family");
+    CHECK(ml_font_is_family("display"), "display is a family");
     CHECK(ml_font_is_family("digits"), "digits is a family");
     CHECK(ml_font_is_family("micro"), "micro is a family");
     CHECK(ml_font_is_family("display-thin"), "display-thin is a family");
     CHECK(ml_font_is_family("wx"), "wx is a family");
     CHECK(!ml_font_is_family("pixel"), "the pixel families are gone");
-    CHECK(!ml_font_is_family("sans9"), "a cut is not a family");
+    CHECK(!ml_font_is_family("display-thin9"), "a cut is not a family");
     CHECK(!ml_font_is_family("nosuch"), "an unknown name is not a family");
-    CHECK(strcmp(body->family, "sans") == 0, "sans9 is in the sans family");
+    CHECK(strcmp(body->family, "display-thin") == 0, "display-thin9 is in the display-thin family");
     CHECK(strcmp(clock->family, "digits") == 0, "digits16 is in the digits family");
     CHECK(strcmp(ml_font_find("micro7")->family, "micro") == 0,
           "micro7 is in the micro family");
@@ -486,8 +486,8 @@ static void test_fonts(void)
      * than stretching one drawing across a fraction of a pixel. Only the icon
      * set still scales continuously, and only it declares @downscale.
      */
-    CHECK(body->smooth == false, "sans is a set size");
-    CHECK(ml_font_find("sans8")->smooth == false,
+    CHECK(body->smooth == false, "the body face is a set size");
+    CHECK(ml_font_find("display-thin8")->smooth == false,
           "even the smallest cut is a set size");
     CHECK(clock->smooth == false, "the digits face is a set size");
     CHECK(ml_font_find("micro7")->smooth == false,
@@ -515,11 +515,11 @@ static void test_fonts(void)
      * the only thing keeping the weather pictograms out of the font pickers and
      * out of substitution.
      */
-    CHECK(body->role == ML_FONT_TEXT, "sans9 is a text font");
+    CHECK(body->role == ML_FONT_TEXT, "display-thin9 is a text font");
     CHECK(clock->role == ML_FONT_DIGITS, "digits16 is a clock face");
     CHECK(icons->role == ML_FONT_ICONS, "wx16 is an icon set");
-    CHECK(ml_font_find("sans8")->role == ML_FONT_TEXT, "sans8 is a text font");
-    CHECK(ml_font_find("sans24")->role == ML_FONT_TEXT, "sans24 is a text font");
+    CHECK(ml_font_find("display-thin8")->role == ML_FONT_TEXT, "display-thin8 is a text font");
+    CHECK(ml_font_find("display-thin24")->role == ML_FONT_TEXT, "display-thin24 is a text font");
     CHECK(ml_font_find("digits10")->role == ML_FONT_DIGITS, "digits10 is a clock face");
     CHECK(ml_font_find("digits32")->role == ML_FONT_DIGITS, "digits32 is a clock face");
     CHECK(ml_font_find("micro7")->role == ML_FONT_DIGITS, "micro7 is a numerals face");
@@ -530,18 +530,18 @@ static void test_fonts(void)
      * Every body font carries the degree sign in the DEL slot, so a layout can
      * swap between cuts without a temperature losing its unit.
      */
-    const ml_font *small = ml_font_find("sans8");
-    const ml_font *large = ml_font_find("sans24");
+    const ml_font *small = ml_font_find("display-thin8");
+    const ml_font *large = ml_font_find("display-thin24");
     if (small && large) {
-        CHECK(ml_text_width(small, "\177", 1) > 0, "sans8 has the degree sign");
-        CHECK(ml_text_width(large, "\177", 1) > 0, "sans24 has the degree sign");
-        CHECK(small->height < body->height, "sans8 is shorter than sans9");
-        CHECK(large->height > body->height, "sans24 is taller than sans9");
+        CHECK(ml_text_width(small, "\177", 1) > 0, "display-thin8 has the degree sign");
+        CHECK(ml_text_width(large, "\177", 1) > 0, "display-thin24 has the degree sign");
+        CHECK(small->height < body->height, "display-thin8 is shorter than display-thin9");
+        CHECK(large->height > body->height, "display-thin24 is taller than display-thin9");
         /* The same text costs less width in a shorter cut. */
         CHECK(ml_text_width(small, "Standup", 1) < ml_text_width(body, "Standup", 1),
-              "sans8 is narrower than sans9");
+              "display-thin8 is narrower than display-thin9");
         CHECK(ml_text_width(large, "Standup", 1) > ml_text_width(body, "Standup", 1),
-              "sans24 is wider than sans9");
+              "display-thin24 is wider than display-thin9");
     }
 
     /* The new clock faces must keep the placeholder-width property too. */
@@ -596,7 +596,7 @@ static void test_scale(void)
 {
     group("glyph scale");
 
-    const ml_font *body = ml_font_find("sans9");
+    const ml_font *body = ml_font_find("display-thin9");
     if (!body) return;
 
     CHECK(ml_text_width(body, "Hello", 2 * ML_SCALE_1X) == 2 * ml_text_width(body, "Hello", ML_SCALE_1X),
@@ -609,7 +609,7 @@ static void test_scale(void)
           "and a fractional scale below one is too");
 
     /*
-     * 'i' in sans9 is a narrow column of ink, which makes it the clearest
+     * 'i' in display-thin9 is a narrow column of ink, which makes it the clearest
      * possible probe: at 3x every source pixel must become a 3x3 block with
      * nothing beside it.
      */
@@ -893,10 +893,10 @@ static void test_fit_axes(void)
     static const char narrow[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,16],"
-        "\"text\":\"8888888888888888\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+        "\"text\":\"8888888888888888\",\"font\":\"display-thin8\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"smooth\":false}]}";
 
-    /* '8' inks 6 of the 8 rows in sans8; the rest is descender room a digit
+    /* '8' inks 6 of the 8 rows in display-thin8; the rest is descender room a digit
      * never uses. So the row count is 6 per unit of scale. */
     ml_canvas c;
     if (!render_doc(narrow, 64, 64, &c)) { CHECK(false, "narrow doc parses"); return; }
@@ -908,7 +908,7 @@ static void test_fit_axes(void)
     static const char roomy[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,16],"
-        "\"text\":\"88\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+        "\"text\":\"88\",\"font\":\"display-thin8\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"smooth\":false}]}";
 
     if (!render_doc(roomy, 64, 64, &c)) { CHECK(false, "roomy doc parses"); return; }
@@ -957,7 +957,7 @@ static void test_fit_continuous(void)
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,%d],"
-                 "\"text\":\"Wg\",\"font\":\"sans12\",\"color\":\"#FFFFFF\","
+                 "\"text\":\"Wg\",\"font\":\"display-thin12\",\"color\":\"#FFFFFF\","
                  "\"fit\":true}]}",
                  box_h);
         ml_canvas c;
@@ -1091,13 +1091,13 @@ static void test_fit_blocky(void)
 {
     group("blocky fit");
 
-    /* 'g' inks 7 of the 8 rows in sans8, descender included. */
+    /* 'g' inks 7 of the 8 rows in display-thin8, descender included. */
     for (int box_h = 8; box_h <= 17; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,%d],"
-                 "\"text\":\"g\",\"font\":\"sans8\",\"color\":\"#FFFFFF\","
+                 "\"text\":\"g\",\"font\":\"display-thin8\",\"color\":\"#FFFFFF\","
                  "\"fit\":true,\"smooth\":false}]}",
                  box_h);
         ml_canvas c;
@@ -1166,7 +1166,7 @@ static void test_auto_font(void)
 
     /*
      * Icons are indexed by digit and every body font has digits, so a naive
-     * "which font can draw this string" would answer sans9 and put a numeral
+     * "which font can draw this string" would answer display-thin9 and put a numeral
      * where the weather icon belongs. Icon widgets must render identically
      * whether or not auto_font is set.
      */
@@ -1224,9 +1224,9 @@ static void test_resolve_font(void)
     static const char pinned[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"sans9\",\"scale\":2,\"color\":\"#FFFFFF\"}]}";
+        "\"font\":\"display-thin9\",\"scale\":2,\"color\":\"#FFFFFF\"}]}";
     CHECK(ml_sim_load(s, pinned) == 1, "pinned doc loads");
-    CHECK(strcmp(ml_sim_widget_font(s, 0), "sans9") == 0,
+    CHECK(strcmp(ml_sim_widget_font(s, 0), "display-thin9") == 0,
           "a pinned cut reports itself");
     CHECK(ml_sim_widget_scale(s, 0) == 2 * ML_SCALE_1X,
           "a pinned scale reports itself");
@@ -1399,7 +1399,7 @@ static void test_scale_floor(void)
      * A box shorter than every cut of the named family draws the family's
      * shortest, clipped. The floor is family-relative: a clock asking for
      * digits16 means digits, and five rows of digits10 keeps that style
-     * where a switch to sans8, the shortest text cut, would not.
+     * where a switch to display-thin8, the shortest text cut, would not.
      */
     static const char under_floor[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
@@ -1414,7 +1414,7 @@ static void test_scale_floor(void)
     static const char other_style[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
-        "\"font\":\"sans8\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display-thin8\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
 
     ml_canvas a, b;
@@ -1466,7 +1466,7 @@ static void test_scale_floor(void)
     }
     CHECK(ink_total(&a, 64, 64) > 0,
           "letters survive a box too small for the named clock face");
-    /* sans12 takes it at 1x, held there by the box height: a face that
+    /* display-thin12 takes it at 1x, held there by the box height: a face that
      * carries every letter, descender reaching the twelfth row. */
     CHECK(ink_rows(&a, 64, 64) == 12, "and land in a font that has them");
     ml_canvas_free(&a);
@@ -1485,7 +1485,7 @@ static void test_scale_floor(void)
     /*
      * Whichever text cut is shortest stands in. The rule is the point, not the
      * name: the catalogue grows, and when it grew a 6px text cut the shortest
-     * compatible face became that one rather than sans8. Naming the shortest
+     * compatible face became that one rather than display-thin8. Naming the shortest
      * cut rather than hard-coding it keeps the assertion about the rule.
      */
     const ml_font *shortest_text = NULL;
@@ -1691,7 +1691,7 @@ static void test_ffi(void)
     bool saw_text = false, saw_digits = false, saw_icons = false;
     for (int i = 0; i < ml_sim_font_count(); i++) {
         const char *name = ml_sim_font_name(i);
-        if (strcmp(name, "sans8") == 0)
+        if (strcmp(name, "display-thin8") == 0)
             saw_text = ml_sim_font_role(i) == (int)ML_FONT_TEXT;
         if (strcmp(name, "digits10") == 0)
             saw_digits = ml_sim_font_role(i) == (int)ML_FONT_DIGITS;
@@ -1887,7 +1887,7 @@ static void test_display_settings(void)
         static const char tempdoc[] =
             "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
             "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,8],"
-            "\"font\":\"sans9\",\"bind\":\"weather.temp\",\"color\":\"#FFFFFF\"}]}";
+            "\"font\":\"display-thin9\",\"bind\":\"weather.temp\",\"color\":\"#FFFFFF\"}]}";
         CHECK(ml_sim_load(s, tempdoc) == 1, "temp doc loads");
         ml_sim_set_variant(s, ML_MOCK_TYPICAL);
         ml_sim_set_tempf(s, 1);
@@ -1915,7 +1915,7 @@ static void test_countdown(void)
     static const char doc[] =
         "{\"canvas\":{\"width\":64,\"height\":16},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"countdown\",\"rect\":[0,0,64,16],"
-        "\"until\":1785501905,\"font\":\"sans16\",\"color\":\"#FFFFFF\"}]}";
+        "\"until\":1785501905,\"font\":\"display-thin16\",\"color\":\"#FFFFFF\"}]}";
 
     ml_layout l;
     ml_diag   diag;

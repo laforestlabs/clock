@@ -36,20 +36,37 @@ void main() {
       expect(
         names,
         containsAll(<String>[
-          'sans8',
-          'sans9',
-          'sans24',
+          'display-thin8',
+          'display-thin9',
+          'display-thin24',
           'digits10',
           'digits16',
           'digits32',
           'wx16',
           'digits48',
           'display24',
-          'display-thin24',
+          'display6',
         ]),
         reason: 'the picker reads this list straight from the engine, so a '
             'missing name means the .font never reached the build',
       );
+    });
+
+    test('offers exactly two faces to draw text with', () {
+      // The catalogue is deliberately down to one minimal readable face and
+      // one bold one, each a ladder of sizes. A third text ladder is a third
+      // thing to choose between for no gain -- and the picker has always
+      // offered only these two, so anything else registered is a file that
+      // survived a cleanup.
+      final text = engine!.families
+          .where((f) => f.role == FontRole.text)
+          .map((f) => f.name)
+          .toList()
+        ..sort();
+
+      expect(text, <String>['display', 'display-thin'],
+          reason: 'a text face is a choice the layout author has to make; '
+              'two is the number the product decided on');
     });
 
     test('lists the families the picker offers', () {
@@ -62,15 +79,14 @@ void main() {
           containsAll(<String>[
             'display',
             'display-thin',
-            'sans',
             'digits',
+            'micro',
             'wx',
           ]));
 
       final roleByName = <String, FontRole>{
         for (final f in engine.families) f.name: f.role,
       };
-      expect(roleByName['sans'], FontRole.text);
       expect(roleByName['display'], FontRole.text);
       expect(roleByName['display-thin'], FontRole.text);
       expect(roleByName['digits'], FontRole.digits);
@@ -82,9 +98,9 @@ void main() {
         for (final f in engine!.fonts) f.name: f.height,
       };
 
-      expect(byName['sans8'], 8);
-      expect(byName['sans9'], 9);
-      expect(byName['sans24'], 24);
+      expect(byName['display-thin8'], 8);
+      expect(byName['display-thin9'], 9);
+      expect(byName['display-thin24'], 24);
       expect(byName['digits10'], 10);
       expect(byName['digits16'], 16);
       expect(byName['digits32'], 32);
@@ -97,9 +113,9 @@ void main() {
         for (final f in engine!.fonts) f.name: f.role,
       };
 
-      expect(byName['sans8'], FontRole.text);
-      expect(byName['sans9'], FontRole.text);
-      expect(byName['sans24'], FontRole.text);
+      expect(byName['display-thin8'], FontRole.text);
+      expect(byName['display-thin9'], FontRole.text);
+      expect(byName['display-thin24'], FontRole.text);
       expect(byName['digits10'], FontRole.digits);
       expect(byName['digits16'], FontRole.digits);
       expect(byName['digits32'], FontRole.digits);
@@ -120,7 +136,7 @@ void main() {
       expect(families, isNot(contains('wx')));
       expect(
         families,
-        containsAll(<String>['display', 'display-thin', 'sans', 'digits']),
+        containsAll(<String>['display', 'display-thin', 'digits']),
         reason: 'a clock face is still a legitimate choice for a clock',
       );
     });
@@ -136,7 +152,7 @@ void main() {
 
       expect(iconSets, contains('wx'));
       expect(iconSets, isNot(contains('digits')));
-      expect(iconSets, isNot(contains('sans')));
+      expect(iconSets, isNot(contains('display-thin')));
       expect(iconSets, isNot(contains('pixel')));
     });
   }, skip: skip);

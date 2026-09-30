@@ -1,7 +1,8 @@
 # game8 - universal game face: Jumpman's lettering and narrow HUD digits.
 #
-# Letters and punctuation retain sans8's bitmaps. Digits use micro7's 3x7
-# strokes, with a straight-bottomed 1 and a blank row for the 8px line cell.
+# Letters and punctuation are the 8px lettering this face was cut from, kept
+# here so a game never depends on a text face's ladder. Digits use micro7's
+# 3x7 strokes, with a straight-bottomed 1 and a blank row for the 8px cell.
 # Five score digits therefore still fit Tetris's 19px margin. Whole-pixel
 # scaling preserves the clear single-pixel strokes on the physical panel.
 

@@ -17,8 +17,8 @@ the glyphs they are confused with at small sizes are drawn on top of the bits
 The cell model matches the hand fonts: every glyph occupies a cell of @height
 rows, sits on @baseline measured from the top, and advances by its own width,
 which is what makes the family proportional. The FreeType size for a cell is
-the largest whose ascent plus descent still fits the cell, so a sans14 cut
-uses every row it is given rather than arriving letterboxed.
+the largest whose ascent plus descent still fits the cell, so a
+display-thin14 cut uses every row it is given rather than arriving letterboxed.
 
 A glyph whose design is mirror-symmetric comes out exactly symmetric. FreeType
 places glyphs at a fractional origin, and thresholding that render decides
@@ -33,8 +33,6 @@ Usage:
         [--family NAME] [--codepoints text|digits] [--threshold N]
 
 Example (the commands that build the shipped catalogue):
-    python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Regular.ttf \
-        sans text 6 7 8 9 10 11 12 13 14 16 18 20 24 --family sans --smooth no
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Semibold.ttf \
         digits digits 10 12 14 16 18 20 24 28 32 40 48 --family digits --smooth no
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Bold.ttf \

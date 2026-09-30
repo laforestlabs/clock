@@ -163,7 +163,7 @@ class DesignerState extends ChangeNotifier {
       final wanted = <String>[
         if (remembered != null) remembered,
         'display12',
-        'sans9',
+        'display-thin9',
       ];
       final chosen = wanted
               .map((name) => refs.where((r) => r.name == name).firstOrNull)

@@ -203,18 +203,26 @@ emitter at part brightness. Measured across the stock layouts, the old 24px
 `display` masters drew at 0.29x to 0.33x and left 89 to 94 percent of their
 light in part-lit cells. Whole-multiple cuts put it at zero.
 
-`display` is the face new layouts use, with `display-thin` a lighter-stroked
-alternative; `sans` is the body face older layouts name, and `digits` the clock
-face, whose figures are tabular so a time never reflows as its digits change.
+There are exactly two faces to draw text with: `display-thin`, the minimal
+readable one, and `display`, the bold one. Each is a ladder from 6 to 24px, so
+picking a style is the author's call and picking the size is the box's. The
+other three families are not a style choice: `digits` is the clock and
+temperature face, whose figures are tabular so a time never reflows as its
+digits change, `wx` is the weather pictograms, and `micro` is the 3x7 score
+face a game draws into a margin too narrow for any of the ladders.
 
 | family | role | cuts | source |
 |---|---|---|---|
 | `display` | all text and digits | 6 to 24px | Open Sans Bold |
 | `display-thin` | all text and digits | 6 to 24px | Open Sans Light |
-| `sans` | text | 6 to 24px | Open Sans Regular |
 | `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
 | `micro` | digits | 3x7, hand-drawn | for a game HUD margin |
 | `wx` | icons | one 16px scaling master | hand-drawn |
+
+Text used to be drawn from three Open Sans ladders -- Bold, Light and Regular --
+and a layout author had to tell Regular from Light to choose a body face. The
+Regular ladder is gone: it was never offered by the designer's Font dropdown,
+which has always shown these two, and it was the face nothing named.
 
 The weather symbols are the one face that still scales continuously, with
 gamma-compensated area coverage, including boxes smaller than their 16px
@@ -337,11 +345,11 @@ deliberate choice for no gain is not.
 
 It is off by default and ignored on `icon`, `agenda` and `todo`. An icon is
 indexed by digit and every body font has digits, so a naive "which font can
-draw this?" would answer `sans9` and put the numeral 3 where the rain icon
+draw this?" would answer `display-thin9` and put the numeral 3 where the rain icon
 belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
-`sans` clock stays a text face where `digits` draws tabular figures.
+`display-thin` clock stays a text face where `digits` draws tabular figures.
 
 A box too small for the font it names falls back to the tallest cut of the
 same family that does fit, and under that to the family's shortest, clipped:
@@ -375,7 +383,9 @@ Fonts are authored as readable pixel art in `fonts/*.font` and compiled to C tab
 ```sh
 python3 tools/fontgen.py                    # regenerate core/src/fonts/
 python3 tools/fontgen.py --check            # fail if the tables are stale
-python3 tools/fontproof.py sans9 "Wed 29 Jul"    # see it in the terminal
+python3 tools/fontproof.py display-thin9 "Wed 29 Jul"    # see it in the terminal
+python3 tools/fontreview.py                 # review every cut, repair the pixels
+python3 tools/fontreview.py --check         # fail if a cut has lost its touch-ups
 make -f core/Makefile.host audit            # legibility audit of every cut
 cd font_designer && ./run.sh                # edit the art against a simulated panel
 ```
@@ -386,6 +396,53 @@ cd font_designer && ./run.sh                # edit the art against a simulated p
 the result on a simulated RGB matrix — real pitch, real dead space between the emitters,
 the panel's own gamma. It edits `fonts/*.font` in place, writing back only the rows that
 changed, and can run `tools/fontgen.py` so the tables match the art. See its README.
+
+### Reviewing and repairing the art
+
+`tools/fontreview.py` is the machine pass over the same art: it measures every cut of
+`fonts/` and of `gamekit/fonts/`, then repairs the glyphs whose pixels have lost
+something the design needs. It sits between the two existing tools — `fontraster.py`
+draws a cut, `fontreview.py` touches it up, `fontgen.py` compiles it — and it is
+idempotent, so art it has already reviewed is a fixed point and `--check` is a usable
+gate (which is what `make -f core/Makefile.host fontreview-check` runs).
+
+The measurement is one source pixel per panel cell, which is what a reader sees: these
+cuts are `@smooth no`, so a fitted scale floors to a whole multiple and a 2x draw only
+replicates the art. Per glyph it reports a blank glyph, a counter the design encloses
+and the cut does not, a cut's thinnest run and the glyphs built from it, a stem that
+steps sideways between two rows, and the confusable pairs by the pixels that actually
+tell them apart.
+
+Two defect classes are deliberately not claimed. A lone inked pixel is not reported,
+because a stray artifact and the dot of an `i` are the same thing to any measurement —
+the first version of this tool "cleaned" 27 such pixels and every one was the mark of a
+grave accent, a semicolon or a comma. Nor is a glyph's position inside its own advance,
+because a proportional face moves a glyph off centre on purpose: a `J` hangs left and an
+`f` leans in.
+
+Two repairs are offered automatically, and each is taken only when a measurement says
+the art is wrong *and* the result measurably improves it:
+
+- **aperture** — the rasterizer lowers its cutoff until no glyph of a cut is blank, and
+  at a small cell that is low enough to fill an aperture in entirely: a 7px `0` comes
+  out a solid blob. The glyph's *master* — the largest cut of the same family, where the
+  shape survives — boxed down to this cut's ink box says which cells should be
+  background. Only cells the glyph's own ink rings on all four sides are cleared, so no
+  stroke can be lost and the silhouette cannot change, and the repair is refused if it
+  would duplicate a glyph, invent a counter the design lacks, or leave a confusable pair
+  a reader could no longer tell apart. This is what restores 61 counters across the
+  catalogue, and it is also why `0`/`O`, `8`/`B` and `9`/`g` gained distinguishing
+  pixels at 6 to 9px.
+- **stem-weight** — a stem the cut drew a rung thinner than the rest of its own cut, in
+  a glyph that *is* a stem (the display10 `I` came out a 1px hairline under 2px serifs
+  in a cut whose every other stem is 2px). Letters and digits only: a bracket's or a
+  bar's thin part is a drawing decision.
+
+Everything else the review finds is reported and left alone, because the judgement is
+the author's: a stem that jogs a column, a pair still under `--distinct` pixels, a cut
+whose stroke weight steps away from its ladder. `--only aperture` runs one pass,
+`--dry-run` prints the plan, `--json` is for tooling, and `--font` narrows the review to
+named cuts without losing the family they are measured against.
 
 ### Auditing legibility
 
@@ -428,6 +485,15 @@ core/build/host/font-audit --json | jq .                             # for tooli
 core/build/host/font-audit --strict                                  # gate
 ```
 
+This audit and `tools/fontreview.py` answer different halves of the same question, and
+they are meant to be read together. The audit renders through the real engine and says
+what a *compiled* cut does across scales, including the fractional ones this review
+cannot see; the reviewer works on the art and can therefore repair it. So the reviewer
+reports the defects it can fix, and the audit is the independent check that a repair
+did not cost the cut anything the engine cares about — which is how the 61 restored
+counters above were confirmed to come with no new stale counter, split stroke or blank
+glyph, and with two *fewer* ambiguous pairs.
+
 Every source declares a `@role`, which is required because it is the one thing
 about a font its bitmaps cannot imply:
 
@@ -446,7 +512,7 @@ label with weather symbols.
 | Font | Size | Contents |
 |---|---|---|
 | `display6` to `display24`, `display-thin6` to `display-thin24` | 6 to 24px cells | Full printable ASCII, plus a degree sign at codepoint 127. Bold and Light strokes |
-| `sans6` to `sans24` | 6 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `sans9` is the default body font |
+| `display-thin6` to `display-thin24` | 6 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `display-thin9` is the default body font |
 | `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
 | `micro7` | 7px cells, hand-drawn | The ten digits, `0-9`, for a HUD margin and nothing else |
 | `wx16` | 16x16 master | Ten continuously scalable weather icons in four colour planes, indexed by category |
@@ -457,7 +523,7 @@ Drop a font you do not use and it stops being compiled in: the build discovers
 One typeface everywhere is the point: body text, dates, temperatures and the
 clock share a design, differing only in size and, for the clock, in weight.
 Both families are proportional, which recovers several characters per line
-versus a fixed cell: "Standup 10:00" is 67px in `sans8`.
+versus a fixed cell: "Standup 10:00" is 67px in `display-thin8`.
 
 `micro7` is the deliberate exception, and it is a game HUD rather than a
 typeface: a 3x7 digit costs 4px of advance, so the five figures a score can
@@ -522,7 +588,7 @@ core/       portable C99 render engine. No platform dependencies. The contract.
   test/             unit tests and golden-image regression tests
 fonts/      editable ASCII-art font sources
 layouts/    stock layouts, all 64x32 (the default); larger panels ship as size-suffixed presets
-tools/      fontgen, fontproof, gamma table generator
+tools/      fontraster, fontreview, fontgen, fontproof, gamma table generator
 docs/       hardware notes
 firmware/   ESP-IDF application: panel, wifi, clock, data providers
 designer/   Flutter layout designer, desktop and mobile

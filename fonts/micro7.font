@@ -2,7 +2,7 @@
 #
 # A game draws its HUD into whatever margin its field leaves, and on the 64px
 # panel the tetris field leaves 20px each side. Five figures need 44px in
-# digits10 and 29px in sans8, so both of those cuts truncate a score at 100
+# digits10 and 29px in display-thin8, so both of those cuts truncate a score at 100
 # with the ellipsis marker, hiding every digit after the first. The digits
 # family is sized for a body of text, not for the column beside a board; this
 # cut is drawn for that column instead. Three pixels of ink per digit plus the

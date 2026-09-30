@@ -7,7 +7,7 @@
   "widgets": [
     { "type": "text", "id": "heading",
       "rect": [0, 0, 64, 7],
-      "font": "sans8", "fit": true, "text": "3 DAY",
+      "font": "display-thin8", "fit": true, "text": "3 DAY",
       "color": "#7A8A99", "align": "center" },
 
     { "type": "forecast", "id": "forecast",

@@ -219,7 +219,7 @@ static int scale_px(int scale_q8)
 /*
  * The inked height sample actually draws in f: bottom ink row minus top ink
  * row plus one, over the string's glyphs. A cell counts ascender and
- * descender room the string may never use: "09:41" inks 4 of sans7's 7 rows
+ * descender room the string may never use: "09:41" inks 4 of display-thin7's 7 rows
  * but all 10 of digits10's, so sizing by cell lets a small text cut outbid a
  * clock face for a clock string while drawing visibly smaller. 0 for a
  * sample with no ink.
@@ -1071,7 +1071,7 @@ static void draw_icon_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
     /*
      * Scaled to the box like everything else, but never font-substituted. Icons
      * are indexed by digit codepoint, so letting a text font win an
-     * auto_font loose here would answer "which font can draw '3'?" with sans9
+     * auto_font loose here would answer "which font can draw '3'?" with display-thin9
      * and quietly put the numeral 3 where the rain icon belongs.
      */
     const int sc = widget_scale(w, f, glyph);
@@ -1631,7 +1631,7 @@ static void draw_forecast_w(const ml_widget *w, const ml_model *m, ml_canvas *c)
                  temp_display(m, m->weather.days[i].temp_min_c));
 
         int sc = ML_SCALE_1X;
-        const ml_font *f = choose_font(&row, "sans8", buf, &sc);
+        const ml_font *f = choose_font(&row, "display-thin8", buf, &sc);
         const int tw = ml_text_width(f, buf, sc);
         ml_text_draw_clipped(c, f, align_x(row.align, row.rect, tw), row.rect.y,
                              bw, buf, w->color, sc);
@@ -1908,7 +1908,7 @@ const ml_font *ml_widget_resolve_font(const ml_widget *w, const ml_model *m,
         snprintf(buf, sizeof(buf), "%d/%d",
                  temp_display(m, m->weather.days[0].temp_max_c),
                  temp_display(m, m->weather.days[0].temp_min_c));
-        f = choose_font(&row, "sans8", buf, &sc);
+        f = choose_font(&row, "display-thin8", buf, &sc);
         break;
     }
     default:

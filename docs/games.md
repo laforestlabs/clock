@@ -563,7 +563,7 @@ restarting the app or mirror.
 Jumpman's veneer-oriented palette keeps the background black and uses bright
 multi-channel colours for terrain, enemies and pickups; only inset eyes and
 block markings stay dark. All games now share the `game8` face: Jumpman's
-compact 3x7 score digits and `sans8` lettering in one 8-pixel line cell. Scores,
+compact 3x7 score digits and `display-thin8` lettering in one 8-pixel line cell. Scores,
 punctuation, course banners and end-screen labels use the same font; five-digit
 Tetris scores still fit the 19-pixel margin. Jumpman keeps cyan score, gold coin
 count and coral lives; three pips mark course progress. Its original course's

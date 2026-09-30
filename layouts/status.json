@@ -17,7 +17,7 @@
 
     { "type": "text", "id": "uptime-label",
       "rect": [0, 9, 32, 7],
-      "font": "sans", "fit": true, "text": "UPTIME",
+      "font": "display-thin", "fit": true, "text": "UPTIME",
       "color": "#8899AA", "align": "left" },
 
     { "type": "text", "id": "uptime",
@@ -27,7 +27,7 @@
 
     { "type": "text", "id": "wifi-label",
       "rect": [32, 9, 32, 7],
-      "font": "sans", "fit": true, "text": "WIFI",
+      "font": "display-thin", "fit": true, "text": "WIFI",
       "color": "#8899AA", "align": "right" },
 
     { "type": "text", "id": "rssi",

@@ -10,7 +10,7 @@ Source format
 -------------
 Directives, one per line, before any glyphs:
 
-    @name     sans9        identifier used by layouts and ml_font_find()
+    @name     display-thin9        identifier used by layouts and ml_font_find()
     @role     text        text, digits or icons (see below)
     @height   9           rows per glyph cell
     @baseline 7           rows from the top of the cell down to the baseline

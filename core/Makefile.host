@@ -48,7 +48,7 @@ CLI    := $(BUILD)/mirror-cli
 AUDIT  := $(BUILD)/font-audit
 TEST   := $(BUILD)/mirror-test
 
-.PHONY: all clean test fonts fontcheck bindcheck check cli lib audit
+.PHONY: all clean test fonts fontcheck bindcheck check cli lib audit fontreview fontreview-check
 
 all: $(LIB_A) $(LIB_SO) $(CLI) $(AUDIT)
 
@@ -106,6 +106,20 @@ audit: $(AUDIT)
 # Glyph tables are generated, not hand written. Edit ../fonts/*.font instead.
 fonts:
 	@$(PYTHON) ../tools/fontgen.py
+
+# Review every .font cut and repair the pixels that lose a reader: reopen the
+# counters the rasterizer's cutoff filled in, restore a stem a cut drew a rung
+# thin. Writes the art, so it runs after ../tools/fontraster.py and before the
+# `fonts` target above. The reviewer is idempotent.
+fontreview:
+	@$(PYTHON) ../tools/fontreview.py
+
+# Fails if a cut is not what the reviewer would draw, which is how a plain
+# fontraster.py rerun that dropped the touch-ups is caught. Not part of
+# `check`: the repairs are heuristic, and a hand-drawn cut may legitimately
+# want a solid glyph the reviewer would open.
+fontreview-check:
+	@$(PYTHON) ../tools/fontreview.py --check --quiet
 
 # Fails if the committed tables no longer match their sources, so a forgotten
 # regeneration cannot silently ship stale glyphs.
