@@ -593,11 +593,11 @@ def repair_aperture(font, g, st, ctx, out):
     candidate = box_down(mg.rows, (h, w))
     if candidate is None:
         return
-    # A glyph that is mirror-symmetric is meant to stay so. The master's 0
-    # carries the slashed-zero mark and its B carries the rail that tells it
-    # from an 8, so the boxed-down shape is asymmetric in places the cut is
-    # not; keeping only the cells both halves agree on drops the mark's
-    # leftover and leaves the aperture symmetric.
+    # A glyph that is mirror-symmetric is meant to stay so. A master can carry
+    # ink on one flank only -- display24's B has the rail that tells it from an
+    # 8 -- and boxing that down leaves the mark's residue in a cut that draws
+    # no mark at all; keeping only the cells both halves agree on drops it and
+    # leaves the aperture symmetric.
     if _mirror_symmetric(st.m):
         candidate = _symmetrize(candidate, x0, st.w)
     cut = [(x0 + j, y0 + i)

@@ -224,6 +224,15 @@ and a layout author had to tell Regular from Light to choose a body face. The
 Regular ladder is gone: it was never offered by the designer's Font dropdown,
 which has always shown these two, and it was the face nothing named.
 
+A cut reserves rows under the baseline for the tails of `y`, `q`, `j`, `g` and
+`p`, and a line of prose pays for that reserve on every row whether the row has
+a tail or not. Half of it comes off before the cut is written: the ink below the
+baseline moves up by that much and the cell shrinks to meet it, while `@baseline`
+and everything above it stays put. So `display12` is a 12px cell asked for and
+an 11px cell drawn, and the cut keeps its name for the layouts that pin it. A
+glyph keeps its deepest row, so a shallow tail is trimmed less than a deep one
+rather than deleted, and the `_`, which is drawn low by design, keeps its ink.
+
 The weather symbols are the one face that still scales continuously, with
 gamma-compensated area coverage, including boxes smaller than their 16px
 master. Every other cut is drawn at whole multiples only.
@@ -243,12 +252,19 @@ loses its ends and survives as a stub, which the same rule recovers.
 
 **Glyphs a reader cannot tell apart.** At 8px a proportional face draws `1`,
 `l`, `I` and `|` as the same stem, and `0` as the same oval as `O`. No amount
-of hinting separates those, because the difference is a design decision. The
-rasterizer draws the conventional marks: a slashed zero, a footed one, a barred
-seven, a tailed `l`, a serifed `I`, and a tail below `,` and `;`. Each mark is
-drawn inside the glyph's advance and only ever adds ink; where a narrow glyph
-fills its whole advance and leaves nowhere for a mark, the advance grows by a
-column or two rather than leaving two letters indistinguishable.
+of hinting separates those, because the difference is a design decision, not a
+rendering one. The rasterizer draws the marks that are cheap and conventional: a
+foot on the `1`, a serif on the `I`, a tail on the `l`, and a tail below `,` and
+`;`. Each mark is drawn inside the glyph's advance and only ever adds ink; where
+a narrow glyph fills its whole advance and leaves nowhere for a mark, the
+advance grows by a column or two rather than leaving two letters
+indistinguishable.
+
+A zero is never slashed and a seven is never barred. Both marks were tried and
+both were rejected on the panel: a slash through every `0` and a bar across
+every `7` spends ink on two pairs a reader rarely meets mid-word, and it changes
+the shape of two very common glyphs to do it. `0`/`O` and `7`/`?` are left to
+the audit below to report rather than to the rasterizer to paper over.
 
 `make -f core/Makefile.host audit` measures both, and its confusability table
 reports the pixels that actually carry a difference between two glyphs, compared

@@ -57,28 +57,39 @@ void main() {
     engine.dispose();
   }, skip: skip);
 
-  test('shrinking the box steps the scale down on the same cut', () {
+  test('a box steps to the cut that fills it, and never draws larger text', () {
     final engine = MirrorEngine.open();
-    engine.load(_doc);
-    final wide = engine.widgets().single;
-    // A family names a style, not a size: what comes back is a cut of that
-    // family, never the family name, so the inspector can say what draws.
-    expect(wide.font, startsWith('display'));
-    expect(wide.font, isNot('display'),
-        reason: 'a family resolves to the cut that fills the box');
+    final heights = <String, int>{for (final f in engine.fonts) f.name: f.height};
 
-    // The same edit a resize drag makes: reload with a shorter box.
-    engine.load(_doc.replaceAll('[0,0,64,20]', '[0,0,64,12]'));
-    final short = engine.widgets().single;
-    expect(short.font, wide.font, reason: 'this box still takes that cut');
-
-    // Text in a shorter box draws smaller. Every text cut is a set size, so
-    // the derived scale is a whole multiple: a box steps to another cut
-    // rather than smearing one drawing across a fraction of a pixel, which on
-    // a HUB75 panel would light two cells dimly instead of one fully.
-    expect(short.scale, lessThan(wide.scale));
-    expect(wide.scale, wide.scale.roundToDouble(),
-        reason: 'a fitted scale on a set-size face is a whole multiple');
+    // A family names a style, not a size: what comes back is the cut the
+    // engine picked to fill the box, never the family name, so the inspector
+    // can say what actually draws.
+    //
+    // The cut is chosen by how tall it draws, so a shorter box can only ever
+    // drop candidates: stepping the box down never grows the text it draws.
+    // Which cut that lands on moves with the catalogue's own metrics, so the
+    // rule is what is pinned here, not a name.
+    int? previous;
+    for (final int rows in <int>[20, 16, 12, 8]) {
+      final String doc = _doc.replaceAll('[0,0,64,20]', '[0,0,64,$rows]');
+      engine.load(doc);
+      final info = engine.widgets().single;
+      expect(info.font, startsWith('display'));
+      expect(info.font, isNot('display'),
+          reason: 'a family resolves to the cut that fills the box');
+      // Every text cut is a set size, so a fitted scale is a whole multiple:
+      // a box steps to another cut rather than smearing one drawing across a
+      // fraction of a pixel, which on a HUB75 panel would light two cells
+      // dimly instead of one fully.
+      expect(info.scale, info.scale.roundToDouble(),
+          reason: 'a fitted scale on a set-size face is a whole multiple');
+      final drawn = heights[info.font]! * info.scale.round();
+      if (previous != null) {
+        expect(drawn, lessThanOrEqualTo(previous),
+            reason: 'a $rows-row box draws taller text than the one above it');
+      }
+      previous = drawn;
+    }
     engine.dispose();
   }, skip: skip);
 
@@ -139,9 +150,14 @@ void main() {
     });
     await tester.pump();
 
-    // What a drag to that size would have updated the inspector to.
+    // What a drag to that size would have updated the inspector to. The
+    // resize has to have moved the resolved state, and the panel has to be
+    // showing it; which cut and scale it lands on is the catalogue's
+    // business, not the inspector's.
     final short = c.engine.widgets().single;
-    expect(short.scale, lessThan(wide.scale));
+    expect(short.font != wide.font || short.scale != wide.scale, isTrue,
+        reason: 'the resize left the resolved state unchanged, so the '
+            'inspector is not being asked to follow anything');
     expect(shownScale(), closeTo(short.scale, 0.05));
   }, skip: skip);
 }

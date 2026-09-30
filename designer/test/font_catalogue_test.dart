@@ -93,19 +93,36 @@ void main() {
       expect(roleByName['wx'], FontRole.icons);
     });
 
-    test('reports the cell height each font was drawn at', () {
+    test('reports the cell height each cut was drawn at', () {
+      // A cut is named for the cell it asked for, and drawn at that cell less
+      // the descender reserve it gave back (see descent_trim in
+      // tools/fontraster.py): display-thin8 is eight rows asked for and seven
+      // drawn. A cut with a single row of reserve, or none at all, keeps the
+      // height its name says.
       final byName = <String, int>{
         for (final f in engine!.fonts) f.name: f.height,
       };
 
-      expect(byName['display-thin8'], 8);
-      expect(byName['display-thin9'], 9);
-      expect(byName['display-thin24'], 24);
+      expect(byName['display-thin8'], 7);
+      expect(byName['display-thin9'], 8);
+      expect(byName['display-thin24'], 21);
       expect(byName['digits10'], 10);
       expect(byName['digits16'], 16);
-      expect(byName['digits32'], 32);
-      expect(byName['display24'], 24);
-      expect(byName['display-thin24'], 24);
+      expect(byName['digits32'], 31);
+      expect(byName['display24'], 21);
+
+      // The rule behind those numbers: never taller than the name says, and
+      // never more than half the reserve (at most three rows) shorter.
+      final suffix = RegExp(r'(\d+)$');
+      for (final f in engine!.fonts) {
+        final match = suffix.firstMatch(f.name);
+        if (match == null) continue;
+        final nominal = int.parse(match.group(1)!);
+        expect(f.height, lessThanOrEqualTo(nominal),
+            reason: '${f.name} is drawn at ${f.height}px, above its name');
+        expect(nominal - f.height, lessThanOrEqualTo(3),
+            reason: '${f.name} gave back more than the reserve it has');
+      }
     });
 
     test('reports the role each font declared', () {

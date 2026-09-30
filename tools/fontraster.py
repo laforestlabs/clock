@@ -10,8 +10,8 @@ Pillow), thresholds the grayscale coverage to bits and writes the result as a
 .font, so the human only edits the cuts that come out wrong. The cutoff belongs
 to the cut rather than to the glyph: a stem narrower than a pixel peaks below
 any fixed threshold, so the cut is made at the highest rung where no glyph of
-it is blank (see cut_threshold). The marks that tell 0/1/7/l/I and , and ; from
-the glyphs they are confused with at small sizes are drawn on top of the bits
+it is blank (see cut_threshold). The marks that tell 1/l/I and , and ; from the
+glyphs they are confused with at small sizes are drawn on top of the bits
 (see distinguish), so regenerating a cut reproduces it exactly.
 
 The cell model matches the hand fonts: every glyph occupies a cell of @height
@@ -19,6 +19,12 @@ rows, sits on @baseline measured from the top, and advances by its own width,
 which is what makes the family proportional. The FreeType size for a cell is
 the largest whose ascent plus descent still fits the cell, so a
 display-thin14 cut uses every row it is given rather than arriving letterboxed.
+
+The cell a cut asks for is not the cell it gets: half the descender reserve
+comes back off before the cut is written (see descent_trim), which is why the
+heights in the commands above are taller than the files they produce. The name
+keeps the nominal cell -- display12 is still display12 at @height 11 -- so a
+layout that pins a cut goes on pinning it.
 
 A glyph whose design is mirror-symmetric comes out exactly symmetric. FreeType
 places glyphs at a fractional origin, and thresholding that render decides
@@ -228,32 +234,6 @@ def _bbox(rows: list[str]):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _counter(rows: list[str]):
-    """The box of the glyph's enclosed background, or None when it has none."""
-    h, w = len(rows), len(rows[0])
-    ink = [[rows[y][x] == "#" for x in range(w)] for y in range(h)]
-    seen = [[False] * w for _ in range(h)]
-    edge = [(x, y) for x in range(w) for y in (0, h - 1)]
-    edge += [(x, y) for y in range(h) for x in (0, w - 1)]
-    stack = []
-    for x, y in edge:
-        if not ink[y][x] and not seen[y][x]:
-            seen[y][x] = True
-            stack.append((x, y))
-    while stack:
-        x, y = stack.pop()
-        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-            if 0 <= nx < w and 0 <= ny < h and not ink[ny][nx] and not seen[ny][nx]:
-                seen[ny][nx] = True
-                stack.append((nx, ny))
-    inside = [(x, y) for y in range(h) for x in range(w)
-              if not ink[y][x] and not seen[y][x]]
-    if not inside:
-        return None
-    return (min(p[0] for p in inside), min(p[1] for p in inside),
-            max(p[0] for p in inside), max(p[1] for p in inside))
-
-
 def _room(rows: list[str], width: int, need: int):
     """Widen the glyph to at least `need`+1 columns so its mark has somewhere
     to go.
@@ -276,19 +256,81 @@ def _foot(rows: list[str], xlo: int, xhi: int, y: int) -> None:
         rows[y] = rows[y][:x] + "#" + rows[y][x + 1:]
 
 
+# The descender band -- the rows under the baseline -- is the emptiest part of a
+# cell: only y, q, j, g, p and the brackets use it, and a line of prose pays for
+# it on every row of text. Half of it goes back to the layout. Two rows is the
+# least a face can give and still have a tail left, so a cut that carries one or
+# none keeps it (see trim_band for the per-glyph floor).
+def descent_trim(cell: int, baseline: int) -> int:
+    """How many rows of descender reserve this cut gives up."""
+    band = cell - baseline
+    return band // 2 if band >= 2 else 0
+
+
+def trim_band(glyphs: dict[int, list[str]], cell: int, baseline: int, k: int
+              ) -> dict[int, list[str]]:
+    """Give back k rows of descender reserve, moving the descenders up with it.
+
+    @baseline and every row above it are untouched, so cap height, x-height and
+    the pen's work do not move; what moves is the ink below the line, up by k
+    rows, and the cell shrinks by k to meet it.
+
+    How far a glyph moves is its own business, because two rules bind and the
+    stricter one wins. A glyph keeps its last row of descender, so a shallow
+    tail is trimmed less than a deep one rather than deleted; and a glyph's ink
+    is never cropped away, which is what the underscore needs -- it is drawn on
+    the cell's own last row rather than hanging under the baseline, so it has to
+    come up with the trim. In practice the worst case is a comma: its own tail
+    stays put and the tail distinguish() draws below it lands in the cell the
+    cut has left, or does not fit and is not drawn.
+
+    Trimming happens before distinguish(), so a mark drawn below the baseline
+    (the tail of a , or a ;) is drawn again into whatever room the shorter cell
+    has left, which is none at 8px.
+    """
+    height = cell - k
+    out: dict[int, list[str]] = {}
+    for cp, rows in glyphs.items():
+        width = len(rows[0])
+        depth = 0
+        lowest = -1
+        for y in range(baseline, cell):
+            if any(ch != "." for ch in rows[y]):
+                depth += 1
+                lowest = y
+        if lowest < 0:
+            kg = 0
+        else:
+            floor = max(0, lowest - height + 1)
+            cap = min(k, depth - 1) if depth >= 2 else 0
+            kg = max(floor, cap)
+        new = list(rows[:baseline])
+        for y in range(baseline, height):
+            new.append(rows[y + kg] if y + kg < cell else "." * width)
+        while len(new) < height:
+            new.append("." * width)
+        out[cp] = new[:height]
+    return out
+
+
 def distinguish(cp: int, rows: list[str]) -> list[str]:
     """Add the mark that tells this glyph from the ones it is confused with.
 
-    At 8px a proportional face draws '1', 'l', 'I' and '|' as the same stem and
-    '0' as the same oval as 'O'. No amount of hinting separates them, because
-    the difference is a design decision, not a rendering one: the marks below
-    are the conventional ones -- a slashed zero, a footed one, a tailed l, a
-    serifed I, a barred seven.
+    At 8px a proportional face draws '1', 'l', 'I' and '|' as the same stem. No
+    amount of hinting separates them, because the difference is a design
+    decision, not a rendering one, so the reader is given the conventional mark:
+    a foot on the 1, a serif on the I, a tail on the l, and a tail below a , and
+    a ;.
+
+    A zero keeps the shape the face draws and is never slashed, and a seven is
+    never barred: both were tried and both were hated on sight at the panel's
+    size, which is the author's call to make -- distinguish() draws only what
+    was asked for. 0/O and 7/? are left for the legibility audit to report.
 
     Every mark is drawn inside the glyph's existing advance and only ever adds
-    ink, so widths, layout and the whole-multiple fit are untouched. A glyph
-    with no room for its mark (a 6px zero has a one-pixel counter) is left as it
-    was rather than smudged.
+    ink, so widths, layout and the whole-multiple fit are untouched. A glyph with
+    no room for its mark (a cell whose last row is its ink) is left as it was
+    rather than smudged.
     """
     box = _bbox(rows)
     if box is None:
@@ -302,26 +344,9 @@ def distinguish(cp: int, rows: list[str]) -> list[str]:
     stem = [x for y in band for x, ch in enumerate(rows[y]) if ch == "#"]
     sxlo, sxhi = (min(stem), max(stem)) if stem else (xlo, xhi)
 
-    if cp == 48:                                   # 0 -- slashed zero
-        hole = _counter(rows)
-        if hole is None:
-            return out
-        hx0, hy0, hx1, hy1 = hole
-        span = hy1 - hy0
-        if span >= 2:                              # a diagonal reads as a slash
-            for i in range(span + 1):
-                x = hx0 + (hx1 - hx0) * i // span
-                out[hy0 + i] = out[hy0 + i][:x] + "#" + out[hy0 + i][x + 1:]
-        else:                                      # too flat: a bar still tells
-            x = (hx0 + hx1) // 2
-            for y in range(hy0, hy1 + 1):
-                out[y] = out[y][:x] + "#" + out[y][x + 1:]
-    elif cp == 49:                                 # 1 -- baseline foot
+    if cp == 49:                                   # 1 -- baseline foot
         if sxhi - sxlo <= 1:                       # a narrow stem, so it tells
             _foot(out, sxlo - 1, sxhi + 1, yhi)
-    elif cp == 55:                                 # 7 -- mid crossbar
-        if yhi - ylo >= 3:
-            _foot(out, xlo, xhi, ylo + (yhi - ylo) // 2)
     elif cp == 73:                                 # I -- top and bottom serifs
         out, width = _room(out, width, sxhi + 1)
         _foot(out, sxlo, sxhi + 1, ylo)
@@ -390,8 +415,12 @@ def main() -> None:
                          "the cut a set size: fit floors to a whole multiple "
                          "(default: yes)")
     ap.add_argument("--no-distinguish", dest="distinguish", action="store_false",
-                    help="skip the conventional marks that tell 0/1/7/l/I from "
-                         "the glyphs they are confused with at small sizes")
+                    help="skip the conventional marks that tell 1/l/I from the "
+                         "glyphs they are confused with at small sizes")
+    ap.add_argument("--descender-trim", type=int, default=None,
+                    help="rows of descender reserve to give back (default: "
+                         "half the band under the baseline, rounded down, and "
+                         "none for a cut carrying fewer than two rows)")
     ap.add_argument("--downscale", action="store_true",
                     help="mark this cut as a high-resolution scaling master")
     args = ap.parse_args()
@@ -438,14 +467,22 @@ def main() -> None:
         threshold = cut_threshold(gray, nominal, cell)
         glyphs = {cp: bits(px.load(), adv, cell, threshold)
                   for cp, (px, adv) in gray.items()}
+
+        # The reserve comes off before the marks are drawn, so a mark that
+        # hangs under the baseline lands in the cell the cut actually has.
+        k = args.descender_trim if args.descender_trim is not None \
+            else descent_trim(cell, baseline)
+        height = cell - k
+        glyphs = trim_band(glyphs, cell, baseline, k)
         if args.distinguish:
             glyphs = {cp: distinguish(cp, rows) for cp, rows in glyphs.items()}
 
         name = f"{args.prefix}{cell}"
         dest = FONT_SRC_DIR / f"{name}.font"
-        emit(dest, name, args.role, family, cell, baseline, args.gap,
+        emit(dest, name, args.role, family, height, baseline, args.gap,
              args.smooth == "yes", args.downscale, glyphs)
-        print(f"  {name}: cell {cell}px, baseline {baseline}, threshold {threshold}, {len(cps)} glyphs")
+        print(f"  {name}: cell {cell}px -> {height}px, baseline {baseline}, "
+              f"threshold {threshold}, {len(cps)} glyphs")
 
 
 if __name__ == "__main__":

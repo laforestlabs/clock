@@ -1091,7 +1091,8 @@ static void test_fit_blocky(void)
 {
     group("blocky fit");
 
-    /* 'g' inks 7 of the 8 rows in display-thin8, descender included. */
+    /* 'g' inks 6 of the 7 rows in display-thin8, descender included, so the
+     * whole-multiple ladder doubles the ink at 2x, which needs 14 rows. */
     for (int box_h = 8; box_h <= 17; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
@@ -1103,7 +1104,7 @@ static void test_fit_blocky(void)
         ml_canvas c;
         if (!render_doc(doc, 64, 64, &c)) { CHECK(false, "blocky doc parses"); return; }
         const int rows = ink_rows(&c, 64, 64);
-        const int want = box_h < 16 ? 7 : 14;
+        const int want = box_h < 14 ? 6 : 12;
         CHECK(rows == want, "smooth off only moves at whole multiples");
         ml_canvas_free(&c);
     }
@@ -1471,9 +1472,9 @@ static void test_scale_floor(void)
     }
     CHECK(ink_total(&a, 64, 64) > 0,
           "letters survive a box too small for the named clock face");
-    /* display-thin12 takes it at 1x, held there by the box height: a face that
-     * carries every letter, descender reaching the twelfth row. */
-    CHECK(ink_rows(&a, 64, 64) == 12, "and land in a font that has them");
+    /* display-thin14 takes it at 1x, held there by the box height: a face that
+     * carries every letter, descender reaching the eleventh row. */
+    CHECK(ink_rows(&a, 64, 64) == 11, "and land in a font that has them");
     ml_canvas_free(&a);
 
     /*
@@ -1482,36 +1483,39 @@ static void test_scale_floor(void)
      * safe stand-in is a full text font: a clock face fits the box and carries
      * the times, so the old rule drew an agenda's clock columns and dropped
      * every title.
+     *
+     * The stand-in is a text cut -- asserted through the registry, not through
+     * a name the catalogue could change under -- and it is the cut the engine
+     * picks for the row box on its own, so naming it draws the same list.
      */
     static const char list_named[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
         "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
-    /*
-     * Whichever text cut is shortest stands in. The rule is the point, not the
-     * name: the catalogue grows, and when it grew a 6px text cut the shortest
-     * compatible face became that one rather than display-thin8. Naming the shortest
-     * cut rather than hard-coding it keeps the assertion about the rule.
-     */
-    const ml_font *shortest_text = NULL;
-    for (int i = 0; i < ml_font_count(); i++) {
-        const ml_font *f = ml_font_at(i);
-        if (f->role != ML_FONT_TEXT) continue;
-        if (!shortest_text || f->height < shortest_text->height) shortest_text = f;
+    if (!render_doc(list_named, 64, 64, &a)) { CHECK(false, "list doc parses"); return; }
+    CHECK(ink_total(&a, 64, 64) > 0, "an agenda in a 14px box draws");
+
+    ml_sim *ls = ml_sim_create();
+    if (!ls || ml_sim_load(ls, list_named) != 1) {
+        CHECK(false, "list doc loads in the sim");
+        ml_canvas_free(&a);
+        return;
     }
+    const ml_font *stand_in = ml_font_find(ml_sim_widget_font(ls, 0));
+    ml_sim_destroy(ls);
+    CHECK(stand_in != NULL, "the list's stand-in is a registered cut");
+    if (!stand_in) { ml_canvas_free(&a); return; }
+    CHECK(stand_in->role == ML_FONT_TEXT, "a clock face never hosts a text list");
+
     char list_face[256];
     snprintf(list_face, sizeof(list_face),
              "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
              "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
              "\"font\":\"%s\",\"color\":\"#FFFFFF\",\"show_time\":true}]}",
-             shortest_text->name);
-    if (!render_doc(list_named, 64, 64, &a) || !render_doc(list_face, 64, 64, &b)) {
-        CHECK(false, "list docs parse");
-        return;
-    }
-    CHECK(ink_total(&a, 64, 64) > 0, "an agenda in a 14px box draws");
+             stand_in->name);
+    if (!render_doc(list_face, 64, 64, &b)) { CHECK(false, "list face doc parses"); return; }
     CHECK(same_canvas(&a, &b, 64, 64),
-          "a list falls back to the shortest compatible text face");
+          "naming the stand-in cut draws the same list");
     ml_canvas_free(&a);
     ml_canvas_free(&b);
 }
