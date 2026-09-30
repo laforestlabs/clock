@@ -1350,6 +1350,11 @@ static void test_resolve_font(void)
  * draws the same face, and a higher scale can never come out smaller. Both
  * were broken while the pin filtered candidates: each step chose a different
  * cut, and the step where nothing fitted dropped to the shortest cut at 1x.
+ *
+ * digits24 is what a 64x32 box fits now that the cuts carry no blank columns
+ * at their edges: the tabular clock at that size is 63px of the box's 64, so
+ * the tallest cut that fits is one rung above the digits18 this box used to
+ * settle for.
  */
 static void test_pinned_scale(void)
 {
@@ -1368,7 +1373,7 @@ static void test_pinned_scale(void)
                  "\"scale\":%d}]}",
                  n);
         CHECK(ml_sim_load(s, doc) == 1, "pinned family doc loads");
-        CHECK(strcmp(ml_sim_widget_font(s, 0), "digits18") == 0,
+        CHECK(strcmp(ml_sim_widget_font(s, 0), "digits24") == 0,
               "the cut for the box is stable across the slider");
         CHECK(ml_sim_widget_scale(s, 0) == n * ML_SCALE_1X,
               "the pinned scale stands at every step");

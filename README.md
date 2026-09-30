@@ -328,10 +328,11 @@ render the string in question:
   "fit": true, "auto_font": true }
 ```
 
-In a 64x32 box `digits16` is held to 1.23x by its 47px of width and fills
-about 20 of the 32 rows. `digits10` is narrower, reaches a higher scale and
-fills more. With `auto_font` the engine works that out; without it, the named
-font stands.
+In a 64x32 box `digits16` is held to 1.28x by its 50px of width, and to 2x by
+the box's height, so whole-pixel steps draw it at 1x and fill 16 of the 32
+rows. `digits10` is narrower at 1.64x of width, which leaves the box free to
+put its height into a taller cut: with `auto_font` the engine works that out
+and draws `digits24` here, and without it the named font stands.
 
 Membership is decided by what a font can actually draw, not by the family it
 belongs to: a font is a candidate when it has a glyph for every character of
@@ -395,7 +396,12 @@ cd font_designer && ./run.sh                # edit the art against a simulated p
 `font_designer/` is a Linux desktop tool for touching up a cut pixel by pixel and seeing
 the result on a simulated RGB matrix — real pitch, real dead space between the emitters,
 the panel's own gamma. It edits `fonts/*.font` in place, writing back only the rows that
-changed, and can run `tools/fontgen.py` so the tables match the art. See its README.
+changed, and can run `tools/fontgen.py` so the tables match the art. Its **Trim edges**
+pass drops the blank columns at the edges of a cut's glyphs: the pen already adds `@gap`
+between glyphs, so a blank edge column is spacing counted twice. Two things it holds
+back — a glyph with no ink at all, since a space is nothing but advance, and the ten
+digits of a cut, which stay tabular (with the hyphen alongside them in a clock face, so
+the `--:--` placeholder stays the width of a real time). See its README.
 
 ### Reviewing and repairing the art
 
@@ -533,7 +539,7 @@ no punctuation, which also keeps it out of the `auto_font` search that would
 otherwise fit it to a clock string in a narrow box.
 
 The clock faces exist so the time can suit the panel rather than the panel suiting the
-time. "09:41" is 40px in `digits10`, 54px in `digits16` and 98px in `digits32`. All
+time. "09:41" is 39px in `digits10`, 50px in `digits16` and 86px in `digits32`. All
 cuts keep the placeholder `--:--` exactly as wide as a real time, so nothing reflows
 when the first SNTP sync lands.
 
