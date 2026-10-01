@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:font_designer/src/designer_state.dart';
+import 'package:font_designer/src/font_source.dart';
 import 'package:font_designer/src/ui/app.dart';
 import 'package:font_designer/src/ui/glyph_inspector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -169,6 +170,54 @@ void main() {
         '${repo.path}/out/font-journal/blobs/${entry['before']}');
     expect(blob.existsSync(), isTrue, reason: 'the previous bytes are kept');
     expect(blob.readAsStringSync(), _display12);
+  });
+
+  testWidgets('a save keeps earlier saves and other writers, not the opened text',
+      (tester) async {
+    final path = '${repo.path}/fonts/display12.font';
+
+    // First edit of the session, saved: glyph A gains a column.
+    state.togglePixel(0, 1);
+    expect(await tester.runAsync(() => state.save()), isTrue);
+    final afterFirst = File(path).readAsStringSync();
+    expect(FontSource.parse('fonts/display12.font', afterFirst).glyph(65)!.rows,
+        <String>['##', '##', '#.']);
+
+    // Somebody else writes another glyph while this session stays open: a
+    // second instance, a reviewer pass, a rasterizer rerun. B loses its
+    // bottom pixel.
+    File(path).writeAsStringSync(afterFirst.replaceFirst(
+        '66\n  |#|\n  |#|\n  |#|', '66\n  |#|\n  |#|\n  |.|'));
+
+    // A later edit, and a second save. Serialising from the text the font was
+    // opened with -- which is what the app used to do -- puts back both glyphs
+    // the file has since changed: A from this session's own first save, B from
+    // the other writer. That is the loss out/font-journal/ recorded.
+    state.selectGlyph(67);
+    state.togglePixel(0, 1);
+    expect(await tester.runAsync(() => state.save()), isTrue);
+
+    final merged =
+        FontSource.parse('fonts/display12.font', File(path).readAsStringSync());
+    expect(merged.glyph(65)!.rows, <String>['##', '##', '#.'],
+        reason: "this session's first save survives its second");
+    expect(merged.glyph(66)!.rows, <String>['#', '#', '.'],
+        reason: "the other writer's glyph survives this session's save");
+    expect(merged.glyph(67)!.rows, <String>['#.', '#.', '##'],
+        reason: "and the newest edit is written");
+
+    // The journal records that save against the file as it stood, so the
+    // merged-in state can be read back afterwards.
+    final entries = File('${repo.path}/out/font-journal/writes.jsonl')
+        .readAsLinesSync()
+        .map((l) => jsonDecode(l) as Map<String, Object?>)
+        .toList();
+    expect(entries, hasLength(2));
+    final secondBefore = File(
+            '${repo.path}/out/font-journal/blobs/${entries.last['before']}')
+        .readAsStringSync();
+    expect(secondBefore, contains('66\n  |#|\n  |#|\n  |.'),
+        reason: 'the bytes the second save replaced hold the other writer');
   });
 
   testWidgets('the right button opens the column menu on the cell it marked',

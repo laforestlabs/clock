@@ -106,13 +106,31 @@ class Repository {
   /// Write [font] back. Only the rows that changed are different from what was
   /// read, so a one-pixel fix is a one-line diff.
   ///
+  /// The session's edits are merged into the file **as it stands now**, not
+  /// into the text the font was opened with. Serialising from the opened text
+  /// and patching only the glyphs that are dirty at that moment silently puts
+  /// back the rows of every other glyph -- which is how a second save in a
+  /// session undid the first, and how an instance left open undid work another
+  /// session or a tool saved in between. Both were seen in out/font-journal/:
+  /// a save that wrote D-J back to their opened shape, and one that did the
+  /// same to Q, S-Z and \.
+  ///
   /// The write is journalled with the glyphs it changed and the bytes the file
-  /// held before, so an edit that something later overwrites can be traced to
-  /// its writer and put back. See lib/src/font_journal.dart.
+  /// held before, so an edit something later overwrites can be traced to its
+  /// writer and put back. See lib/src/font_journal.dart.
   Future<void> save(FontSource font) async {
     final file = File(absolute(font.path));
     final before = file.existsSync() ? file.readAsStringSync() : '';
-    final after = font.serialize();
+    FontSource target;
+    try {
+      target = before.isEmpty
+          ? font
+          : (FontSource.parse(font.path, before)..absorb(font));
+    } on FontSourceError {
+      // Nothing readable to merge into: write what the session holds.
+      target = font;
+    }
+    final after = target.serialize();
     file.writeAsStringSync(after);
     FontJournal.record(
       root: root,

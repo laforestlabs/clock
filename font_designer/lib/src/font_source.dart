@@ -465,6 +465,21 @@ class FontSource {
     return null;
   }
 
+  /// Adopt the glyphs [other] has changed, leaving everything else spelled as
+  /// this source has it.
+  ///
+  /// A save merges a session's edits into the file as it stands now, rather
+  /// than into the text the font was opened with, so that a glyph this
+  /// session did not touch keeps whatever the file holds -- including rows
+  /// another session or a tool saved since this one opened it.
+  void absorb(FontSource other) {
+    for (final glyph in other.glyphs) {
+      if (!glyph.dirty) continue;
+      final mine = this.glyph(glyph.codepoint);
+      if (mine != null) mine.rows = List<String>.of(glyph.rows);
+    }
+  }
+
   /// The ink characters this font may use, plane 0 first.
   List<String> get inkChars => kInkChars.substring(0, planes).split('');
 

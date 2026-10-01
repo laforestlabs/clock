@@ -117,6 +117,16 @@ in the spelling they came in as, block or inline, with the file's own
 indentation. `test/font_source_test.dart` checks the round trip against every
 font in the catalogue: parse, serialize, byte for byte.
 
+What the diff is taken *against* is the file as it stands at that moment, not
+the text the font was opened with. The session's edits are merged into a fresh
+read, so every other glyph keeps the line the file has right now — including
+rows a second instance, a repair from `fontreview.py` or a rasterizer rerun
+wrote since this window opened. Serialising from the opened text instead puts
+those rows back, and takes this session's own earlier saves with them the
+moment a glyph stops being dirty: the first save of a sitting survived, the
+second restored the art as it had been at open. Both halves of that are real
+losses, seen in `out/font-journal/` and pinned in `editor_flow_test.dart`.
+
 The tool refuses exactly what `tools/fontgen.py` refuses, and reports it with
 the line number: a missing `@role`, ragged rows, a stray ink character for the
 declared planes, a duplicate codepoint, or a gap in the codepoint range.
@@ -145,7 +155,9 @@ against what `core/src/font.c` does, the gamma table against the committed C
 table, what a trim does to a glyph's rows and advance, and the
 click-paint-save path against a throwaway checkout in the system temp
 directory — never against the working tree, because this tool edits the art
-the product ships.
+the product ships. That path includes what a second save in one session does
+to the first, and what it leaves of a glyph another writer changed between
+them.
 
 ## Verification on this machine
 
