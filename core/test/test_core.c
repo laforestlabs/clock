@@ -896,11 +896,11 @@ static void test_fit_axes(void)
         "\"text\":\"8888888888888888\",\"font\":\"display-thin8\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"smooth\":false}]}";
 
-    /* '8' inks 6 of the 8 rows in display-thin8; the rest is descender room a digit
-     * never uses. So the row count is 6 per unit of scale. */
+    /* '8' inks all 7 rows of display-thin8's cell, so the row count is 7 per
+     * unit of scale. */
     ml_canvas c;
     if (!render_doc(narrow, 64, 64, &c)) { CHECK(false, "narrow doc parses"); return; }
-    CHECK(ink_rows(&c, 64, 64) == 6, "blocky text too narrow for 2x floors to 1x");
+    CHECK(ink_rows(&c, 64, 64) == 7, "blocky text too narrow for 2x floors to 1x");
     CHECK(ink_right(&c, 64, 64) < 64, "fitted text stays inside the canvas");
     ml_canvas_free(&c);
 
@@ -912,7 +912,7 @@ static void test_fit_axes(void)
         "\"fit\":true,\"smooth\":false}]}";
 
     if (!render_doc(roomy, 64, 64, &c)) { CHECK(false, "roomy doc parses"); return; }
-    CHECK(ink_rows(&c, 64, 64) == 12, "the same box still reaches 2x when the text is short");
+    CHECK(ink_rows(&c, 64, 64) == 14, "the same box still reaches 2x when the text is short");
     ml_canvas_free(&c);
 }
 
