@@ -632,7 +632,7 @@ core/       portable C99 render engine. No platform dependencies. The contract.
   test/             unit tests and golden-image regression tests
 fonts/      editable ASCII-art font sources
 layouts/    stock layouts, all 64x32 (the default); larger panels ship as size-suffixed presets
-tools/      fontraster, fontreview, fontgen, fontproof, gamma table generator
+tools/      fontraster, fontreview, fontgen, fontproof, gamma table generator, BLE protocol checker
 docs/       hardware notes
 firmware/   ESP-IDF application: panel, wifi, clock, data providers
 designer/   Flutter layout designer, desktop and mobile

@@ -257,6 +257,13 @@ identical, and the app's "Updated to X" toast is meaningless.
 - Status JSON keys are additive only. `version` changes meaning (app version
   instead of core version); `core` is new and optional on read.
 - `pong <version> <ip> <layout> <w> <h>` keeps its field count and order.
+- Every command in `handle_cmd` answers on the status characteristic, and that
+  answer is part of the contract. `tools/ble_check.py` drives the read-only
+  commands and `wifi scan` against a real board and fails when one stops
+  replying, arrives malformed, or loses a multi-line terminator. Nothing else
+  can see that: the app's tests check Dart against a Dart re-implementation of
+  these rules, and the app's own config parsers swallow a reply they cannot
+  parse. A firmware change that alters a reply runs this before it ships.
 - Dart validation mirrors firmware validation exactly (existing convention in
   `mirror_config.dart`).
 
@@ -301,6 +308,9 @@ say so explicitly and stop after the build/unit checks):
    `esp_ota_end` and stay on the old image.
 7. Regression: layout push over BLE and over LAN both still apply and still
    update brightness only when no override is set.
+8. `python3 tools/ble_check.py --address <mac>` — every read-only command and
+   `wifi scan` answers to contract. This is the step that catches a reply that
+   stopped being sent at all, which no build or app test can see.
 
 ## References
 
