@@ -157,6 +157,11 @@ Future<String?> pushFirmwareOverBleWithProgress(
                 progress.value = total > 0 ? sent / total : 0);
         break;
       } catch (e) {
+        // A refused begin is the mirror's own answer, not a dropped link: the
+        // retry below would spend 90 s waiting for a reboot nothing asked for
+        // and then repeat the request that was just declined. Fail now, with
+        // the mirror's reason (which already says what to do).
+        if (!updateFailureIsRetryable(e)) rethrow;
         if (attempt >= attempts) rethrow;
         final back = await _awaitVersionAfterReboot(
             devices, device, rebootTimeout,

@@ -72,6 +72,38 @@ void main() {
       expect(parseLatencyStatus(''), isNull);
     });
   });
+  group('BleMemory.parse', () {
+    test('parses the pool figures', () {
+      final m = BleMemory.parse('memory 20735 8192 8192 8259064');
+      expect(m, isNotNull);
+      expect(m!.internalFree, 20735);
+      expect(m.internalLargest, 8192);
+      expect(m.dmaLargest, 8192);
+      expect(m.psramFree, 8259064);
+    });
+
+    test('takes a zero figure (an empty pool is a reading, not a parse fail)',
+        () {
+      final m = BleMemory.parse('memory 0 0 0 0');
+      expect(m, isNotNull);
+      expect(m!.internalLargest, 0);
+    });
+
+    test('rejects other status lines and malformed replies', () {
+      for (final line in <String>[
+        'unknown command',
+        'ota 0 0 idle',
+        'memory 20735 8192 8192', // a field short
+        'memory 20735 8192 8192 8259064 1', // a field long
+        'memory x 8192 8192 8259064',
+        'memory 20735 -1 8192 8259064',
+        '',
+      ]) {
+        expect(BleMemory.parse(line), isNull, reason: line);
+      }
+    });
+  });
+
   group('BleOtaStatus.parse', () {
     test('parses idle and active sessions', () {
       expect(BleOtaStatus.parse('ota 0 0 idle')!.active, isFalse);

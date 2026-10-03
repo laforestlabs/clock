@@ -100,10 +100,10 @@ static void json_escape(char *out, size_t outsz, const char *in)
  * and the escaped fields are the app version (char[32]), the layout name
  * (ML_NAME_LEN), the device name (24 characters plus the terminator) and the
  * IP (16 bytes). Every number is bounded too — 20 digits of uptime is the
- * widest — and the remaining key names and punctuation come to under 300
+ * widest — and the remaining key names and punctuation come to under 400
  * bytes, so the whole document cannot reach this cap.
  */
-_Static_assert(STATUS_JSON_CAP >= 6 * (32 + ML_NAME_LEN + 25 + 16) + 300,
+_Static_assert(STATUS_JSON_CAP >= 6 * (32 + ML_NAME_LEN + 25 + 16) + 400,
                "status JSON buffer must hold the worst-case document");
 
 static esp_err_t handle_get_status(httpd_req_t *req)
@@ -142,14 +142,21 @@ static esp_err_t handle_get_status(httpd_req_t *req)
      * hardware identity (mirror_config_device_id) and "name" the friendly
      * one, which a rename changes without touching "id". "display_api" is 1
      * only when this build can hold a picture at all, so an app must read its
-     * absence as "old firmware" rather than as a broken device. */
+     * absence as "old firmware" rather than as a broken device.
+     *
+     * "internal_free" and "internal_largest" are the scarce pool's figures -
+     * the same numbers as the boot and 30 s console lines, and the same two
+     * the BLE "get memory" answers with. Internal SRAM is where this board
+     * runs out of contiguous room (docs/ota_sram_fragmentation.md), and the
+     * status document is the only LAN view of it. */
     char body[STATUS_JSON_CAP];
     const int n = snprintf(body, sizeof(body),
               "{\"version\":\"%s\",\"core\":\"%s\",\"ip\":\"%s\",\"online\":%s,"
               "\"rssi\":%d,\"uptime_s\":%llu,\"layout\":\"%s\",\"width\":%d,"
               "\"height\":%d,\"brightness\":%u,\"id\":\"%s\",\"name\":\"%s\","
               "\"display_api\":%d,\"mode\":\"%s\",\"base_mode\":\"%s\","
-              "\"picture_ready\":%s,\"flip180\":%s}",
+              "\"picture_ready\":%s,\"flip180\":%s,"
+              "\"internal_free\":%u,\"internal_largest\":%u}",
               esc_version, ML_VERSION_STR, wifi_ip(),
               wifi_is_connected() ? "true" : "false",
               wifi_rssi(),
@@ -160,7 +167,9 @@ static esp_err_t handle_get_status(httpd_req_t *req)
               panel_supports_picture() ? 1 : 0,
               mode, display_mode_name(base_mode),
               picture_ready ? "true" : "false",
-              mirror_config_flip180() ? "true" : "false");
+              mirror_config_flip180() ? "true" : "false",
+              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     if (n < 0 || (size_t)n >= sizeof(body)) {
         /* The cap above is sized so this cannot fire; refuse rather than send

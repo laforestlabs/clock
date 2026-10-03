@@ -11,6 +11,13 @@
  * single ATT write within the negotiated MTU; the server is MTU-agnostic and
  * just appends.
  *
+ * "get memory" reports the scarce pool the same way the boot and 30 s console
+ * lines do - internal free, internal largest free block, largest DMA-capable
+ * block, PSRAM free - so an owner (or a script) can see the pool without a
+ * serial cable. A firmware update no longer needs internal SRAM for its
+ * receive ring (see ota.c's ring_alloc), but everything else on the board
+ * competes for that block, and the figures are the only way to watch it.
+ *
  * Trust model: up to two connections, no pairing or security, same as the
  * open setup portal. It is a home device on a home network. Two links exist
  * because a two-player game is one phone per player; the controller is
@@ -440,6 +447,18 @@ static void cmd_get_device(uint16_t conn)
                          display_store_picture_ready() ? "true" : "false");
 }
 
+/* The netlog's OTA_FAIL detail for a refused begin, next to the status line it
+ * accompanies so the two cannot drift apart. */
+static int ota_fail_detail(esp_err_t err)
+{
+    switch (err) {
+    case ESP_ERR_NO_MEM: return NETLOG_OTA_ERR_NOMEM;
+    case ESP_ERR_INVALID_STATE: return NETLOG_OTA_ERR_BUSY;
+    case ESP_ERR_NOT_FOUND: return NETLOG_OTA_ERR_NO_PART;
+    default: return NETLOG_OTA_ERR_OTHER;
+    }
+}
+
 static void cmd_begin_firmware(uint16_t conn, int len, int offset)
 {
     if (len < 1 || offset < 0) {
@@ -455,6 +474,20 @@ static void cmd_begin_firmware(uint16_t conn, int len, int offset)
         send_status_to(conn, "begin error busy");
         return;
     }
+    /* Recorded before the session opens, deliberately: ota_session_begin()
+     * submits a flash-writer job that holds the writer's mutex for the whole
+     * session, and netlog_record() writes through that same writer with an
+     * unbounded wait. Recording after the begin would block this BLE host
+     * task on the mutex while the writer waited for the data only this task
+     * can deliver, and the session would die of starvation with nothing
+     * written (measured: "stream stalled at 0 of 1370448 bytes"). Before the
+     * begin the writer is free, so the entry lands first and the pair reads
+     * BEGIN, then OK or FAIL. */
+    if (offset == 0) {
+        /* A new session, not a resume: paired with the OTA_OK at commit, this
+         * is what makes the netlog read as an update timeline. */
+        netlog_record(NETLOG_EVT_OTA_BEGIN, 0, 0);
+    }
     const esp_err_t err = ota_session_begin((size_t)len, (size_t)offset);
     if (err != ESP_OK) {
         unlock();
@@ -462,6 +495,13 @@ static void cmd_begin_firmware(uint16_t conn, int len, int offset)
                              err == ESP_ERR_INVALID_ARG
                                  ? (offset > 0 ? "bad offset" : "too large")
                                  : "unavailable");
+        /* "unavailable" is the refusal with no other durable trace: the
+         * session never started, so nothing is written at commit time and the
+         * reason exists only here. "too large" and "bad offset" are decisions
+         * about what the phone sent, not events to keep. */
+        if (err != ESP_ERR_INVALID_ARG) {
+            netlog_record(NETLOG_EVT_OTA_FAIL, 0, ota_fail_detail(err));
+        }
         return;
     }
     s_xfer.kind = TRANSFER_FIRMWARE;
@@ -738,6 +778,19 @@ static void cmd_get_ota(uint16_t conn)
                          (unsigned)total, total == 0 ? "idle" : "active");
 }
 
+/* The scarce pool's figures - the same four the boot and 30 s console lines
+ * carry - so the pool can be watched remotely. Internal SRAM is where this
+ * board runs out of contiguous room (docs/ota_sram_fragmentation.md), and
+ * until now the only way to read it was a serial cable. */
+static void cmd_get_memory(uint16_t conn)
+{
+    send_status_to(conn, "memory %u %u %u %u",
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
 static void cmd_get_brightness(uint16_t conn)
 {
     send_status_to(conn, "brightness %u %s", panel_get_brightness(),
@@ -918,6 +971,8 @@ static void handle_cmd(uint16_t conn, char *line)
         cmd_get_device(conn);
     } else if (strcmp(line, "get ota") == 0) {
         cmd_get_ota(conn);
+    } else if (strcmp(line, "get memory") == 0) {
+        cmd_get_memory(conn);
     } else if (strcmp(line, "get brightness") == 0) {
         cmd_get_brightness(conn);
     } else if (strcmp(line, "get wifi") == 0) {

@@ -171,6 +171,20 @@ gets a clock: the first weather fetch reads the `Date` header off the response
 and sets it, and the same log line appears. See "Data providers" for why that
 one request is cleartext.
 
+### 4. A firmware update, with the mirror warm
+
+Do one OTA after the board has been up for hours, not only on a freshly flashed
+one. The allocation that used to fail in the field is only marginal once the
+heap has settled, and a boot-time test cannot see it
+(`docs/ota_sram_fragmentation.md`). The update's receive ring now lives in
+PSRAM, so this is a watch on the pool rather than a precondition: `get memory`
+over BLE, or `internal_largest` in `/api/status`, is the reading to compare
+with the boot line. On this board it settles around 8 KB.
+
+An update writes `OTA_BEGIN` and then `OTA_OK` to the netlog, and a refused
+begin writes `OTA_FAIL` with its cause. Read it back with
+`tools/netlog.py http://smart-mirror-<id>.local/api/log`.
+
 ## Pins
 
 Defaults are in menuconfig and match `docs/hardware.md`.
@@ -292,6 +306,21 @@ If it drops below roughly 24 KB free / 16 KB largest, lower
 restore the margin the second connection does not ship. The two-connection
 figure itself is not measured yet; this note is the one to record it in.
 
+**Read again on 2026-10-01** (Developer 1, `0.4.6`, up four hours, picture
+display shipped): `internal free 20735 (largest 8192)`, PSRAM free 8.26 MB.
+Plan against that reading, not the 18–20 KB block above: the largest free
+internal block is now about the size of the OTA receive ring, so that ring no
+longer lives in this pool.
+
+The OTA receive ring (`OTA_RING_BYTES`, 8 KB, allocated at `begin firmware`) is
+in **PSRAM**, with internal SRAM only as the fallback. It does not have to be
+internal: the flash writer (`flash_write.c`) copies each chunk into its own
+internal-DRAM stack before `esp_ota_write`, the call that freezes the cache, so
+the ring is only ever touched with the cache on. It used to be internal, and
+that was the allocation that failed on a mirror that had been up for hours —
+with the largest block at 8 KB, a request for 8 KB is exactly the one on the
+boundary (`docs/ota_sram_fragmentation.md`).
+
 The sizing decisions that keep it there are commented in `sdkconfig.defaults`
 (WiFi RX/TX buffer counts, BLE activity count, mbedTLS buffers in PSRAM).
 Reducing any of them again is safe on paper and not in practice: at the ESP-IDF
@@ -311,8 +340,12 @@ feature needs space rather than RAM, it is there.
 
 `GET /api/status` retains the existing status fields and adds the station-MAC
 `id` (12 lowercase hex digits), friendly `name`, `display_api`, effective `mode`,
-saved `base_mode`, `picture_ready`, and `flip180`. BLE `get device` reports the
-same identity and display state without changing `ping` or `get config`.
+saved `base_mode`, `picture_ready`, `flip180`, and the scarce pool's figures
+`internal_free` / `internal_largest`. BLE `get device` reports the
+same identity and display state without changing `ping` or `get config`; BLE
+`get memory` answers `memory <internal_free> <internal_largest> <dma_largest>
+<psram_free>` — the same four numbers the boot and 30-second console lines
+carry, so the pool can be read without a serial cable.
 mDNS advertises `_smartmirror._tcp` at `smart-mirror-<id>.local`, with instance
 `Smart Mirror <id>`; renaming does not change identity. The advertisement also
 carries a TXT record — `id` (the same identity as `/api/status`), `name` (the
@@ -385,6 +418,14 @@ before the new app marks itself valid.
 WiFi remains the transport for layout/status/pictures and those picture uploads
 still require the phone to reach the mirror on the LAN. A VPN can block that
 local picture route; it does not affect OTA over Bluetooth.
+
+The update needs no internal SRAM: the receive ring is allocated in PSRAM (see
+Memory and storage). It once did, and `begin firmware` was refused with `begin
+error unavailable` when 8 KB would not fit — the incident in
+`docs/ota_sram_fragmentation.md`. Both outcomes are in the netlog now: a
+successful begin writes `OTA_BEGIN`, a refused one writes `OTA_FAIL` with the
+cause in its detail byte (`nomem`, `busy`, `no_part`), which `tools/netlog.py`
+decodes by name.
 
 ## Data providers
 

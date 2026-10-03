@@ -2,13 +2,16 @@
  * ota.c - resumable firmware streaming over Bluetooth.
  *
  * The session streams bytes into flash as they arrive; it does not buffer the
- * image in PSRAM. The flash writer task has an internal-DRAM stack, and copies
- * each ring-buffered chunk into its stack before esp_ota_write while the cache
- * is frozen. The source bytes must therefore be reachable in that window.
+ * image. The flash writer task has an internal-DRAM stack and copies each
+ * ring-buffered chunk into that stack before esp_ota_write, which runs with
+ * the flash cache frozen. The ring is therefore only ever touched with the
+ * cache enabled, so its storage does not have to be internal SRAM: see
+ * ring_alloc().
  */
 #include "ota.h"
 
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
@@ -176,10 +179,32 @@ esp_err_t ota_init(void)
     return ESP_OK;
 }
 
+/* The ring's storage, PSRAM first.
+ *
+ * Eight kilobytes of internal SRAM is the allocation that fails on a mirror
+ * that has been up for hours (docs/ota_sram_fragmentation.md): internal is the
+ * scarce pool, and its largest free block on a settled board is about the
+ * ring's own size. The flash writer copies out of the ring with the cache
+ * enabled, so PSRAM is the right home for it. Internal stays as the fallback:
+ * the ring is small, and a board with no PSRAM still has to be updatable.
+ */
+static uint8_t *ring_alloc(void)
+{
+    uint8_t *p = heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_SPIRAM);
+    if (p != NULL) return p;
+    ESP_LOGW(TAG, "ring: no PSRAM for %u bytes, trying internal SRAM",
+             (unsigned)OTA_RING_BYTES);
+    return heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_INTERNAL);
+}
+
 esp_err_t ota_session_begin(size_t total, size_t offset)
 {
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
-    if (part == NULL) return ESP_ERR_INVALID_STATE;
+    /* No app slot to switch to. Unreachable with the two-slot table this
+     * firmware ships (ota_0 and ota_1), but it is the other thing that
+     * answers "begin error unavailable", and it must not be confused with a
+     * memory failure when it does happen. */
+    if (part == NULL) return ESP_ERR_NOT_FOUND;
     if (total == 0 || total > part->size) return ESP_ERR_INVALID_ARG;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -208,12 +233,20 @@ esp_err_t ota_session_begin(size_t total, size_t offset)
     }
 
     ota_session_abort_locked();
-    if (s_ring_storage != NULL) heap_caps_free(s_ring_storage);
-    s_ring_storage = heap_caps_malloc(OTA_RING_BYTES, MALLOC_CAP_INTERNAL);
+    s_ring_storage = ring_alloc();
     if (s_ring_storage == NULL) {
+        /* The pool figures are the reading the post-mortem needs: an error
+         * code alone cannot tell a drained pool from a fragmented one, and
+         * nothing else reports these at the moment an update is refused. */
+        ESP_LOGE(TAG, "ring: %u bytes unavailable (internal free %u, largest %u)",
+                 (unsigned)OTA_RING_BYTES,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         xSemaphoreGive(s_lock);
         return ESP_ERR_NO_MEM;
     }
+    ESP_LOGI(TAG, "ring: %u bytes in %s", (unsigned)OTA_RING_BYTES,
+             esp_ptr_external_ram(s_ring_storage) ? "PSRAM" : "internal SRAM");
     s_ring = xStreamBufferCreateStatic(OTA_RING_BYTES, 1, s_ring_storage,
                                        &s_ring_struct);
     if (s_ring == NULL) {

@@ -170,6 +170,58 @@ void main() {
     expect(tester.widget<FilledButton>(action).onPressed, isNotNull,
         reason: 'a live link must offer the update it can now send');
   });
+
+  testWidgets('a refused begin fails at once, without chasing a reboot',
+      (tester) async {
+    final fixture = _Fixture();
+    addTearDown(fixture.dispose);
+    late final MirrorDevice device;
+    late final _Connection connection;
+    await tester.runAsync(() async {
+      // A record the other cases in this file do not use: the offer is
+      // suppressed per (record, version) in a process-wide set, so a key
+      // shared with another case would silently hide this one.
+      fixture.lanAt('127.0.0.1:8081').version = '0.0.2';
+      await fixture.registry.addLan('127.0.0.1', 8081);
+      device = await fixture.registry.addBle(fixture.nearby());
+      connection = device.connection as _Connection;
+      await connection.disconnect();
+    });
+
+    // The page opens the link when it is pushed; the offer is raised while the
+    // link comes up, so the case below walks the same path an owner does.
+    connection.hold = Completer<void>();
+    await boot(tester, fixture.registry, device);
+    await pumpUntil(tester, find.text('Firmware update available'));
+    connection.hold!.complete();
+    connection.hold = null;
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    final session = connection.live;
+    expect(session, isNotNull, reason: 'the page opens the link it updates');
+    // The mirror's answer, as mirror_ble.dart writes it for `begin error
+    // unavailable`: a decision, with the pool reading appended.
+    session!.failWith = BleBeginRejectedException(
+        'the mirror could not start the update; try again, and reboot the '
+        'mirror if it happens again (largest free internal block 7 KB)');
+    final connectsBefore = connection.connects;
+
+    await tester.tap(
+        find.widgetWithText(FilledButton, 'Update to v$bundledVersion'));
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(find.textContaining('could not start the update'), findsOneWidget,
+        reason: 'the mirror\'s own reason must reach the owner');
+    expect(find.textContaining('largest free internal block 7 KB'),
+        findsOneWidget);
+    expect(connection.connects, connectsBefore,
+        reason: 'a refusal is not a dropped link: there is nothing to resume, '
+            'so the 90 s reboot wait and the reconnect must not happen');
+  });
 }
 
 /// A live BLE session whose identity the test controls.
@@ -193,9 +245,14 @@ class _Session extends Fake implements BleSession {
     int offset = 0,
     void Function(int sent, int total)? onProgress,
   }) async {
+    if (failWith != null) throw failWith!;
     onProgress?.call(bytes.length, bytes.length);
     onPush();
   }
+
+  /// When set, [pushFirmware] throws it instead of completing: the mirror
+  /// refusing the update, as opposed to a link that dropped.
+  Object? failWith;
 
   @override
   Future<void> close() async {}

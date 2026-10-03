@@ -42,6 +42,7 @@ typedef enum {
     NETLOG_EVT_TRAFFIC_FETCH_OK = 16,
     NETLOG_EVT_TRAFFIC_FETCH_FAIL = 17,
     NETLOG_EVT_TRAFFIC_STALE = 18,
+    NETLOG_EVT_OTA_FAIL = 19,
     NETLOG_EVT_COUNT
 } netlog_evt_t;
 
@@ -54,6 +55,16 @@ typedef enum {
     NETLOG_ERR_NOMEM = 4,     /* response larger than the fetch buffer */
     NETLOG_ERR_AUTH = 5,      /* the service rejected the credential */
 } netlog_err_class_t;
+
+/* Detail for OTA_FAIL: which producer of "begin error unavailable" refused the
+ * update. Separate from netlog_err_class_t so one byte can never carry two
+ * meanings in a dump. */
+typedef enum {
+    NETLOG_OTA_ERR_NOMEM = 1,   /* no contiguous OTA_RING_BYTES for the ring */
+    NETLOG_OTA_ERR_BUSY = 2,    /* the flash writer was already busy */
+    NETLOG_OTA_ERR_NO_PART = 3, /* no alternative OTA app slot */
+    NETLOG_OTA_ERR_OTHER = 4,
+} netlog_ota_err_class_t;
 
 /* On-disk sizes, in bytes. A 16-byte header plus 4096 eight-byte entries. */
 #define NETLOG_HEADER_SIZE 16

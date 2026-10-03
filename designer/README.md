@@ -153,6 +153,15 @@ is on screen: a mirror whose link is still coming up shows why and the action
 comes alive the moment the link does, rather than leaving a dead button in front
 of an owner whose mirror is already linked.
 
+A refused begin — the mirror answering `begin error <reason>` instead of `begin
+ok` — is final, not a dropped link: the update fails immediately with the
+mirror's sentence instead of retrying, because the same request gets the same
+answer and the retry path waits for a reboot nothing asked for. The one refusal
+the mirror can explain is `unavailable` (it could not reserve what the update
+needs at begin time), and the app appends the mirror's largest free internal
+block to that sentence when the firmware is new enough to answer `get memory`
+(`docs/ota_sram_fragmentation.md`).
+
 ## Launching it without a terminal
 
 `flutter run` is the development path, for hot reload and console output. To

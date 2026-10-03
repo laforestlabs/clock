@@ -43,6 +43,16 @@ class BlePushException implements Exception {
   String toString() => message;
 }
 
+/// The mirror refused to start an update: it answered `begin error <reason>`.
+///
+/// Distinct from a transport failure because it is an answer, not an
+/// interruption: the mirror looked at the request and said no, and the same
+/// request gets the same answer. The update flow fails with this rather than
+/// retrying, and the sentence is already written for the owner.
+class BleBeginRejectedException extends BlePushException {
+  BleBeginRejectedException(super.message);
+}
+
 /// The user-facing text for a BLE failure.
 ///
 /// An exception this file raises already carries a sentence written for the
@@ -54,6 +64,15 @@ String bleErrorMessage(Object e) {
   }
   return e.toString().replaceFirst('Exception: ', '');
 }
+
+/// Whether a failed firmware upload is worth another attempt.
+///
+/// A refused begin is a decision, not a dropped link: the mirror read the
+/// request and answered it, and the same request gets the same answer. The
+/// upload flow retries everything else, because a dropped link can resume the
+/// session the mirror keeps (see pushFirmwareOverBleWithProgress).
+bool updateFailureIsRetryable(Object error) =>
+    error is! BleBeginRejectedException;
 
 /// One mirror found by [scanForMirrors].
 class BleScanEntry {
@@ -134,6 +153,12 @@ bool _isPongReply(String line) => line.startsWith('pong ');
 
 /// Whether [line] can answer a `get latency` diagnostic.
 bool _isLatencyReply(String line) => line.startsWith('latency ');
+
+/// Whether [line] can answer a `get memory` pool query: the reply itself, or
+/// the "unknown command" firmware predating it answers. Nothing else may
+/// satisfy the request while a transfer's own status lines are in flight.
+bool _isMemoryReply(String line) =>
+    line.startsWith('memory ') || line == unknownCommandReply;
 
 /// Whether [line] can answer a `get device` identity query: the reply itself,
 /// or the "unknown command" firmware predating it answers. Nothing else may
@@ -383,6 +408,11 @@ class BleSession {
       BleOtaStatus.parse(await _sendAndWait('get ota',
           accepts: (line) =>
               line.startsWith('ota ') || line == unknownCommandReply));
+
+  /// The mirror's scarce-pool figures, or null on older firmware (or an
+  /// unparseable line). See [BleMemory].
+  Future<BleMemory?> getMemory() async =>
+      BleMemory.parse(await _sendAndWait('get memory', accepts: _isMemoryReply));
 
   /// Stream a firmware image, resuming at [offset].
   Future<void> pushFirmware(
@@ -723,7 +753,9 @@ class BleSession {
         beginCommand('firmware', bytes.length, offset: offset),
         timeout: const Duration(seconds: 30),
         accepts: (line) => line.startsWith('begin '));
-    if (begin != 'begin ok') throw BlePushException(_beginReason(begin));
+    if (begin != 'begin ok') {
+      throw BleBeginRejectedException(await _beginFailureReason(begin));
+    }
 
     // Unacknowledged writes with read-back pacing. A with-response write waits
     // for the mirror to answer, and the mirror's flash writes freeze its cache
@@ -765,6 +797,28 @@ class BleSession {
     if (commit != 'ota ok') throw BlePushException(_commitReason(commit));
   }
 
+  /// The owner-facing sentence for a refused begin.
+  ///
+  /// `unavailable` is the one refusal the mirror can explain: it could not
+  /// reserve what the update needs at begin time (docs/ota_sram_fragmentation.md).
+  /// The pool figures are appended when the mirror is new enough to report
+  /// them, because "unavailable" alone gives the owner nothing to act on. The
+  /// query is best-effort: the link is the only thing that can answer it, and
+  /// a link that dies asking must not replace the refusal's own reason.
+  Future<String> _beginFailureReason(String line) async {
+    final reason = _beginReason(line);
+    if (line != 'begin error unavailable') return reason;
+    try {
+      final memory =
+          BleMemory.parse(await _sendAndWait('get memory', accepts: _isMemoryReply));
+      if (memory == null) return reason;
+      return '$reason (largest free internal block '
+          '${(memory.internalLargest / 1024).round()} KB)';
+    } catch (_) {
+      return reason;
+    }
+  }
+
   String _beginReason(String line) {
     switch (line) {
       case 'begin error bad offset':
@@ -774,7 +828,8 @@ class BleSession {
       case 'begin error too large':
         return 'the image is larger than the mirror\'s update partition';
       case 'begin error unavailable':
-        return 'the mirror could not start an update';
+        return 'the mirror could not start the update; try again, and reboot '
+            'the mirror if it happens again';
       case 'unknown command':
         return 'this mirror\'s firmware is too old for an update over Bluetooth';
       default:

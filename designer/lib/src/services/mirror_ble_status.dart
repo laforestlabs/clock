@@ -1,12 +1,13 @@
-// Parsing of the BLE brightness status lines, kept free of Flutter and
-// plugin imports so it is unit testable like the rest of the protocol layer.
-// The wire format is defined in firmware/main/net/ble.c:
+// Parsing of the BLE status lines, kept free of Flutter and plugin imports so
+// it is unit testable like the rest of the protocol layer. The wire format is
+// defined in firmware/main/net/ble.c:
 //
 //   get brightness       -> "brightness <n> <auto|manual>"
 //   set brightness <n>   -> "brightness ok <n>" | "brightness error <why>"
 //   set brightness auto  -> "brightness ok auto"
+//   get memory           -> "memory <internal_free> <internal_largest> <dma_largest> <psram_free>"
 //
-// <n> is always the live panel value (0..255).
+// <n> is always the live panel value (0..255). The memory figures are bytes.
 
 /// A parsed `brightness <n> <auto|manual>` status line.
 class BleBrightness {
@@ -54,6 +55,56 @@ class BleOtaStatus {
       return BleOtaStatus(written: written, total: total, active: false);
     }
     return null;
+  }
+}
+
+/// The mirror's scarce-pool figures, from `get memory`.
+///
+/// This is the same reading the firmware's boot and 30-second console lines
+/// carry: internal SRAM is the pool this board runs out of contiguous room in
+/// (docs/ota_sram_fragmentation.md), and until this command existed only a
+/// serial cable could see it.
+///
+/// [parse] returns null for anything that is not a memory line, including the
+/// "unknown command" an older mirror answers to the new command, so a newer
+/// app keeps working against it.
+class BleMemory {
+  const BleMemory({
+    required this.internalFree,
+    required this.internalLargest,
+    required this.dmaLargest,
+    required this.psramFree,
+  });
+
+  /// Free internal SRAM, in bytes.
+  final int internalFree;
+
+  /// The largest contiguous free block of internal SRAM, in bytes. The one
+  /// that matters: a request bigger than this cannot be satisfied however much
+  /// total memory is free.
+  final int internalLargest;
+
+  /// The largest contiguous DMA-capable block, in bytes.
+  final int dmaLargest;
+
+  /// Free PSRAM, in bytes.
+  final int psramFree;
+
+  static BleMemory? parse(String line) {
+    final parts = line.split(' ');
+    if (parts.length != 5 || parts[0] != 'memory') return null;
+    final values = <int>[];
+    for (var i = 1; i < parts.length; i++) {
+      final v = int.tryParse(parts[i]);
+      if (v == null || v < 0) return null;
+      values.add(v);
+    }
+    return BleMemory(
+      internalFree: values[0],
+      internalLargest: values[1],
+      dmaLargest: values[2],
+      psramFree: values[3],
+    );
   }
 }
 

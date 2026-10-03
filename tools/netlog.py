@@ -42,6 +42,14 @@ EVENTS = {
     16: "TRAFFIC_FETCH_OK",
     17: "TRAFFIC_FETCH_FAIL",
     18: "TRAFFIC_STALE",
+    19: "OTA_FAIL",
+}
+
+OTA_ERR_CLASS = {
+    1: "nomem",
+    2: "busy",
+    3: "no_part",
+    4: "other",
 }
 
 ERR_CLASS = {
@@ -88,6 +96,8 @@ def detail_str(evt, detail, rssi):
         return f"reason {detail} ({WIFI_REASON.get(detail, '?')})"
     if evt in ("WEATHER_FETCH_FAIL", "AIR_FETCH_FAIL", "TRAFFIC_FETCH_FAIL"):
         return ERR_CLASS.get(detail, str(detail))
+    if evt == "OTA_FAIL":
+        return OTA_ERR_CLASS.get(detail, str(detail))
     if evt == "WIFI_CONNECTING":
         return f"attempt {detail}"
     if evt == "WIFI_CONNECTED":
