@@ -949,6 +949,10 @@ static void ble_wifi_scan_done_cb(void)
                                  ? "true" : "false",
                              provision_security_name(results[i].security));
     }
+    /* The terminator the app waits for: without it WifiSetupForm.scanWifi
+     * collects the wifi-net lines and then times out after 15 s, and the
+     * owner sees an empty network list for a scan that actually succeeded. */
+    send_status_to(conn, "wifi-scan done %d", n);
     heap_caps_free(results);
 }
 static void ble_wifi_result_cb(bool connected, const char *arg)
