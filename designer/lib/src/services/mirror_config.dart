@@ -152,13 +152,18 @@ class MirrorConfig {
   /// field. Mirrors the firmware rules: timezone non-empty, at most 63 chars
   /// and shaped like a POSIX TZ string (the only form the firmware's newlib
   /// tzset parses), latitude a number in [-90, 90], longitude a number in
-  /// [-180, 180], place at most 23 chars (fits the firmware's
-  /// weather.place[24]), brightness an integer in [0, 255], name non-empty
-  /// after trimming, at most 24 chars, printable ASCII only (the firmware's
-  /// JSON decoder would silently land non-ASCII bytes as '?', and the
-  /// advertising packet is size-bound besides), the commute endpoints
+  /// [-180, 180], place printable ASCII of at most 23 chars (fits the
+  /// firmware's weather.place[24]), brightness an integer in [0, 255], name
+  /// non-empty after trimming, at most 24 chars, printable ASCII only (the
+  /// firmware's JSON decoder would silently land non-ASCII bytes as '?', and
+  /// the advertising packet is size-bound besides), the commute endpoints
   /// "lat,lon" pairs in range, the route label printable ASCII of at most 15
   /// characters, and the routing API key printable ASCII of at most 64.
+  ///
+  /// The three fields the firmware echoes in its config reply - name, place and
+  /// route label - also exclude quotes and backslashes, the two characters its
+  /// JSON escaper would double. That is what keeps the reply within the status
+  /// buffer the firmware statically asserts it fits.
   String? validate() {
     if (name != null) {
       final n = name!.trim();
@@ -168,6 +173,9 @@ class MirrorConfig {
         if (c < 0x20 || c > 0x7E) {
           return 'Name can only contain printable characters';
         }
+      }
+      if (_hasJsonEscapable(n)) {
+        return 'Name cannot contain quotes or backslashes';
       }
     }
     if (timezone != null) {
@@ -191,6 +199,12 @@ class MirrorConfig {
     if (place != null && place!.length > 23) {
       return 'Place is too long (max 23)';
     }
+    if (place != null && !_isPrintableAscii(place!)) {
+      return 'Place can only contain printable characters';
+    }
+    if (place != null && _hasJsonEscapable(place!)) {
+      return 'Place cannot contain quotes or backslashes';
+    }
     if (brightness != null && (brightness! < 0 || brightness! > 255)) {
       return 'Brightness must be an integer in [0, 255]';
     }
@@ -207,6 +221,9 @@ class MirrorConfig {
     }
     if (routeLabel != null && !_isPrintableAscii(routeLabel!)) {
       return 'Route label can only contain printable characters';
+    }
+    if (routeLabel != null && _hasJsonEscapable(routeLabel!)) {
+      return 'Route label cannot contain quotes or backslashes';
     }
     if (trafficKey != null && trafficKey!.length > 64) {
       return 'API key is too long (max 64)';
@@ -243,6 +260,12 @@ bool _isPrintableAscii(String s) {
   }
   return true;
 }
+
+/// True when [s] holds a character the firmware's json_escape() writes as a
+/// pair: a quote or a backslash. The fields it echoes in the 'get config'
+/// reply are bounded by the length limits above only while they exclude these
+/// two, so they are rejected here exactly as the firmware rejects them.
+bool _hasJsonEscapable(String s) => s.contains('"') || s.contains('\\');
 
 /// A named timezone option for the configure dialog.
 class TzPreset {

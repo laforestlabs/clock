@@ -48,26 +48,15 @@ static const char *TAG = "config";
 #define NVS_KEY_ROUTE_TO    "tr_to"
 #define NVS_KEY_ROUTE_LABEL "tr_label"
 
-/* Validation limits, mirrored exactly in the Dart MirrorConfig.validate(). */
-#define TZ_MAX_LEN    63   /* POSIX TZ strings are short; 63 keeps snprintf
-                            * margins generous */
-#define PLACE_MAX_LEN 23   /* fits ml_weather.place[24] */
-#define NAME_MAX_LEN  24   /* fits the 31-byte BLE advertising packet next
-                            * to the flags field, with room to spare */
-#define ROUTE_MAX_LEN 31   /* "%.7g,%.7g" over the coordinate ranges */
-#define ROUTE_LABEL_MAX_LEN 15   /* fits ml_traffic.label[16] */
-#define TRAFFIC_KEY_MAX_LEN 64   /* a TomTom key is 32 hex characters */
-
-/* Buffers for the formatted values. Latitude/longitude are stored as the
- * decimal strings the provider URL wants; 16 bytes covers any value the
- * validation ranges admit with room to spare. */
-#define TZ_BUF_LEN    (TZ_MAX_LEN + 1)
-#define PLACE_BUF_LEN (PLACE_MAX_LEN + 1)
-#define COORD_BUF_LEN 16
-#define NAME_BUF_LEN  (NAME_MAX_LEN + 1)
-#define ROUTE_BUF_LEN (ROUTE_MAX_LEN + 1)
-#define ROUTE_LABEL_BUF_LEN  (ROUTE_LABEL_MAX_LEN + 1)
-#define TRAFFIC_KEY_BUF_LEN  (TRAFFIC_KEY_MAX_LEN + 1)
+/* The validation limits themselves live in config.h, next to the BLE reply
+ * bound they justify. These are the buffers for the stored values. */
+#define TZ_BUF_LEN    (MIRROR_TZ_MAX_LEN + 1)
+#define PLACE_BUF_LEN (MIRROR_PLACE_MAX_LEN + 1)
+#define COORD_BUF_LEN (MIRROR_COORD_MAX_LEN + 1)
+#define NAME_BUF_LEN  (MIRROR_NAME_MAX_LEN + 1)
+#define ROUTE_BUF_LEN (MIRROR_ROUTE_MAX_LEN + 1)
+#define ROUTE_LABEL_BUF_LEN  (MIRROR_ROUTE_LABEL_MAX_LEN + 1)
+#define TRAFFIC_KEY_BUF_LEN  (MIRROR_TRAFFIC_KEY_MAX_LEN + 1)
 /* 12 hex digits plus the terminator; the form is fixed, see
  * mirror_config_device_id(). */
 #define DEVICE_ID_LEN 13
@@ -231,7 +220,7 @@ static void load_temp_unit(nvs_handle_t h)
  * the mirror. 64 x 64 combos, so two mirrors in one home collide about
  * once in four thousand pairings, and the setup wizard's rename is the
  * escape hatch. Words stay at 11 characters or fewer so "Verb Animal"
- * always fits NAME_MAX_LEN (longest live combo: 10 + space + 10).
+ * always fits MIRROR_NAME_MAX_LEN (longest live combo: 10 + space + 10).
  */
 static const char *const s_name_verbs[] = {
     "Bouncing", "Charming", "Chasing", "Clicking",
@@ -510,6 +499,19 @@ static bool is_printable_ascii(const char *s)
     return true;
 }
 
+/* True when s holds a character json_escape() would write as two: '"' or '\'.
+ * The BLE "get config" reply is bounded by the limits in config.h only while
+ * the text fields that reach it exclude these two, so they are rejected at
+ * the source instead of being escaped (which is what let the reply outgrow
+ * its status buffer). */
+static bool has_json_escapable(const char *s)
+{
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (*p == '"' || *p == '\\') return true;
+    }
+    return false;
+}
+
 /*
  * True when s has the shape newlib's tzset understands: a standard name of
  * three or more ASCII letters, then a numeric UTC offset, then only the
@@ -634,7 +636,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             fail(err, errsz, "name must not be empty");
             return ESP_ERR_INVALID_ARG;
         }
-        if (e - b > NAME_MAX_LEN) {
+        if (e - b > MIRROR_NAME_MAX_LEN) {
             fail(err, errsz, "name is too long (max 24)");
             return ESP_ERR_INVALID_ARG;
         }
@@ -647,6 +649,10 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
         }
         memcpy(new_name, raw_name + b, e - b);
         new_name[e - b] = '\0';
+        if (has_json_escapable(new_name)) {
+            fail(err, errsz, "name must not contain quotes or backslashes");
+            return ESP_ERR_INVALID_ARG;
+        }
         have_name = true;
     }
 
@@ -660,7 +666,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             fail(err, errsz, "timezone must not be empty");
             return ESP_ERR_INVALID_ARG;
         }
-        if (strlen(new_tz) > TZ_MAX_LEN) {
+        if (strlen(new_tz) > MIRROR_TZ_MAX_LEN) {
             fail(err, errsz, "timezone is too long (max 63)");
             return ESP_ERR_INVALID_ARG;
         }
@@ -701,8 +707,18 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             fail(err, errsz, "place must be a string");
             return ESP_ERR_INVALID_ARG;
         }
-        if (strlen(new_place) > PLACE_MAX_LEN) {
+        if (strlen(new_place) > MIRROR_PLACE_MAX_LEN) {
             fail(err, errsz, "place is too long (max 23)");
+            return ESP_ERR_INVALID_ARG;
+        }
+        /* Unlike the other text fields this one had no sweep at all, so a
+         * control character or a quote reached the reply and grew it. */
+        if (!is_printable_ascii(new_place)) {
+            fail(err, errsz, "place has unprintable characters");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (has_json_escapable(new_place)) {
+            fail(err, errsz, "place must not contain quotes or backslashes");
             return ESP_ERR_INVALID_ARG;
         }
         have_place = true;
@@ -779,12 +795,16 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             fail(err, errsz, "route_label must be a string");
             return ESP_ERR_INVALID_ARG;
         }
-        if (strlen(new_route_label) > ROUTE_LABEL_MAX_LEN) {
+        if (strlen(new_route_label) > MIRROR_ROUTE_LABEL_MAX_LEN) {
             fail(err, errsz, "route_label is too long (max 15)");
             return ESP_ERR_INVALID_ARG;
         }
         if (!is_printable_ascii(new_route_label)) {
             fail(err, errsz, "route_label has unprintable characters");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (has_json_escapable(new_route_label)) {
+            fail(err, errsz, "route_label must not contain quotes or backslashes");
             return ESP_ERR_INVALID_ARG;
         }
         have_route_label = true;
@@ -798,7 +818,7 @@ esp_err_t mirror_config_apply_json(const char *json, size_t len,
             fail(err, errsz, "traffic_key must be a string");
             return ESP_ERR_INVALID_ARG;
         }
-        if (strlen(new_traffic_key) > TRAFFIC_KEY_MAX_LEN) {
+        if (strlen(new_traffic_key) > MIRROR_TRAFFIC_KEY_MAX_LEN) {
             fail(err, errsz, "traffic_key is too long (max 64)");
             return ESP_ERR_INVALID_ARG;
         }

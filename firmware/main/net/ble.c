@@ -99,7 +99,15 @@ static const ble_uuid128_t s_chr_game_in = BLE_UUID128_INIT(0x05, UUID_TAIL);
 /* Protocol bounds, mirrored in the Dart protocol writer. */
 #define MAX_CMD_LEN      63
 #define MAX_PAYLOAD      32768
-#define MAX_STATUS_LEN   256
+/* The status buffer, and the one line a client reads back. Sized to the
+ * preferred ATT MTU (512, sdkconfig.defaults): a notification carries MTU-3 =
+ * 509 bytes of payload, so a reply that fits here can also be sent whole. It
+ * was 256 - enough for every reply until "get config" grew past it with the
+ * commute route fields, and a reply cut by vsnprintf is still valid-looking
+ * JSON up to the cut, so the app's parsers simply gave up in silence. The two
+ * replies that embed variable-length text, config and device, assert below
+ * that they fit. */
+#define MAX_STATUS_LEN   512
 #define MAX_DEV_NAME     32
 
 /* Simultaneous links. This must match CONFIG_BT_NIMBLE_MAX_CONNECTIONS in
@@ -381,6 +389,30 @@ static void cmd_ping(uint16_t conn)
                          esp_app_get_description()->version, wifi_ip(),
                          layout.name, panel_width(), panel_height());
 }
+
+/*
+ * The `config` reply is the longest one the device sends: five variable-length
+ * strings, a coordinate pair and a set of booleans. The validation limits in
+ * config.h bound it at 424 bytes, because each text field is escaped 1:1 -
+ * config.c rejects '"' and '\', the only two characters json_escape() expands
+ * - and the timezone, coordinate and route fields are charset-bound already.
+ * Even a value stored before that rule, with every free-text character
+ * doubling, reaches only 486 - under the 509 bytes one notification carries at
+ * the preferred ATT MTU. This is where a field that would overflow the status
+ * buffer stops the build instead of the phone.
+ */
+_Static_assert(sizeof("config {\"name\":\"\",\"timezone\":\"\",\"latitude\":\"\","
+                      "\"longitude\":\"\",\"place\":\"\",\"brightness\":255,"
+                      "\"clock12h\":false,\"temp_unit\":\"C\",\"flip180\":false,"
+                      "\"route_from\":\"\",\"route_to\":\"\",\"route_label\":\"\","
+                      "\"route_key_set\":false}") - 1
+               + MIRROR_NAME_MAX_LEN + MIRROR_TZ_MAX_LEN
+               + MIRROR_COORD_MAX_LEN + MIRROR_COORD_MAX_LEN
+               + MIRROR_PLACE_MAX_LEN
+               + MIRROR_ROUTE_MAX_LEN + MIRROR_ROUTE_MAX_LEN
+               + MIRROR_ROUTE_LABEL_MAX_LEN
+               <= MAX_STATUS_LEN - 3,
+               "the config reply must fit one notification");
 
 static void cmd_get_config(uint16_t conn)
 {
@@ -1002,9 +1034,11 @@ static void handle_cmd(uint16_t conn, char *line)
     } else if (strcmp(line, "game list") == 0) {
         /* Answered synchronously: the registry is static and the render task
          * is not involved. Format "games <id>[,<id>...]", empty list
-         * "games". Ids are short (<= 16 chars) and there are five, so the
-         * status buffer is plenty. */
-        char buf[MAX_STATUS_LEN];
+         * "games". Ids are short (see ml_game_vt.id), and the loop below
+         * truncates rather than overrun, so this is deliberately its own size
+         * and not MAX_STATUS_LEN: it is a stack array on the NimBLE host
+         * task, whose stack is 4 KB shared with the whole host. */
+        char buf[256];
         int n = snprintf(buf, sizeof(buf), "games");
         for (int i = 0; i < ml_fw_game_count(); i++) {
             const ml_game_vt *g = ml_fw_game_at(i);

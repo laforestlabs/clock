@@ -18,6 +18,29 @@ extern "C" {
 #endif
 
 /*
+ * Validation limits for the fields mirror_config_apply_json() takes. The Dart
+ * MirrorConfig.validate() mirrors them exactly; changing one means changing
+ * both.
+ *
+ * The three free-text fields (name, place, route_label) are also held to
+ * printable ASCII with no '"' or '\' - the two characters json_escape() turns
+ * into a pair. That is what keeps a field's escaped length equal to its raw
+ * length, and so what makes the BLE "get config" reply bounded by these
+ * limits; ble.c asserts its status buffer holds the result.
+ */
+#define MIRROR_TZ_MAX_LEN          63  /* POSIX TZ strings are short; 63 keeps
+                                        * snprintf margins generous */
+#define MIRROR_PLACE_MAX_LEN       23  /* fits ml_weather.place[24] */
+#define MIRROR_NAME_MAX_LEN        24  /* fits the 31-byte BLE advertising
+                                        * packet next to the flags field */
+#define MIRROR_ROUTE_MAX_LEN       31  /* "%.7g,%.7g" over the coordinate
+                                        * ranges */
+#define MIRROR_ROUTE_LABEL_MAX_LEN 15  /* fits ml_traffic.label[16] */
+#define MIRROR_TRAFFIC_KEY_MAX_LEN 64  /* a TomTom key is 32 hex characters */
+/* The longest "%.7g" of a latitude or longitude: sign, digits and separator. */
+#define MIRROR_COORD_MAX_LEN       15
+
+/*
  * Load the config from NVS, seeding any absent key from its Kconfig default.
  * Call once at boot, before sntp_time_start() so the very first synced frame
  * already uses the right zone.
@@ -129,9 +152,18 @@ esp_err_t mirror_config_factory_reset(void);
  * boolean that says the panel is mounted upside down, so every frame is
  * rotated 180 degrees on the device, applied immediately; "temp_unit" is "F"
  * or "C". "route_from" and "route_to" are "lat,lon" pairs with the latitude in
- * [-90, 90] and the longitude in [-180, 180]; "route_label" is printable ASCII
- * of at most 15 characters; "traffic_key" is printable ASCII of at most 64,
- * and the empty string clears the stored key. On success the changed fields
+ * [-90, 90] and the longitude in [-180, 180]; "place" is printable ASCII of at
+ * most 23 characters; "route_label" is printable ASCII of at most 15
+ * characters; "traffic_key" is printable ASCII of at most 64, and the empty
+ * string clears the stored key.
+ *
+ * The three fields the BLE "get config" reply echoes - name, place and
+ * route_label - additionally reject '"' and '\', the only two characters
+ * json_escape() writes as a pair. That is what keeps the reply within the
+ * status buffer ble.c asserts it fits; a field that admitted them would make
+ * the reply longer than the limits above bound it to.
+ *
+ * On success the changed fields
  * are written to NVS and applied: timezone re-points TZ via setenv/tzset,
  * coordinate or place changes kick a provider refresh so the weather relocates
  * promptly, a route or key change invalidates the current commute reading

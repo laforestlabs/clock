@@ -25,7 +25,9 @@ Firmware (ESP-IDF 5.5.2, target esp32s3, board Freenove FNK0085 / N16R8):
   `ping`, `get config`, `begin <layout|config> <len>`, data chunks, `commit`,
   `abort`, `factory reset` (erase config, WiFi credentials and the stored
   layout, then reboot unprovisioned; replies `factory reset ok|error ...`).
-  Bounds: `MAX_CMD_LEN 63`, `MAX_PAYLOAD 32768`, `MAX_STATUS_LEN 256`.
+  Bounds: `MAX_CMD_LEN 63`, `MAX_PAYLOAD 32768`, `MAX_STATUS_LEN 512` (the
+  preferred ATT MTU, so one notification carries a whole reply; the config and
+  device replies assert they fit it).
   One connection, no pairing (deliberate; same trust model as the open setup
   portal). `pong` replies `pong <version> <ip> <layout> <w> <h>`.
 - `firmware/main/net/api_server.c`: LAN API on the station interface:
@@ -121,7 +123,7 @@ value. The phone cannot dim the panel.
      `esp_restart()` after a short delay (a `vTaskDelay` of a few hundred ms
      on the host task is fine; the phone needs the status line first).
    Command strings must stay within `MAX_CMD_LEN` (63) and status lines within
-   `MAX_STATUS_LEN` (256). Note `handle_cmd` currently has an exact-match and
+   `MAX_STATUS_LEN` (512). Note `handle_cmd` currently has an exact-match and
    prefix-match mix; follow it.
 4. `firmware/main/net/api_server.c`: `/api/status` should report the live
    `panel_get_brightness()` instead of `layout.brightness`. Keep the JSON key

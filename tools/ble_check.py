@@ -253,58 +253,72 @@ async def find_mirror(address: Optional[str], name: Optional[str],
     return matches[0][0]
 
 
+async def write_check(runner: Runner, command: str, want: str, results: list,
+                      label: str) -> None:
+    """Send one write command and require its single-line reply. Never raises,
+    so a transport failure on one write cannot skip the next - in particular
+    the write that puts the device back the way it was found."""
+    try:
+        await runner.write(command)
+        deadline = time.monotonic() + runner.timeout
+        while True:
+            line = await runner.next_line(deadline)
+            if line is None:
+                results.append((label, False,
+                                "no reply within %.0fs" % runner.timeout))
+                return
+            if line.startswith(UNSOLICITED):
+                continue
+            results.append((label, line == want, shorten(line)))
+            return
+    except Exception as e:  # BleakError, a dropped link, an ATT error
+        results.append((label, False, "transport error: %s" % e))
+
+
 async def brightness_writes(runner: Runner, results: list) -> None:
     """The reversible half of the write surface: set the brightness, then put
     it back to the value and mode it had."""
-    await runner.write("get brightness")
-    deadline = time.monotonic() + runner.timeout
-    before = None
-    while before is None:
-        line = await runner.next_line(deadline)
-        if line is None:
-            results.append(("set brightness", False,
-                            "could not read the current brightness"))
-            return
-        m = re.match(r"^brightness (\d+) (auto|manual)$", line)
-        if m:
-            before = m
-        elif not line.startswith(UNSOLICITED):
-            results.append(("set brightness", False,
-                            "unexpected reply %s" % shorten(repr(line))))
-            return
+    try:
+        await runner.write("get brightness")
+        deadline = time.monotonic() + runner.timeout
+        before = None
+        while before is None:
+            line = await runner.next_line(deadline)
+            if line is None:
+                results.append(("set brightness", False,
+                                "could not read the current brightness"))
+                return
+            m = re.match(r"^brightness (\d+) (auto|manual)$", line)
+            if m:
+                before = m
+            elif not line.startswith(UNSOLICITED):
+                results.append(("set brightness", False,
+                                "unexpected reply %s" % shorten(repr(line))))
+                return
+    except Exception as e:
+        results.append(("set brightness", False, "transport error: %s" % e))
+        return
 
     value, mode = int(before.group(1)), before.group(2)
     probe = 100 if value != 100 else 120
+    await write_check(runner, "set brightness %d" % probe,
+                      "brightness ok %d" % probe, results,
+                      "set brightness %d" % probe)
 
-    await runner.write("set brightness %d" % probe)
-    deadline = time.monotonic() + runner.timeout
-    while True:
-        line = await runner.next_line(deadline)
-        if line is None:
-            results.append(("set brightness %d" % probe, False,
-                            "no reply within %.0fs" % runner.timeout))
-            break
-        if line.startswith(UNSOLICITED):
-            continue
-        results.append(("set brightness %d" % probe,
-                        line == "brightness ok %d" % probe,
-                        shorten(line)))
-        break
+    restore = ("set brightness auto" if mode == "auto"
+               else "set brightness %d" % value)
+    want = ("brightness ok auto" if mode == "auto"
+            else "brightness ok %d" % value)
+    await write_check(runner, restore, want, results, restore + " (restore)")
 
-    restore = "set brightness auto" if mode == "auto" else "set brightness %d" % value
-    await runner.write(restore)
-    deadline = time.monotonic() + runner.timeout
-    while True:
-        line = await runner.next_line(deadline)
-        if line is None:
-            results.append((restore + " (restore)", False,
-                            "no reply within %.0fs" % runner.timeout))
-            break
-        if line.startswith(UNSOLICITED):
-            continue
-        want = "brightness ok auto" if mode == "auto" else "brightness ok %d" % value
-        results.append((restore + " (restore)", line == want, shorten(line)))
-        break
+
+async def guarded(coro) -> tuple:
+    """A check that cannot abort the sweep: a dropped link or an ATT error is
+    that command's failure, not the end of the run."""
+    try:
+        return await coro
+    except Exception as e:
+        return False, "transport error: %s" % e
 
 
 async def run(args) -> int:
@@ -321,14 +335,17 @@ async def run(args) -> int:
         await asyncio.sleep(0.5)  # let the subscription settle
 
         for check in CHECKS:
-            ok, detail = await runner.simple(check)
+            ok, detail = await guarded(runner.simple(check))
             results.append((check.command, ok, detail))
-
-        ok, detail = await runner.scan()
-        results.append(("wifi scan", ok, detail))
 
         if args.allow_writes:
             await brightness_writes(runner, results)
+
+        # Last: an active scan sweeps every channel and the radio is shared
+        # with Wi-Fi, so nothing else is asked of the link while the sweep
+        # and its aftermath are in progress.
+        ok, detail = await guarded(runner.scan())
+        results.append(("wifi scan", ok, detail))
 
         await client.stop_notify(STATUS_UUID)
 

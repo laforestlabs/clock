@@ -38,6 +38,15 @@ void main() {
       expect(const MirrorConfig(name: 'a\nb').validate(), contains('printable'));
     });
 
+    test('rejects a device name with JSON-escapable characters', () {
+      // The firmware's config reply is bounded by these limits only while the
+      // fields it echoes exclude the two characters its JSON escaper doubles.
+      expect(const MirrorConfig(name: 'My "Mirror"').validate(),
+          contains('quotes'));
+      expect(const MirrorConfig(name: r'Back\slash').validate(),
+          contains('quotes'));
+    });
+
 
     test('rejects an empty timezone', () {
       expect(const MirrorConfig(timezone: '').validate(), isNotNull);
@@ -107,6 +116,13 @@ void main() {
     test('rejects a place longer than 23 chars', () {
       expect(MirrorConfig(place: 'X' * 24).validate(), isNotNull);
       expect(MirrorConfig(place: 'X' * 23).validate(), isNull);
+    });
+
+    test('rejects a place with non-printable or JSON-escapable characters', () {
+      expect(const MirrorConfig(place: 'Ber\nlin').validate(),
+          contains('printable'));
+      expect(const MirrorConfig(place: 'The "Place"').validate(),
+          contains('quotes'));
     });
 
     test('rejects brightness outside [0, 255]', () {
@@ -309,6 +325,13 @@ void main() {
           contains('printable'));
       expect(const MirrorConfig(trafficKey: 'k\ney').validate(),
           contains('printable'));
+    });
+
+    test('rejects a route label with JSON-escapable characters', () {
+      expect(const MirrorConfig(routeLabel: 'WOR"K').validate(),
+          contains('quotes'));
+      expect(const MirrorConfig(routeLabel: r'WO\RK').validate(),
+          contains('quotes'));
     });
 
     test('toJson carries each field only when set', () {
