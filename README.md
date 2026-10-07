@@ -103,7 +103,7 @@ The four mock variants exist to exercise the paths that break in the field:
   "brightness": 200,
   "widgets": [
     { "type": "clock", "rect": [0, 0, 62, 17],
-      "font": "digits16",
+      "font": "display16",
       "color": "#00E5FF", "align": "center" },
 
     { "type": "text", "rect": [20, 32, 42, 7],
@@ -203,19 +203,22 @@ emitter at part brightness. Measured across the stock layouts, the old 24px
 `display` masters drew at 0.29x to 0.33x and left 89 to 94 percent of their
 light in part-lit cells. Whole-multiple cuts put it at zero.
 
-There are exactly two faces to draw text with: `display-thin`, the minimal
-readable one, and `display`, the bold one. Each is a ladder from 6 to 24px, so
-picking a style is the author's call and picking the size is the box's. The
-other three families are not a style choice: `digits` is the clock and
-temperature face, whose figures are tabular so a time never reflows as its
-digits change, `wx` is the weather pictograms, and `micro` is the 3x7 score
-face a game draws into a margin too narrow for any of the ladders.
+There are two general text faces: `display-thin` and `display`. Display also
+handles clocks: its tabular numerals come from Open Sans SemiBold, aligned to
+the letters' cap height and baseline. There is no separate `digits` family or
+compatibility alias; layouts using it must select `display` instead.
+Both faces use a single-storey lowercase `g` and short descenders. The reserve
+below the baseline is `max(1, height // 8)` rows: two at 16px and three at 24px,
+leaving more of each cell for the letter body. Cell names still state the full
+height, including those tails. Capitals and figures start at row zero. The 6px
+and 7px cuts use hand-tuned pixel hints; larger cuts keep the vector design with
+explicit symmetry and baseline corrections. `python3 -m unittest tools.test_display_fonts` checks all cuts for cap height, expected symmetry,
+connected strokes, open counters, and clock metrics. These changes await live phone-and-panel review.
 
 | family | role | cuts | source |
 |---|---|---|---|
-| `display` | all text and digits | 6 to 24px | Open Sans Bold |
+| `display` | all text and digits | 6 to 48px | Open Sans Bold, SemiBold numerals |
 | `display-thin` | all text and digits | 6 to 24px | Open Sans Light |
-| `digits` | digits | 10 to 48px, tabular figures | Open Sans SemiBold |
 | `micro` | digits | 3x7, hand-drawn | for a game HUD margin |
 | `wx` | icons | one 16px scaling master | hand-drawn |
 
@@ -293,7 +296,7 @@ the widget's box and scales it the rest of the way:
 { "type": "clock", "rect": [0, 0, 64, 32], "font": "display", "fit": true }
 ```
 
-Naming an exact cut, `"font": "digits16"`, still pins that cut, so every
+Naming an exact cut, `"font": "display16"`, still pins that cut, so every
 layout written before families existed renders as it always did. Every cut is
 rasterized from Open Sans at build time by `tools/fontraster.py` into
 ASCII-art `.font` sources, so a bad glyph can be touched up by hand and
@@ -330,7 +333,7 @@ still scales continuously, since a pictogram has no strokes to smear.
 
 Width counts as much as height. Fitting on height alone was fine while every
 `fit` widget held one short string, and wrong the moment one did not: a 64x32
-clock box put `digits16` at 2x on height and then drew 104px of `09:41` into
+clock box put `display16` at 2x on height and then drew 104px of `09:41` into
 64px of box. Widgets that draw a list, `agenda` and `todo`, are still sized on
 height, because they clip each row with an ellipsis by design and fitting the
 whole widget to its longest entry would shrink every row to suit one long title.
@@ -341,15 +344,12 @@ whole widget to its longest entry would shrink every row to suit one long title.
 render the string in question:
 
 ```json
-{ "type": "clock", "rect": [0, 0, 64, 32], "font": "digits16",
+{ "type": "clock", "rect": [0, 0, 64, 32], "font": "display16",
   "fit": true, "auto_font": true }
 ```
 
-In a 64x32 box `digits16` is held to 1.28x by its 50px of width, and to 2x by
-the box's height, so whole-pixel steps draw it at 1x and fill 16 of the 32
-rows. `digits10` is narrower at 1.64x of width, which leaves the box free to
-put its height into a taller cut: with `auto_font` the engine works that out
-and draws `digits24` here, and without it the named font stands.
+With `auto_font`, the engine compares eligible cuts and chooses the one whose
+ink best fills the box. Without it, an exact cut stays pinned when it fits.
 
 Membership is decided by what a font can actually draw, not by the family it
 belongs to: a font is a candidate when it has a glyph for every character of
@@ -367,13 +367,13 @@ draw this?" would answer `display-thin9` and put the numeral 3 where the rain ic
 belongs.
 
 Neither replaces choosing a font. `fit` scales the font the widget names, so a
-`display-thin` clock stays a text face where `digits` draws tabular figures.
+`display-thin` clock keeps its light strokes and `display` its tabular figures.
 
 A box too small for the font it names falls back to the tallest cut of the
 same family that does fit, and under that to the family's shortest, clipped:
 the style is the author's choice and only the size is the box's, so resizing a
-widget never changes what its text looks like. A 5px box naming `digits16`
-draws five rows of `digits10`, not a smaller face of a different style. Only
+widget never changes what its text looks like. A 5px box naming `display16`
+draws five rows of `display6`, not a smaller face of a different style. Only
 when no cut of the family can draw the string at all, a word asked of a
 digits-only clock face, does the search widen to another family. Shrinking a
 widget past the point where text can fit degrades; it does not break.
@@ -556,9 +556,8 @@ label with weather symbols.
 
 | Font | Size | Contents |
 |---|---|---|
-| `display6` to `display24`, `display-thin6` to `display-thin24` | 6 to 24px cells | Full printable ASCII, plus a degree sign at codepoint 127. Bold and Light strokes |
+| `display6` to `display48` | 6 to 48px cells | Full printable ASCII and degree sign; Bold letters, tabular SemiBold numerals |
 | `display-thin6` to `display-thin24` | 6 to 24px cells, proportional | Full printable ASCII, plus a degree sign at codepoint 127. `display-thin9` is the default body font |
-| `digits10` to `digits48` | 10 to 48px cells | `- . /` and `0-9 :`, tabular figures, eleven cuts |
 | `micro7` | 7px cells, hand-drawn | The ten digits, `0-9`, for a HUD margin and nothing else |
 | `wx16` | 16x16 master | Ten continuously scalable weather icons in four colour planes, indexed by category |
 
@@ -567,20 +566,13 @@ Drop a font you do not use and it stops being compiled in: the build discovers
 
 One typeface everywhere is the point: body text, dates, temperatures and the
 clock share a design, differing only in size and, for the clock, in weight.
-Both families are proportional, which recovers several characters per line
-versus a fixed cell: "Standup 10:00" is 67px in `display-thin8`.
+Both families use proportional lettering. Display holds its ten numerals and
+hyphen at one common advance, so `--:--` has the same width as a real time.
+The numeral shapes use the former digits face's source, with round overshoot
+normalized to the capital-letter bounds after rasterization.
 
-`micro7` is the deliberate exception, and it is a game HUD rather than a
-typeface: a 3x7 digit costs 4px of advance, so the five figures a score can
-reach fit the 20px column beside a 10-cell board, where `digits10` would need
-44px and answer the overflow with an ellipsis. It carries the ten digits and
-no punctuation, which also keeps it out of the `auto_font` search that would
-otherwise fit it to a clock string in a narrow box.
-
-The clock faces exist so the time can suit the panel rather than the panel suiting the
-time. "09:41" is 39px in `digits10`, 50px in `digits16` and 86px in `digits32`. All
-cuts keep the placeholder `--:--` exactly as wide as a real time, so nothing reflows
-when the first SNTP sync lands.
+`micro7` remains a separate HUD face: its 3x7 figures fit narrow game margins.
+It carries no punctuation, so it cannot be selected for a clock string.
 
 Tall glyphs are written as a block rather than one long line, which is the same data
 laid out so it can be read:

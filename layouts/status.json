@@ -22,7 +22,7 @@
 
     { "type": "text", "id": "uptime",
       "rect": [0, 16, 32, 16],
-      "font": "digits", "fit": true, "bind": "system.uptime_s", "format": "%d",
+      "font": "display", "fit": true, "bind": "system.uptime_s", "format": "%d",
       "color": "#FFFFFF", "align": "center" },
 
     { "type": "text", "id": "wifi-label",

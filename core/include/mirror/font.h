@@ -58,7 +58,7 @@ typedef struct {
     const uint16_t *offsets;   /* [count] byte offset of each glyph in bitmap */
     const uint8_t  *bitmap;    /* packed glyph rows, plane-major per glyph */
     /*
-     * The style this cut belongs to, e.g. "display-thin" or "digits". A layout that
+     * The style this cut belongs to, e.g. "display-thin" or "display". A layout that
      * names a family lets the engine pick the cut that fills the box; naming
      * an individual cut still pins exactly that cut.
      */

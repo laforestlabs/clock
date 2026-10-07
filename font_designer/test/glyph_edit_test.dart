@@ -87,7 +87,8 @@ void main() {
     repo = Directory.systemTemp.createTempSync('font-designer-edit');
     Directory('${repo.path}/fonts').createSync();
     Directory('${repo.path}/tools').createSync();
-    File('${repo.path}/tools/fontgen.py').writeAsStringSync('raise SystemExit(0)\n');
+    File('${repo.path}/tools/fontgen.py')
+        .writeAsStringSync('raise SystemExit(0)\n');
     File('${repo.path}/fonts/tiny.font').writeAsStringSync(_source);
     File('${repo.path}/fonts/tinyclock.font').writeAsStringSync(_clock);
 
@@ -231,30 +232,40 @@ void main() {
     );
   });
 
-  test('a trim keeps a clock cut tabular, hyphen and all', () async {
-    await state.selectFont(
-        state.refs.firstWhere((r) => r.name == 'tinyclock'));
-    final clock = state.font!;
-    int width(int cp) => clock.glyph(cp)!.width;
-    expect(<int>[width(0x30), width(0x31)], <int>[9, 9],
-        reason: 'the two figures came in at one cell, and both are 9 wide');
+  for (final family in ['tinyclock', 'display']) {
+    test('a trim keeps $family tabular, hyphen and all', () async {
+      if (family == 'display') {
+        File('${repo.path}/fonts/tinyclock.font').writeAsStringSync(
+          _clock
+              .replaceAll('@role     digits', '@role     text')
+              .replaceAll('@family   tinyclock', '@family   display'),
+        );
+      }
+      await state
+          .selectFont(state.refs.firstWhere((r) => r.name == 'tinyclock'));
+      final clock = state.font!;
+      int width(int cp) => clock.glyph(cp)!.width;
+      expect(<int>[width(0x30), width(0x31)], <int>[9, 9],
+          reason: 'the two figures came in at one cell, and both are 9 wide');
 
-    state.trimAllGlyphs();
+      state.trimAllGlyphs();
 
-    expect(width(0x30), 7, reason: 'held at the widest ink of the ten');
-    expect(width(0x31), 7, reason: 'and the narrow 1 keeps the same cell');
-    expect(width(0x2d), width(0x30),
-        reason: 'the placeholder hyphen is as wide as a figure, which is what '
-            'keeps "--" the width of a real time');
-    expect(width(0x2e), 1, reason: 'punctuation is cut back to its ink');
+      expect(width(0x30), 7, reason: 'held at the widest ink of the ten');
+      expect(width(0x31), 7, reason: 'and the narrow 1 keeps the same cell');
+      expect(width(0x2d), width(0x30),
+          reason:
+              'the placeholder hyphen is as wide as a figure, which is what '
+              'keeps "--" the width of a real time');
+      expect(width(0x2e), 1, reason: 'punctuation is cut back to its ink');
 
-    // The pass is a fixed point: running it again has nothing left to take.
-    expect(state.canTrimAnyGlyph, isFalse);
-    final before = clock.glyphs.map((g) => g.rows.join()).join();
-    state.trimAllGlyphs();
-    expect(clock.glyphs.map((g) => g.rows.join()).join(), before);
-    expect(state.status, contains('No blank edge columns'));
-  });
+      // The pass is a fixed point: running it again has nothing left to take.
+      expect(state.canTrimAnyGlyph, isFalse);
+      final before = clock.glyphs.map((g) => g.rows.join()).join();
+      state.trimAllGlyphs();
+      expect(clock.glyphs.map((g) => g.rows.join()).join(), before);
+      expect(state.status, contains('No blank edge columns'));
+    });
+  }
 
   test('an edit saves as the same file with one row changed', () async {
     state.togglePixel(1, 0);

@@ -154,7 +154,7 @@ ML_EXPORT int         ml_sim_font_height(int index);
 ML_EXPORT int         ml_sim_font_role(int index);
 
 /*
- * The font families, deduplicated in first-appearance order: "display-thin", "digits"
+ * The font families, deduplicated in first-appearance order: "display-thin", "display"
  * and friends, each standing for its whole ladder of cuts. The font picker
  * offers these rather than the raw cuts, because choosing a style is a
  * decision and choosing a size is a service the fit machinery provides.

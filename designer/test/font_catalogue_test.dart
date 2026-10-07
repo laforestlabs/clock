@@ -39,11 +39,11 @@ void main() {
           'display-thin8',
           'display-thin9',
           'display-thin24',
-          'digits10',
-          'digits16',
-          'digits32',
+          'display10',
+          'display16',
+          'display32',
           'wx16',
-          'digits48',
+          'display48',
           'display24',
           'display6',
         ]),
@@ -79,7 +79,6 @@ void main() {
           containsAll(<String>[
             'display',
             'display-thin',
-            'digits',
             'micro',
             'wx',
           ]));
@@ -89,7 +88,7 @@ void main() {
       };
       expect(roleByName['display'], FontRole.text);
       expect(roleByName['display-thin'], FontRole.text);
-      expect(roleByName['digits'], FontRole.digits);
+      expect(names, isNot(contains('digits')));
       expect(roleByName['wx'], FontRole.icons);
     });
 
@@ -106,9 +105,9 @@ void main() {
       expect(byName['display-thin8'], 8);
       expect(byName['display-thin9'], 9);
       expect(byName['display-thin24'], 24);
-      expect(byName['digits10'], 10);
-      expect(byName['digits16'], 16);
-      expect(byName['digits32'], 32);
+      expect(byName['display10'], 10);
+      expect(byName['display16'], 16);
+      expect(byName['display32'], 32);
       expect(byName['display24'], 24);
 
       // The rule behind those numbers: the cell is the size the name claims,
@@ -131,9 +130,9 @@ void main() {
       expect(byName['display-thin8'], FontRole.text);
       expect(byName['display-thin9'], FontRole.text);
       expect(byName['display-thin24'], FontRole.text);
-      expect(byName['digits10'], FontRole.digits);
-      expect(byName['digits16'], FontRole.digits);
-      expect(byName['digits32'], FontRole.digits);
+      expect(byName['display10'], FontRole.text);
+      expect(byName['display16'], FontRole.text);
+      expect(byName['display32'], FontRole.text);
       expect(byName['wx16'], FontRole.icons);
       expect(byName['display24'], FontRole.text);
       expect(byName['display-thin24'], FontRole.text);
@@ -151,7 +150,7 @@ void main() {
       expect(families, isNot(contains('wx')));
       expect(
         families,
-        containsAll(<String>['display', 'display-thin', 'digits']),
+        containsAll(<String>['display', 'display-thin']),
         reason: 'a clock face is still a legitimate choice for a clock',
       );
     });

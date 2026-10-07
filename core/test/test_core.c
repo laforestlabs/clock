@@ -414,11 +414,11 @@ static void test_fonts(void)
     group("fonts");
 
     const ml_font *body = ml_font_find("display-thin9");
-    const ml_font *clock = ml_font_find("digits16");
+    const ml_font *clock = ml_font_find("display16");
     const ml_font *icons = ml_font_find("wx16");
 
     CHECK(body != NULL, "display-thin9 registered");
-    CHECK(clock != NULL, "digits16 registered");
+    CHECK(clock != NULL, "display16 registered");
     CHECK(icons != NULL, "wx16 registered");
     CHECK(ml_font_find("nosuchfont") == NULL, "unknown font not found");
     CHECK(ml_font_default() != NULL, "a default font always exists");
@@ -437,10 +437,10 @@ static void test_fonts(void)
      * one 3x7 score face, one icon set. */
     CHECK(ml_font_find("display-thin8") != NULL, "display-thin8 registered");
     CHECK(ml_font_find("display-thin9") != NULL, "display-thin9 registered");
-    CHECK(ml_font_find("digits10") != NULL, "digits10 registered");
-    CHECK(ml_font_find("digits32") != NULL, "digits32 registered");
+    CHECK(ml_font_find("display10") != NULL, "display10 registered");
+    CHECK(ml_font_find("display32") != NULL, "display32 registered");
     CHECK(ml_font_find("display-thin24") != NULL, "display-thin24 registered");
-    CHECK(ml_font_find("digits48") != NULL, "digits48 registered");
+    CHECK(ml_font_find("display48") != NULL, "display48 registered");
     CHECK(ml_font_find("display24") != NULL, "display ladder top cut registered");
     CHECK(ml_font_find("display-thin24") != NULL,
           "thin display ladder top cut registered");
@@ -469,7 +469,8 @@ static void test_fonts(void)
      * "smooth".
      */
     CHECK(ml_font_is_family("display"), "display is a family");
-    CHECK(ml_font_is_family("digits"), "digits is a family");
+    CHECK(!ml_font_is_family("digits"), "digits family removed without an alias");
+    CHECK(ml_font_find("digits16") == NULL, "old digits cuts are not aliases");
     CHECK(ml_font_is_family("micro"), "micro is a family");
     CHECK(ml_font_is_family("display-thin"), "display-thin is a family");
     CHECK(ml_font_is_family("wx"), "wx is a family");
@@ -477,7 +478,7 @@ static void test_fonts(void)
     CHECK(!ml_font_is_family("display-thin9"), "a cut is not a family");
     CHECK(!ml_font_is_family("nosuch"), "an unknown name is not a family");
     CHECK(strcmp(body->family, "display-thin") == 0, "display-thin9 is in the display-thin family");
-    CHECK(strcmp(clock->family, "digits") == 0, "digits16 is in the digits family");
+    CHECK(strcmp(clock->family, "display") == 0, "display16 is in the display family");
     CHECK(strcmp(ml_font_find("micro7")->family, "micro") == 0,
           "micro7 is in the micro family");
     /*
@@ -501,7 +502,7 @@ static void test_fonts(void)
      * The score face carries the ten figures and nothing else. That is not
      * only a matter of taste: auto_font hands a widget the font whose scaled
      * ink fills its box best, out of every font that covers the string, and a
-     * 7px face beats every cut of the digits family in a narrow box. Leaving
+     * 7px face beats every cut of the display family in a narrow box. Leaving
      * the separator out is what keeps a clock from being restyled by it.
      */
     CHECK(ml_font_covers(ml_font_find("micro7"), "65535"),
@@ -516,12 +517,12 @@ static void test_fonts(void)
      * out of substitution.
      */
     CHECK(body->role == ML_FONT_TEXT, "display-thin9 is a text font");
-    CHECK(clock->role == ML_FONT_DIGITS, "digits16 is a clock face");
+    CHECK(clock->role == ML_FONT_TEXT, "display16 is a clock face");
     CHECK(icons->role == ML_FONT_ICONS, "wx16 is an icon set");
     CHECK(ml_font_find("display-thin8")->role == ML_FONT_TEXT, "display-thin8 is a text font");
     CHECK(ml_font_find("display-thin24")->role == ML_FONT_TEXT, "display-thin24 is a text font");
-    CHECK(ml_font_find("digits10")->role == ML_FONT_DIGITS, "digits10 is a clock face");
-    CHECK(ml_font_find("digits32")->role == ML_FONT_DIGITS, "digits32 is a clock face");
+    CHECK(ml_font_find("display10")->role == ML_FONT_TEXT, "display10 is a clock face");
+    CHECK(ml_font_find("display32")->role == ML_FONT_TEXT, "display32 is a clock face");
     CHECK(ml_font_find("micro7")->role == ML_FONT_DIGITS, "micro7 is a numerals face");
     CHECK(ml_font_covers(icons, "23"),
           "an icon set covers the digits, which is why coverage alone cannot judge");
@@ -545,17 +546,17 @@ static void test_fonts(void)
     }
 
     /* The new clock faces must keep the placeholder-width property too. */
-    const ml_font *clock10 = ml_font_find("digits10");
-    const ml_font *clock32 = ml_font_find("digits32");
+    const ml_font *clock10 = ml_font_find("display10");
+    const ml_font *clock32 = ml_font_find("display32");
     if (clock10 && clock32) {
         CHECK(ml_text_width(clock10, "--:--", 1) == ml_text_width(clock10, "09:41", 1),
-              "digits10 placeholder matches real time width");
+              "display10 placeholder matches real time width");
         CHECK(ml_text_width(clock32, "--:--", 1) == ml_text_width(clock32, "09:41", 1),
-              "digits32 placeholder matches real time width");
+              "display32 placeholder matches real time width");
         CHECK(ml_text_width(clock10, "09:41", 1) < ml_text_width(clock, "09:41", 1),
-              "digits10 is narrower than digits16");
+              "display10 is narrower than display16");
         CHECK(ml_text_width(clock32, "09:41", 1) > ml_text_width(clock, "09:41", 1),
-              "digits32 is wider than digits16");
+              "display32 is wider than display16");
     }
 
     if (!body || !clock) return;
@@ -572,8 +573,8 @@ static void test_fonts(void)
           "clock placeholder matches real time width");
 
     /* Characters with no glyph in a font must be skipped, not indexed out of
-     * range. digits16 has no letters at all. */
-    CHECK(ml_text_width(clock, "abc", 1) == 0, "missing glyphs contribute no width");
+     * range. The compact HUD face has no letters. */
+    CHECK(ml_text_width(ml_font_find("micro7"), "abc", 1) == 0, "missing glyphs contribute no width");
 
     ml_canvas c;
     ml_canvas_init(&c, 32, 8, NULL);
@@ -797,9 +798,9 @@ static void test_fit(void)
     static const char doc[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":["
-        "{\"type\":\"text\",\"rect\":[0,0,64,10],\"text\":\"8\",\"font\":\"digits10\","
+        "{\"type\":\"text\",\"rect\":[0,0,64,10],\"text\":\"8\",\"font\":\"display10\","
         "\"color\":\"#FFFFFF\",\"fit\":true},"
-        "{\"type\":\"text\",\"rect\":[0,10,64,30],\"text\":\"8\",\"font\":\"digits10\","
+        "{\"type\":\"text\",\"rect\":[0,10,64,30],\"text\":\"8\",\"font\":\"display10\","
         "\"color\":\"#FFFFFF\",\"fit\":true}"
         "]}";
 
@@ -939,7 +940,7 @@ static void test_fit_continuous(void)
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,%d],"
-                 "\"text\":\"8\",\"font\":\"digits\",\"color\":\"#FFFFFF\","
+                 "\"text\":\"8\",\"font\":\"display\",\"color\":\"#FFFFFF\","
                  "\"fit\":true}]}",
                  box_h);
         ml_canvas c;
@@ -1029,12 +1030,12 @@ static void test_family_pick(void)
     static const char tall[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char squat[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,13],"
-        "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
 
     ml_canvas a, b;
@@ -1054,20 +1055,20 @@ static void test_family_pick(void)
     static const char pinned[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,13],"
-        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     if (!render_doc(pinned, 64, 64, &a)) { CHECK(false, "pinned doc parses"); return; }
-    CHECK(ink_rows(&a, 64, 64) == ml_font_find("digits10")->height,
+    CHECK(ink_rows(&a, 64, 64) == ml_font_find("display10")->baseline,
           "a pinned cut draws at its own size, on a whole multiple");
     ml_canvas_free(&a);
 
     /* A family that cannot carry the string is never picked for it. An agenda
-     * names no sample to measure, so only full text fonts qualify: "digits"
+     * names no sample to measure, so only full text fonts qualify: "display"
      * has no business here and the default body font stands in. */
     static const char agenda[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
+        "\"font\":\"micro\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
     static const char agenda_default[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,32],"
@@ -1136,21 +1137,21 @@ static void test_auto_font(void)
     group("automatic font choice");
 
     /*
-     * A 64x32 clock box. A named digits10 is held to 1.6x by its width and
+     * A 64x32 clock box. A named display10 is held to 1.6x by its width and
      * inks 16 rows. auto_font shops every family and finds the cut whose
-     * scaled ink fills the box best: digits12 at 1.45x, 18 rows. Measured in
+     * scaled ink fills the box best: display12 at 1.45x, 18 rows. Measured in
      * ink rather than cells, so a text cut whose digits sit in a padded cell
      * cannot outbid a clock face for a clock string.
      */
     static const char named[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char automatic[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"auto_font\":true}]}";
 
     ml_canvas a, b;
@@ -1234,16 +1235,16 @@ static void test_resolve_font(void)
     CHECK(ml_sim_widget_scale(s, 0) == 2 * ML_SCALE_1X,
           "a pinned scale reports itself");
 
-    /* digits16 is held to 1.18x by its width in this box. With smooth off the
+    /* display16 is held to 1.18x by its width in this box. With smooth off the
      * fitted scale floors to a whole multiple; with the font left to decide it
      * keeps the fraction and anti-aliases. Same cut, same box, one toggle. */
     static const char fitted[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"smooth\":false}]}";
     CHECK(ml_sim_load(s, fitted) == 1, "fitted doc loads");
-    CHECK(strcmp(ml_sim_widget_font(s, 0), "digits16") == 0,
+    CHECK(strcmp(ml_sim_widget_font(s, 0), "display16") == 0,
           "a named cut keeps its name under fit");
     CHECK(ml_sim_widget_scale(s, 0) == ML_SCALE_1X,
           "smooth off floors the fitted scale");
@@ -1251,7 +1252,7 @@ static void test_resolve_font(void)
     static const char fitted_smooth[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     CHECK(ml_sim_load(s, fitted_smooth) == 1, "smooth fitted doc loads");
     CHECK(ml_sim_widget_scale(s, 0) >= ML_SCALE_1X &&
@@ -1267,11 +1268,11 @@ static void test_resolve_font(void)
     static const char automatic[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true,\"auto_font\":true}]}";
     CHECK(ml_sim_load(s, automatic) == 1, "auto_font doc loads");
     const ml_font *picked = ml_font_find(ml_sim_widget_font(s, 0));
-    CHECK(picked != NULL && strcmp(picked->name, "digits10") != 0,
+    CHECK(picked != NULL && strcmp(picked->name, "display10") != 0,
           "auto_font reports the font it upgraded to");
     if (picked) {
         ml_canvas probe, drawn;
@@ -1294,17 +1295,17 @@ static void test_resolve_font(void)
     static const char family_wide[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-        "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char family_short[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,12],"
-        "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
 
     CHECK(ml_sim_load(s, family_wide) == 1, "wide family doc loads");
     const ml_font *wide = ml_font_find(ml_sim_widget_font(s, 0));
-    CHECK(wide != NULL && strncmp(wide->name, "digits", 6) == 0,
+    CHECK(wide != NULL && strcmp(wide->family, "display") == 0,
           "a family resolves to one of its own cuts");
 
     CHECK(ml_sim_load(s, family_short) == 1, "short family doc loads");
@@ -1322,11 +1323,11 @@ static void test_resolve_font(void)
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,%d],"
-                 "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+                 "\"font\":\"display16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
                  "\"fit\":true}]}",
                  bh);
         CHECK(ml_sim_load(s, doc) == 1, "resize doc loads");
-        CHECK(strncmp(ml_sim_widget_font(s, 0), "digits", 6) == 0,
+        CHECK(strcmp(ml_font_find(ml_sim_widget_font(s, 0))->family, "display") == 0,
               "a resize never leaves the named family");
     }
 
@@ -1354,10 +1355,8 @@ static void test_resolve_font(void)
  * were broken while the pin filtered candidates: each step chose a different
  * cut, and the step where nothing fitted dropped to the shortest cut at 1x.
  *
- * digits24 is what a 64x32 box fits now that the cuts carry no blank columns
- * at their edges: the tabular clock at that size is 63px of the box's 64, so
- * the tallest cut that fits is one rung above the digits18 this box used to
- * settle for.
+ * The chosen cut must stay fixed as the scale slider changes, regardless
+ * of the current catalogue metrics.
  */
 static void test_pinned_scale(void)
 {
@@ -1368,15 +1367,17 @@ static void test_pinned_scale(void)
     if (!s) return;
 
     char doc[512];
+    char selected[64] = {0};
     for (int n = 1; n <= 8; n++) {
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,32],"
-                 "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+                 "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
                  "\"scale\":%d}]}",
                  n);
         CHECK(ml_sim_load(s, doc) == 1, "pinned family doc loads");
-        CHECK(strcmp(ml_sim_widget_font(s, 0), "digits24") == 0,
+        if (n == 1) snprintf(selected, sizeof(selected), "%s", ml_sim_widget_font(s, 0));
+        CHECK(strcmp(ml_sim_widget_font(s, 0), selected) == 0,
               "the cut for the box is stable across the slider");
         CHECK(ml_sim_widget_scale(s, 0) == n * ML_SCALE_1X,
               "the pinned scale stands at every step");
@@ -1388,7 +1389,7 @@ static void test_pinned_scale(void)
         snprintf(doc, sizeof(doc),
                  "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
                  "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,40,20],"
-                 "\"font\":\"digits\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+                 "\"font\":\"display\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
                  "\"scale\":%d}]}",
                  n);
         CHECK(ml_sim_load(s, doc) == 1, "narrow doc loads");
@@ -1406,18 +1407,18 @@ static void test_scale_floor(void)
     /*
      * A box shorter than every cut of the named family draws the family's
      * shortest, clipped. The floor is family-relative: a clock asking for
-     * digits16 means digits, and five rows of digits10 keeps that style
+     * display16 means display, and five rows of display6 keeps that style
      * where a switch to display-thin8, the shortest text cut, would not.
      */
     static const char under_floor[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
-        "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char family_floor[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,5],"
-        "\"font\":\"digits10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display10\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     static const char other_style[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
@@ -1450,24 +1451,23 @@ static void test_scale_floor(void)
     static const char ten_high[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,10],"
-        "\"font\":\"digits32\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
+        "\"font\":\"display32\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\","
         "\"fit\":true}]}";
     if (!render_doc(ten_high, 64, 64, &a)) {
         CHECK(false, "ten_high parses");
         return;
     }
-    CHECK(ink_rows(&a, 64, 64) == 10, "a 10px box takes the 10px face, not the floor");
+    CHECK(ink_rows(&a, 64, 64) == ml_font_find("display10")->baseline, "a 10px box takes the 10px face, not the floor");
     ml_canvas_free(&a);
 
     /*
      * A word in a box too small for the named face has to keep its letters.
-     * digits10 fits this 12px box on height and carries no letters at all, so
-     * height-only substitution chose it and drew a completely empty widget.
+     * The merged display family must provide a smaller full-text cut.
      */
     static const char word[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"text\",\"rect\":[0,0,64,12],\"text\":\"Cloudy\","
-        "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
+        "\"font\":\"display32\",\"color\":\"#FFFFFF\",\"fit\":true}]}";
     if (!render_doc(word, 64, 64, &a)) {
         CHECK(false, "word parses");
         return;
@@ -1493,7 +1493,7 @@ static void test_scale_floor(void)
     static const char list_named[] =
         "{\"canvas\":{\"width\":64,\"height\":64},\"background\":\"#000000\","
         "\"widgets\":[{\"type\":\"agenda\",\"rect\":[0,0,64,14],\"max_items\":2,"
-        "\"font\":\"digits32\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
+        "\"font\":\"micro7\",\"color\":\"#FFFFFF\",\"show_time\":true}]}";
     if (!render_doc(list_named, 64, 64, &a)) { CHECK(false, "list doc parses"); return; }
     CHECK(ink_total(&a, 64, 64) > 0, "an agenda in a 14px box draws");
 
@@ -1704,13 +1704,13 @@ static void test_ffi(void)
         const char *name = ml_sim_font_name(i);
         if (strcmp(name, "display-thin8") == 0)
             saw_text = ml_sim_font_role(i) == (int)ML_FONT_TEXT;
-        if (strcmp(name, "digits10") == 0)
+        if (strcmp(name, "micro7") == 0)
             saw_digits = ml_sim_font_role(i) == (int)ML_FONT_DIGITS;
         if (strcmp(name, "wx16") == 0)
             saw_icons = ml_sim_font_role(i) == (int)ML_FONT_ICONS;
     }
     CHECK(saw_text, "a text cut crosses the boundary as text");
-    CHECK(saw_digits, "a clock cut crosses the boundary as digits");
+    CHECK(saw_digits, "the HUD cut crosses the boundary as digits");
     CHECK(saw_icons, "wx16 crosses the boundary as an icon set");
     CHECK(ml_sim_font_role(9999) == (int)ML_FONT_TEXT, "a bad index reads as text");
     CHECK(ml_sim_type_count() == 17, "all widget types enumerated");
@@ -1845,8 +1845,7 @@ static void test_display_settings(void)
 
     /*
      * The clock setting reaches the panel through the model, observable via
-     * the sim: digits16 has no letters, so a 12-hour face ("10:07 PM") falls
-     * back to a text cut while a 24-hour face ("22:07") stays on digits.
+     * the sim: both 12-hour and 24-hour clocks use the merged display face.
      */
     ml_sim *s = ml_sim_create();
     CHECK(s != NULL, "sim created");
@@ -1854,12 +1853,12 @@ static void test_display_settings(void)
         static const char clockdoc[] =
             "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
             "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,16],"
-            "\"font\":\"digits16\",\"color\":\"#FFFFFF\"}]}";
+            "\"font\":\"display16\",\"color\":\"#FFFFFF\"}]}";
         CHECK(ml_sim_load(s, clockdoc) == 1, "clock-only doc loads");
 
         /*
          * The clock setting reaches the panel through the model. Both faces
-         * stay on the digits font (the 12-hour face is plain "%l:%M", no
+         * stay on the display font (the 12-hour face is plain "%l:%M", no
          * AM/PM), but the evening mock renders differently: 10:07 vs 22:07.
          */
         ml_sim_set_variant(s, ML_MOCK_EVENING);   /* 22:07 */
@@ -1872,8 +1871,8 @@ static void test_display_settings(void)
         const uint64_t h24 = r24 ? fnv1a(r24, (size_t)rsz) : 0;
         CHECK(rsz > 0 && h12 != 0 && h24 != 0, "clock renders in both modes");
         CHECK(h12 != h24, "12-hour and 24-hour faces differ (10:07 vs 22:07)");
-        CHECK(strcmp(ml_sim_widget_font(s, 0), "digits16") == 0,
-              "both clock faces stay on the digits font");
+        CHECK(strcmp(ml_sim_widget_font(s, 0), "display16") == 0,
+              "both clock faces stay on the display font");
 
         /* The 24-hour choice survives a data-variant switch, which re-mocks
          * the model; a reset to the 12-hour default would show 10:07 again. */
@@ -1886,7 +1885,7 @@ static void test_display_settings(void)
         static const char pinned[] =
             "{\"canvas\":{\"width\":64,\"height\":32},\"background\":\"#000000\","
             "\"widgets\":[{\"type\":\"clock\",\"rect\":[0,0,64,16],"
-            "\"font\":\"digits16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\"}]}";
+            "\"font\":\"display16\",\"format\":\"%H:%M\",\"color\":\"#FFFFFF\"}]}";
         CHECK(ml_sim_load(s, pinned) == 1, "pinned doc loads");
         ml_sim_set_clock12h(s, 1);
         const uint8_t *rp = ml_sim_render_rgba(s);
@@ -2188,7 +2187,7 @@ static void test_air(void)
         "{\"name\":\"a\",\"canvas\":{\"width\":40,\"height\":20},"
         "\"background\":\"#000000\",\"widgets\":["
         "{\"type\":\"air\",\"rect\":[0,0,40,20],"
-        "\"font\":\"display-thin\",\"fit\":true,\"line_gap\":1,"
+        "\"font\":\"display-thin12\",\"scale\":1,\"line_gap\":1,"
         "\"color\":\"#FFFFFF\",\"accent\":\"#66D9EF\"}]}";
 
     ml_layout l;

@@ -20,36 +20,40 @@ which is what makes the family proportional. The FreeType size for a cell is
 the largest whose ascent plus descent still fits the cell, so a
 display-thin14 cut uses every row it is given rather than arriving letterboxed.
 
-The cell a cut asks for is the cell it gets: @height is the number in the
-name, so a display14 cut is fourteen rows and a layout that pins it gets the
-size the name claims. The rows under the baseline that only y, q, j, g, p and
-the brackets use are part of that cell rather than slack taken back from it:
-a cut named for a box is the size of the box, and a line of prose keeps the
-reserve the face's own descenders need.
+With --compact, the body occupies the cell above a short descender reserve
+(max(1, height // 8) rows). Capitals and figures fill row zero through
+the baseline; round overshoot does not consume the descender reserve. The
+6/7px cuts use explicit optical hints to keep bowls open and strokes connected.
+Lowercase g uses a single bowl, and y continues the arms of v with a short tail.
+--numerals takes the numeral source face, aligns its figures to the capitals,
+and holds digits and the clock placeholder hyphen to a shared advance.
 
 A glyph whose design is mirror-symmetric comes out exactly symmetric. FreeType
 places glyphs at a fractional origin, and thresholding that render decides
 which stem keeps a column, so a raw 0 has a 2px left stem and a 3px right one.
-Each glyph is probed for symmetry at 8x resolution (see symmetry_axes), and a
-glyph that passes is averaged with its mirror before thresholding. Designs
-that are asymmetric on purpose, like the smaller top bowl of an 8, fail the
-probe and are left alone.
+The display faces declare the expected axes for symmetric letters, figures
+and symbols explicitly. Other glyphs are probed at high resolution (see
+symmetry_axes). Matching coverage is averaged before thresholding; an 8 has
+left/right symmetry but retains its different upper and lower bowls.
 
 Usage:
     python3 tools/fontraster.py <ttf> <name-prefix> <role> <height...> \
         [--family NAME] [--codepoints text|digits] [--threshold N]
 
-Example (the commands that build the shipped catalogue):
-    python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Semibold.ttf \
-        digits digits 10 12 14 16 18 20 24 28 32 40 48 --family digits --smooth no
+Example (rebuild the display catalogue, then review and compile):
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Bold.ttf \
-        display text 6 7 8 9 10 11 12 14 16 18 20 24 --family display --smooth no
+        display text 6 7 8 9 10 11 12 14 16 18 20 24 28 32 40 48 \
+        --family display --smooth no --compact \
+        --numerals /usr/share/fonts/open-sans/OpenSans-Semibold.ttf
     python3 tools/fontraster.py /usr/share/fonts/open-sans/OpenSans-Light.ttf \
-        display-thin text 6 7 8 9 10 11 12 14 16 18 20 24 --family display-thin --smooth no
+        display-thin text 6 7 8 9 10 11 12 14 16 18 20 24 \
+        --family display-thin --smooth no --compact
+    python3 tools/fontreview.py
+    python3 tools/fontgen.py
 
-Every family is passed --smooth no: each is a ladder of set sizes, and a
-fractional scale would split a 1px stem across two panel cells. Regenerating
-these reproduces the committed .font sources byte for byte.
+The .font sources remain editable. A rasterizer rerun replaces manual edits;
+fontreview reapplies measured repairs and every write is journalled.
+
 """
 
 from __future__ import annotations
@@ -67,8 +71,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # tools run as scripts and are also importable as package modules.
 try:
     from fontjournal import record, record_run, relpath
+    from fontreview import holes
 except ImportError:                        # pragma: no cover
     from tools.fontjournal import record, record_run, relpath
+    from tools.fontreview import holes
 FONT_SRC_DIR = ROOT / "fonts"
 
 # Codepoint 127 is DEL and unused by the runtime, so every font here carries
@@ -102,7 +108,7 @@ def ink_metrics(font: ImageFont.FreeTypeFont, probe: str) -> tuple[int, int]:
     draw = ImageDraw.Draw(img)
     draw.text((0, 150), probe, font=font, fill=255, anchor="ls")
     bbox = img.getbbox()
-    return 150 - bbox[1], bbox[3] - 150
+    return (150 - bbox[1], bbox[3] - 150) if bbox else (0, 0)
 
 
 def fit_size(path: str, cell: int, probe: str) -> tuple[ImageFont.FreeTypeFont, int]:
@@ -111,7 +117,7 @@ def fit_size(path: str, cell: int, probe: str) -> tuple[ImageFont.FreeTypeFont, 
     Returns the font and the baseline row for that cell: the cap height,
     nudged to center any spare row.
     """
-    for size in range(cell + 4, 0, -1):
+    for size in range(cell * 2, 0, -1):
         font = ImageFont.truetype(path, size)
         cap, desc = ink_metrics(font, probe)
         if cap + desc <= cell:
@@ -124,6 +130,123 @@ def fit_size(path: str, cell: int, probe: str) -> tuple[ImageFont.FreeTypeFont, 
 # symmetric Open Sans glyph mirrors within a few percent while the least
 # asymmetric letter differs by a third or more, a gap no cut size narrows.
 PROBE_SIZE = 256
+
+# These are design requirements for the display faces, not guesses from a
+# vector outline. Hinting and optical compensation must not skew these shapes.
+DISPLAY_HORIZONTAL = "AHIMOTUVWXYovwx08!+-:=^_|"
+DISPLAY_VERTICAL = "HIOXox0+-:=|"
+
+# Five-row optical hints. At 6/7px, thresholding the vector face collapses
+# bowls and diagonals; even Bold must use 1px stems to keep its counters open.
+SMALL_CAPS = {
+    'A': '.#./#.#/###/#.#/#.#', 'B': '##./#.#/##./#.#/##.',
+    'C': '.##/#../#../#../.##', 'D': '##./#.#/#.#/#.#/##.',
+    'E': '###/#../##./#../###', 'F': '###/#../##./#../#..',
+    'G': '.##/#../#.#/#.#/.##', 'H': '#.#/#.#/###/#.#/#.#',
+    'I': '###/.#./.#./.#./###', 'J': '..#/..#/..#/#.#/.#.',
+    'K': '#.#/#.#/##./#.#/#.#', 'L': '#../#../#../#../###',
+    'M': '#...#/##.##/#.#.#/#...#/#...#',
+    'N': '#...#/##..#/#.#.#/#..##/#...#',
+    'O': '.#./#.#/#.#/#.#/.#.', 'P': '##./#.#/##./#../#..',
+    'Q': '.#./#.#/#.#/#.#/.#.', 'R': '##./#.#/##./#.#/#.#',
+    'S': '.##/#../.#./..#/##.', 'T': '###/.#./.#./.#./.#.',
+    'U': '#.#/#.#/#.#/#.#/###', 'V': '#...#/#...#/.#.#./.#.#./..#..',
+    'W': '#...#/#...#/#.#.#/#.#.#/.#.#.',
+    'X': '#...#/.#.#./..#../.#.#./#...#',
+    'Y': '#.#/#.#/.#./.#./.#.', 'Z': '###/..#/.#./#../###',
+}
+SMALL_DIGITS = {
+    '0': '###/#.#/#.#/#.#/###', '1': '.#./##./.#./.#./###',
+    '2': '##./..#/.#./#../###', '3': '##./..#/.#./..#/##.',
+    '4': '#.#/#.#/###/..#/..#', '5': '###/#../##./..#/##.',
+    '6': '.##/#../###/#.#/###', '7': '###/..#/.#./.#./.#.',
+    '8': '###/#.#/###/#.#/###', '9': '###/#.#/###/..#/##.',
+}
+SMALL_LOWER = {
+    'a': '.##/#.#/#.#/###', 'c': '.##/#../#../.##',
+    'e': '.#./#.#/##./.##', 'm': '##.##/#.#.#/#.#.#/#.#.#',
+    'n': '##./#.#/#.#/#.#', 'o': '.#./#.#/#.#/.#.',
+    'r': '##./#.#/#../#..', 's': '.##/#../.##/##.',
+    'u': '#.#/#.#/#.#/.##', 'v': '#...#/#...#/.#.#./..#..',
+    'w': '#...#/#.#.#/#.#.#/.#.#.', 'x': '#.#/.#./.#./#.#',
+    'z': '###/..#/.#./###',
+}
+SMALL_ASCENDERS = {
+    'b': '#../##./#.#/#.#/##.', 'd': '..#/.##/#.#/#.#/.##',
+    'f': '.##/.#./###/.#./.#.', 'h': '#../##./#.#/#.#/#.#',
+    'i': '#/./#/#/#', 'j': '.#/../.#/.#/.#',
+    'k': '#../#.#/##./#.#/#.#', 'l': '##./.#./.#./.#./.##',
+    't': '.#./###/.#./.#./.##',
+}
+SMALL_DESCENDERS = {
+    'g': '.##/#.#/.##/..#/##.', 'p': '##./#.#/##./#../#..',
+    'q': '.##/#.#/.##/..#/..#', 'y': '#.#/#.#/.##/..#/##.',
+}
+
+
+def stretch_rows(rows, height):
+    """Nearest row centres; symmetric input stays symmetric after resizing."""
+    return [rows[min(len(rows) - 1, (2 * y + 1) * len(rows) // (2 * height))]
+            for y in range(height)]
+
+
+def display_metrics(glyphs, baseline, cell):
+    """Capitals reach row zero; only genuine descenders use the tail reserve."""
+    for cp in list(range(65, 91)) + list(range(48, 58)):
+        rows = glyphs[cp]
+        # Q keeps its tail; J is a capital, so its hook belongs above baseline.
+        body = rows[:baseline] if cp == ord('Q') else rows
+        ys = [y for y, row in enumerate(body) if '#' in row]
+        if not ys:
+            continue
+        body = stretch_rows(body[min(ys):max(ys) + 1], baseline)
+        tail = rows[baseline:] if cp == ord('Q') else ['.' * len(rows[0])] * (cell - baseline)
+        glyphs[cp] = body + tail
+    for ch in 'abcdefghiklmnorstuvwxz':
+        rows = glyphs[ord(ch)]
+        ys = [y for y, row in enumerate(rows) if '#' in row]
+        if ys and max(ys) >= baseline:
+            top = min(ys)
+            glyphs[ord(ch)] = (rows[:top] +
+                stretch_rows(rows[top:max(ys) + 1], baseline - top) +
+                ['.' * len(rows[0])] * (cell - baseline))
+    # A centered, serifed I needs equal room on both sides of the stem.
+    hrow = glyphs[ord('H')][0].strip('.')
+    stem = len(hrow) - len(hrow.lstrip('#'))
+    stem = max(1, stem)
+    serif = max(1, stem // 2)
+    width = stem + 2 * serif
+    glyphs[ord('I')] = [
+        '#' * width if y < stem or y >= baseline - stem
+        else '.' * serif + '#' * stem + '.' * serif
+        for y in range(baseline)
+    ] + ['.' * width] * (cell - baseline)
+    if cell <= 7:
+        for ch, art in {**SMALL_CAPS, **SMALL_DIGITS}.items():
+            body = stretch_rows(art.split('/'), baseline)
+            tail = ['.' * len(body[0])] * (cell - baseline)
+            if ch == 'Q':
+                tail[0] = '..#'
+            glyphs[ord(ch)] = body + tail
+        for ch, art in SMALL_LOWER.items():
+            rows = art.split('/')
+            blank = '.' * len(rows[0])
+            glyphs[ord(ch)] = [blank] * (baseline - 4) + rows + [blank] * (cell - baseline)
+        for ch, art in SMALL_ASCENDERS.items():
+            body = stretch_rows(art.split('/'), baseline)
+            tail = ['.' * len(body[0])] * (cell - baseline)
+            if ch == 'j':
+                tail[0] = '#.'
+            glyphs[ord(ch)] = body + tail
+        for ch, art in SMALL_DESCENDERS.items():
+            rows = art.split('/')
+            glyphs[ord(ch)] = ['.' * len(rows[0])] * (baseline - 4) + rows
+    # The light 6 can lose the diagonal that seals its bowl. A rotated 9
+    # supplies a conventional 6 with this cut's own weight and roundness.
+    six = glyphs[ord('6')]
+    if not holes([[v == '#' for v in row] for row in six]):
+        nine = glyphs[ord('9')]
+        glyphs[ord('6')] = [row[::-1] for row in nine[:baseline][::-1]] + nine[baseline:]
 
 
 def symmetry_axes(path: str, ch: str) -> tuple[bool, bool]:
@@ -200,6 +323,98 @@ def render_gray(font: ImageFont.FreeTypeFont, ch: str, cell: int, baseline: int,
     draw.text((x_off, baseline), ch, font=font, fill=255, anchor="ls")
     mirror_average(img, *sym)
     return img, advance
+
+
+def compact_font(path: str, cell: int):
+    """Spend roughly one eighth of the cell on short, recognizable tails."""
+    descent = max(1, cell // 8)
+    target = cell - descent
+    for size in range(cell * 2, 0, -1):
+        font = ImageFont.truetype(path, size)
+        cap, _ = ink_metrics(font, "H09")
+        if cap <= target:
+            return font, target
+    raise ValueError(f"no font fits {cell}px")
+
+
+def readable_lowercase(glyphs, baseline, cell):
+    """A single-storey g, and a visible dot on i/j even in the smallest cuts."""
+    if ord('o') not in glyphs:
+        return
+    if cell > 7:
+        # A y has the same arms as v. Continue their meeting point with a
+        # short leftward tail instead of averaging away the thin connection.
+        vee = glyphs[ord('v')]
+        last = next(row for row in reversed(vee[:baseline]) if '#' in row)
+        xs = [x for x, value in enumerate(last) if value == '#']
+        tail = []
+        for depth in range(1, cell - baseline + 1):
+            lo, hi = max(0, min(xs) - depth), max(0, max(xs) - depth)
+            if depth == cell - baseline:
+                lo = max(0, lo - 1)
+            tail.append('.' * lo + '#' * (hi - lo + 1) + '.' * (len(last) - hi - 1))
+        glyphs[ord('y')] = vee[:baseline] + tail
+    # q already has a single bowl and a connected right-hand descender.
+    # Give it a leftward hook instead of q's straight tail.
+    bowl = glyphs[ord('q')]
+    width = len(bowl[0])
+    out = list(bowl)
+    xs = [x for row in bowl[baseline:] for x, v in enumerate(row) if v == '#']
+    if not xs:
+        xs = [x for x, v in enumerate(bowl[baseline - 1]) if v == '#']
+    if xs:
+        right = max(xs)
+        stem = max(1, len(set(xs)))
+        for y in range(baseline, cell - 1):
+            out[y] = '.' * (right - stem + 1) + '#' * stem + '.' * (width - right - 1)
+        start = max(0, right - max(stem + 1, width * 2 // 3))
+        out[-1] = '.' * start + '#' * (right - start + 1) + '.' * (width - right - 1)
+        glyphs[ord('g')] = out
+    for cp in (ord('i'), ord('j')):
+        rows = glyphs[cp]
+        top = next((y for y, row in enumerate(rows) if '#' in row), None)
+        if top is not None and baseline >= 4:
+            gap = top + max(1, cell // 10)
+            if gap < baseline - 1:
+                rows[gap] = '.' * len(rows[0])
+
+
+def align_numerals(glyphs):
+    """Suppress round overshoot so figures occupy the same rows as capitals."""
+    cap = [y for y, row in enumerate(glyphs[ord('H')]) if '#' in row]
+    top, bottom = min(cap), max(cap)
+    for cp in range(48, 58):
+        rows = glyphs[cp]
+        ink = [y for y, row in enumerate(rows) if '#' in row]
+        first, last = min(ink), max(ink)
+        height = bottom - top + 1
+        body = [rows[first + min(last - first, (y * (last - first + 1)) // height)]
+                for y in range(height)]
+        # At five/six rows FreeType closes 6 and 8's counters. Hint these
+        # bowls explicitly: a filled figure cannot be read on the panel.
+        if height in (5, 6) and cp in (54, 56):
+            body = (['.##', '#..', '###', '#.#', '###'] if cp == 54 else
+                    ['###', '#.#', '###', '#.#', '###'])
+            if height == 6:
+                body.insert(-1, '#.#')
+            width = len(rows[0])
+            body = [row.center(width, '.') for row in body]
+        blank = '.' * len(rows[0])
+        glyphs[cp] = [blank] * top + body + [blank] * (len(rows) - bottom - 1)
+
+
+def trim_glyphs(glyphs, tabular):
+    """Drop redundant side bearings; keep figures and placeholder tabular."""
+    group = [cp for cp in glyphs if 48 <= cp <= 57 or cp == 45] if tabular else []
+    groups = [group] if group else []
+    groups += [[cp] for cp in glyphs if cp not in group]
+    for cps in groups:
+        ink = [x for cp in cps for row in glyphs[cp]
+               for x, value in enumerate(row) if value == '#']
+        if ink:
+            lo, hi = min(ink), max(ink) + 1
+            for cp in cps:
+                glyphs[cp] = [row[lo:hi] for row in glyphs[cp]]
 
 
 def has_ink(px, advance: int, cell: int, t: int) -> bool:
@@ -365,6 +580,9 @@ def main() -> None:
                     help="source-pixel gap between glyph advances")
     ap.add_argument("--tabular-digits", action="store_true",
                     help="give digits and '-' one common advance in a text face")
+    ap.add_argument("--numerals", help="TTF for baseline-aligned tabular numerals")
+    ap.add_argument("--compact", action="store_true",
+                    help="short descenders and a single-storey lowercase g")
     ap.add_argument("--smooth", choices=["yes", "no"], default="yes",
                     help="whether a fitted scale may anti-alias. 'no' makes "
                          "the cut a set size: fit floors to a whole multiple "
@@ -381,21 +599,27 @@ def main() -> None:
     probe = "H09" if args.role == "digits" else "Hgyjq"
     # Symmetry is a property of the design, not of the cut size, so it is
     # probed once per glyph rather than once per cut.
-    sym_cache: dict[str, tuple[bool, bool]] = {}
+    sym_cache: dict[tuple[str, str], tuple[bool, bool]] = {}
 
     for cell in sorted(args.heights):
         nominal = args.threshold if args.threshold is not None \
             else (80 if cell <= 11 else 128)
         font, baseline = fit_size(args.ttf, cell, probe)
+        if args.compact:
+            font, baseline = compact_font(args.ttf, cell)
+        numeral_font = font
+        if args.numerals:
+            cap, _ = ink_metrics(font, "H")
+            numeral_font, _ = fit_size(args.numerals, cap, "H09")
 
         # A clock face takes tabular figures: every digit the same advance, so
         # a time or a placeholder never reflows as its digits change. Without
         # this Open Sans gives '1' a narrower cell than '0', and "--:--" does
         # not hold the width of the time it stands in for.
         tabular = 0
-        if args.role == "digits" or args.tabular_digits:
+        if args.role == "digits" or args.tabular_digits or args.numerals:
             tabular = max(
-                round(font.getlength(chr(cp))) for cp in cps if 48 <= cp <= 57
+                round(numeral_font.getlength(chr(cp))) for cp in cps if 48 <= cp <= 57
             )
 
         # Every glyph is drawn once, unthresholded, and the cut is made
@@ -404,16 +628,34 @@ def main() -> None:
         gray: dict[int, tuple] = {}
         for cp in cps:
             ch = DEGREE_CHAR if cp == DEGREE_SLOT else chr(cp)
-            if ch not in sym_cache:
-                sym_cache[ch] = symmetry_axes(args.ttf, ch)
-            sym = sym_cache[ch]
+            numeric = args.numerals and 45 <= cp <= 58
+            face = numeral_font if numeric else font
+            source = args.numerals if numeric else args.ttf
+            key = (source, ch)
+            if key not in sym_cache:
+                sym_cache[key] = symmetry_axes(source, ch)
+            sym = sym_cache[key]
+            if args.compact:
+                sym = (ch in DISPLAY_HORIZONTAL or sym[0],
+                       ch in DISPLAY_VERTICAL or sym[1])
+            # Render the full tail first, then compress just the rows below
+            # the baseline. This prevents clipping j/y and enlarges the body.
+            _, desc = ink_metrics(face, ch)
+            render_cell = max(cell, baseline + desc) if args.compact else cell
             if tabular and (48 <= cp <= 57 or cp == 45):
-                own = round(font.getlength(ch))
-                gray[cp] = render_gray(font, ch, cell, baseline,
+                own = round(face.getlength(ch))
+                gray[cp] = render_gray(face, ch, render_cell, baseline,
                                        advance=tabular,
                                        x_off=(tabular - own) // 2, sym=sym)
             else:
-                gray[cp] = render_gray(font, ch, cell, baseline, sym=sym)
+                gray[cp] = render_gray(face, ch, render_cell, baseline, sym=sym)
+            if render_cell > cell:
+                img, advance = gray[cp]
+                tail = img.crop((0, baseline, advance, render_cell)).resize(
+                    (advance, cell - baseline), Image.Resampling.BOX)
+                img = img.crop((0, 0, advance, cell))
+                img.paste(tail, (0, baseline))
+                gray[cp] = img, advance
 
         threshold = cut_threshold(gray, nominal, cell)
         glyphs = {cp: bits(px.load(), adv, cell, threshold)
@@ -421,6 +663,18 @@ def main() -> None:
 
         if args.distinguish:
             glyphs = {cp: distinguish(cp, rows) for cp, rows in glyphs.items()}
+        if args.numerals:
+            align_numerals(glyphs)
+        if args.compact:
+            display_metrics(glyphs, baseline, cell)
+            readable_lowercase(glyphs, baseline, cell)
+            if tabular:
+                # Optical hints may change a figure's width, but time and
+                # --:-- must still occupy exactly the same advance.
+                width = max(len(glyphs[cp][0]) for cp in range(48, 58))
+                for cp in [45, *range(48, 58)]:
+                    glyphs[cp] = [row.center(width, '.') for row in glyphs[cp]]
+        trim_glyphs(glyphs, bool(tabular))
 
         name = f"{args.prefix}{cell}"
         dest = FONT_SRC_DIR / f"{name}.font"

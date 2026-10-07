@@ -7,7 +7,7 @@ obvious before it ends up in a golden image.
 
 Usage:
     python3 tools/fontproof.py display-thin9 "Wed 29 Jul"
-    python3 tools/fontproof.py digits16 "09:41"
+    python3 tools/fontproof.py display16 "09:41"
     python3 tools/fontproof.py display-thin9 --all
 """
 

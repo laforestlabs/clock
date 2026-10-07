@@ -51,7 +51,7 @@ nothing else. Nothing is ever re-drawn from taste:
                own cut, in a glyph that is a stem -- letters and digits only,
                since a bracket's thin part is a drawing decision.
 
-The master is display-thin24 for display-thin7, digits48 for digits14, and so on. It is the
+The master is display-thin24 for display-thin7, display48 for display14, and so on. It is the
 design at a size where the shape survives, so it is what "this glyph, if the
 rasterizer had not over-thickened it" means. Repairing against it is also what
 keeps a fixed cut in its family's style rather than in the repairer's.
@@ -112,7 +112,7 @@ MASTER_COVERAGE = 0.4
 # Smallest counter, in master pixels, that counts as a counter at all. The
 # largest cut is where the design is drawn plainly, but even there hinting
 # leaves a stray enclosed pixel wherever a stroke meets another: display-thin24's N
-# reports a one-pixel hole, digits48's 9 a second one. Every real counter in
+# reports a one-pixel hole, display48's 9 a second one. Every real counter in
 # every master measures 9px or more, so the floor separates the two cleanly.
 MASTER_COUNTER_MIN = 4
 

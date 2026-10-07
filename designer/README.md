@@ -492,7 +492,7 @@ result rather than the designer approximating it.
 While you drag, the inspector follows what the engine is actually drawing:
 the Scale readout shows the derived figure as "Scale: 2.4 (fit)" instead of
 the parked slider value, and the Font field names the cut in use under the
-dropdown, "Drawing digits16". Both come from the engine on every refresh, so
+dropdown, "Drawing display16". Both come from the engine on every refresh, so
 the current state of the selected widget is visible without letting go of the
 handle.
 
@@ -501,13 +501,13 @@ handle.
 The inspector's **Font** dropdown lists font *families*, read from the engine
 rather than from a list in Dart. It offers the `display` and `display-thin`
 ladders the stock layouts use — a style each, with the engine choosing the size
-cut. `digits`, `micro` and the `wx` icon set stay registered so clock layouts
-keep rendering and the icon-set picker still works, but they are not offered as
-body styles here.
+cut. Display includes tabular clock numerals and sizes through 48px. The old
+`digits` family has been removed without aliases. `micro` and the `wx` icon set
+stay registered for HUD numbers and weather icons; neither is a body style.
 Choosing a family chooses a style; the engine chooses the size. A box no taller
 than the family's biggest cut gets the tallest cut that fits it, at 1x; past the
 top of the ladder it gets the cut and whole multiple that fill it. A layout that
-names an exact cut (`display-thin9`, `digits16`)
+names an exact cut (`display-thin9`, `display16`)
 still pins it, and the dropdown shows such a value even though it is not a
 family.
 

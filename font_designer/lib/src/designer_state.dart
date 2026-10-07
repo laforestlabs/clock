@@ -424,7 +424,8 @@ class DesignerState extends ChangeNotifier {
   /// than cutting it back to its ink.
   static bool _isTabular(FontSource font, GlyphSource glyph) =>
       (glyph.codepoint >= 0x30 && glyph.codepoint <= 0x39) ||
-      (glyph.codepoint == 0x2d && font.role == 'digits');
+      (glyph.codepoint == 0x2d &&
+          (font.role == 'digits' || font.family == 'display'));
 
   /// The width the ten digits of [font] hold: the widest ink any of them
   /// needs. Null for a cut with no digits to measure.
