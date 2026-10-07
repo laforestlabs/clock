@@ -504,8 +504,10 @@ ladders the stock layouts use — a style each, with the engine choosing the siz
 cut. `digits`, `micro` and the `wx` icon set stay registered so clock layouts
 keep rendering and the icon-set picker still works, but they are not offered as
 body styles here.
-Choosing a family chooses a style; the engine chooses the size cut that fills
-the widget's box. A layout that names an exact cut (`display-thin9`, `digits16`)
+Choosing a family chooses a style; the engine chooses the size. A box no taller
+than the family's biggest cut gets the tallest cut that fits it, at 1x; past the
+top of the ladder it gets the cut and whole multiple that fill it. A layout that
+names an exact cut (`display-thin9`, `digits16`)
 still pins it, and the dropdown shows such a value even though it is not a
 family.
 

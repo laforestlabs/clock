@@ -218,11 +218,14 @@ static int scale_px(int scale_q8)
 
 /*
  * The inked height sample actually draws in f: bottom ink row minus top ink
- * row plus one, over the string's glyphs. A cell counts ascender and
- * descender room the string may never use: "09:41" inks 4 of display-thin7's 7 rows
- * but all 10 of digits10's, so sizing by cell lets a small text cut outbid a
- * clock face for a clock string while drawing visibly smaller. 0 for a
- * sample with no ink.
+ * row plus one, over the string's glyphs; 0 for a sample with no ink.
+ *
+ * This is what the automatic font choice compares *between* faces (see
+ * best_font). A cell counts ascender and descender room the string may never
+ * use -- "09:41" inks 4 of display-thin7's 7 rows but all 10 of digits10's --
+ * so a clock string belongs in the face whose digits fill their cell even
+ * though a text cut's cell is the size of the box. A cut of a named family is
+ * chosen by cell instead: the box is a size (see family_pick).
  */
 static int sample_ink_rows(const ml_font *f, const char *sample)
 {
@@ -256,9 +259,10 @@ static int sample_ink_rows(const ml_font *f, const char *sample)
  * That keeps the clock faces out of a label and the weather pictograms out of
  * anything textual, and means a new .font joins the right group on its own.
  *
- * Filling is measured in ink, not cells: the scaled ink height of the sample
- * itself, so a face whose digits fill their cell beats a text cut whose
- * digits sit in a cell padded for ascenders and descenders.
+ * Filling is measured in the string's own ink rather than in cells, because
+ * this is a choice *between* faces: the clock faces have no ascenders or
+ * descenders to pad for, so a text cut given the box's own cell can still draw
+ * visibly smaller figures than a clock face half its size.
  *
  * Ties go to the font the layout actually named. Choosing the size is a service;
  * quietly overruling a deliberate choice for no gain is not.
@@ -305,40 +309,14 @@ static const ml_font *best_font(const ml_widget *w, const ml_font *want,
     return best ? best : want;
 }
 
-/*
- * The rows a cut actually inks for this sample, or its cell height when the
- * caller has no single string to measure.
- *
- * Ranking by inked rows rather than by cell is what keeps a bigger box from
- * drawing smaller text. A cell is padded for ascenders and descenders, and the
- * padding is not the same share at every size: a 32px cut's figures may ink 26
- * rows where a 10px cut's ink all 10. Ranked by cell, the 32px cut wins at a
- * 32px box and the text visibly shrinks from the 30 rows the box before it
- * drew. Ranked by ink, growing the box can only ever add candidates, so the
- * drawn text can never shrink.
- */
-static int cut_height(const ml_font *f, const char *sample)
-{
-    if (!sample || !*sample) return f->height;
-    const int rows = sample_ink_rows(f, sample);
-    return rows > 0 ? rows : f->height;
-}
-
-/*
- * The cut of a family that fills the box best, and the scale to draw it at.
- * This is what a layout gets by naming a style, "digits" rather than
- * "digits16": the engine picks the size, the family keeps the style.
- *
- * Each cut is measured on its own metrics, because a 10px cut is not a linear
- * scaling of a 32px one. The tallest render wins; ties go to the taller cut,
- * which spends less of its scale on interpolation.
- */
 static const ml_font *family_pick(const ml_widget *w, const char *family,
                                   const char *sample, int *scale_out)
 {
-    const ml_font *best     = NULL;
-    int            best_h   = -1;
+    const ml_font *best     = NULL;   /* fills the box best, ties to the taller */
     const ml_font *shortest = NULL;
+    const ml_font *tallest  = NULL;   /* the biggest cut the family carries */
+    const ml_font *unscaled = NULL;   /* tallest cut that fits the box at 1x */
+    int            best_rows = -1;
 
     for (int i = 0; i < ml_font_count(); i++) {
         const ml_font *f = ml_font_at(i);
@@ -346,6 +324,7 @@ static const ml_font *family_pick(const ml_widget *w, const char *family,
         if (!can_stand_in(f, sample)) continue;
 
         if (!shortest || f->height < shortest->height) shortest = f;
+        if (!tallest  || f->height > tallest->height)  tallest  = f;
 
         /*
          * Candidates are compared at the fit-derived scale, or at 1x when the
@@ -357,11 +336,33 @@ static const ml_font *family_pick(const ml_widget *w, const char *family,
         const int s = w->fit ? widget_scale(w, f, sample) : ML_SCALE_1X;
         if (!scale_fits(f, sample, s, &w->rect)) continue;
 
-        const int h = cut_height(f, sample) * s;
-        if (h > best_h || (h == best_h && best && f->height > best->height)) {
-            best   = f;
-            best_h = h;
+        /*
+         * Ranked by how much of the box the cut's own cell takes, not by how
+         * much of that cell this particular string inks: the box is a size and
+         * a cut is the size it says, whether the text written in it has
+         * descenders to use or not.
+         */
+        const int rows = f->height * s;
+        if (rows > best_rows || (rows == best_rows && best && f->height > best->height)) {
+            best      = f;
+            best_rows = rows;
         }
+        if (s == ML_SCALE_1X && f->height <= w->rect.h &&
+            (!unscaled || f->height > unscaled->height)) {
+            unscaled = f;
+        }
+    }
+
+    /*
+     * Inside the ladder the box gets a cut of its own size, never a smaller one
+     * blown up to match it: the design drawn for the size beats a coarser one
+     * scaled to it, and the rows of the box a cut's descender room leaves over
+     * are two percent of a line, not a reason to re-cut it. A pinned scale is
+     * the author's, so it takes the loop's answer, which is that same cut.
+     */
+    if (w->fit && unscaled && (!tallest || w->rect.h <= tallest->height)) {
+        *scale_out = ML_SCALE_1X;
+        return unscaled;
     }
 
     /* The box is smaller than every cut at 1x: draw the shortest clipped,

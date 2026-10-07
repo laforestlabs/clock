@@ -5,11 +5,11 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 14 glyphs, codepoints 45 to 58, role digits, 
- * cell height 31, baseline 29, 1 plane(s), 1147 bytes of bitmap.
+ * cell height 32, baseline 29, 1 plane(s), 1184 bytes of bitmap.
  */
 #include "mirror/font.h"
 
-static const uint8_t s_digits32_bitmap[1147] = {
+static const uint8_t s_digits32_bitmap[1184] = {
     /* 45 '-' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -33,6 +33,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x07, 0xFE, 0x00,       /* |     ##########    | */
     0x07, 0xFE, 0x00,       /* |     ##########    | */
     0x03, 0xFC, 0x00,       /* |      ########     | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -74,6 +75,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x30,                   /* |  ##  | */
     0x00,                   /* |      | */
     0x00,                   /* |      | */
+    0x00,                   /* |      | */
     /* 47 '/' width 14 */
     0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
@@ -104,6 +106,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x78, 0x00,             /* | ####         | */
     0x78, 0x00,             /* | ####         | */
     0xF0, 0x00,             /* |####          | */
+    0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
     /* 48 '0' width 19 */
@@ -138,6 +141,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x01, 0xF8, 0x00,       /* |       ######      | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
+    0x00, 0x00, 0x00,       /* |                   | */
     /* 49 '1' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -168,6 +172,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x00, 0x3C, 0x00,       /* |          ####     | */
     0x00, 0x3C, 0x00,       /* |          ####     | */
     0x00, 0x3C, 0x00,       /* |          ####     | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     /* 50 '2' width 19 */
@@ -202,6 +207,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x3F, 0xFF, 0xE0,       /* |  #################| */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
+    0x00, 0x00, 0x00,       /* |                   | */
     /* 51 '3' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -232,6 +238,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x3F, 0xFF, 0x80,       /* |  ###############  | */
     0x3F, 0xFE, 0x00,       /* |  #############    | */
     0x0F, 0xF8, 0x00,       /* |    #########      | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     /* 52 '4' width 19 */
@@ -266,6 +273,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x00, 0x1E, 0x00,       /* |           ####    | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
+    0x00, 0x00, 0x00,       /* |                   | */
     /* 53 '5' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -296,6 +304,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x3F, 0xFF, 0x00,       /* |  ##############   | */
     0x3F, 0xFE, 0x00,       /* |  #############    | */
     0x0F, 0xF8, 0x00,       /* |    #########      | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     /* 54 '6' width 19 */
@@ -330,6 +339,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x00, 0xFC, 0x00,       /* |        ######     | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
+    0x00, 0x00, 0x00,       /* |                   | */
     /* 55 '7' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -360,6 +370,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x03, 0xC0, 0x00,       /* |      ####         | */
     0x07, 0xC0, 0x00,       /* |     #####         | */
     0x07, 0x80, 0x00,       /* |     ####          | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     /* 56 '8' width 19 */
@@ -394,6 +405,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x03, 0xFC, 0x00,       /* |      ########     | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
+    0x00, 0x00, 0x00,       /* |                   | */
     /* 57 '9' width 19 */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
@@ -424,6 +436,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x1F, 0xFE, 0x00,       /* |   ############    | */
     0x1F, 0xF8, 0x00,       /* |   ##########      | */
     0x1F, 0xE0, 0x00,       /* |   ########        | */
+    0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     0x00, 0x00, 0x00,       /* |                   | */
     /* 58 ':' width 6 */
@@ -458,6 +471,7 @@ static const uint8_t s_digits32_bitmap[1147] = {
     0x78,                   /* | #### | */
     0x00,                   /* |      | */
     0x00,                   /* |      | */
+    0x00,                   /* |      | */
 };
 
 static const uint8_t s_digits32_widths[14] = {
@@ -465,8 +479,8 @@ static const uint8_t s_digits32_widths[14] = {
 };
 
 static const uint16_t s_digits32_offsets[14] = {
-        0,    93,   124,   186,   279,   372,   465,   558,   651,   744,   837,   930,
-     1023,  1116,
+        0,    96,   128,   192,   288,   384,   480,   576,   672,   768,   864,   960,
+     1056,  1152,
 };
 
 const ml_font ml_font_digits32 = {
@@ -474,7 +488,7 @@ const ml_font ml_font_digits32 = {
     .role     = ML_FONT_DIGITS,
     .first    = 45,
     .count    = 14,
-    .height   = 31,
+    .height   = 32,
     .baseline = 29,
     .gap      = 1,
     .planes   = 1,

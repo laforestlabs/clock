@@ -71,7 +71,7 @@ void main() {
 
     test('lists the families the picker offers', () {
       // The picker sells styles, not sizes: a family stands for its whole
-      // ladder of cuts and the engine picks the cut that fills the box.
+      // ladder of cuts and the engine picks the size the box calls for.
       final names = engine!.families.map((f) => f.name).toList();
 
       expect(
@@ -94,34 +94,32 @@ void main() {
     });
 
     test('reports the cell height each cut was drawn at', () {
-      // A cut is named for the cell it asked for, and drawn at that cell less
-      // the descender reserve it gave back (see descent_trim in
-      // tools/fontraster.py): display-thin8 is eight rows asked for and seven
-      // drawn. A cut with a single row of reserve, or none at all, keeps the
-      // height its name says.
+      // A cut is named for the cell it is drawn in, and it is drawn in exactly
+      // that cell: display-thin8 is eight rows, and the rows under the baseline
+      // its descenders need are part of those eight rather than slack taken
+      // back from them.
+      final fonts = engine!.fonts;
       final byName = <String, int>{
-        for (final f in engine!.fonts) f.name: f.height,
+        for (final f in fonts) f.name: f.height,
       };
 
-      expect(byName['display-thin8'], 7);
-      expect(byName['display-thin9'], 8);
-      expect(byName['display-thin24'], 21);
+      expect(byName['display-thin8'], 8);
+      expect(byName['display-thin9'], 9);
+      expect(byName['display-thin24'], 24);
       expect(byName['digits10'], 10);
       expect(byName['digits16'], 16);
-      expect(byName['digits32'], 31);
-      expect(byName['display24'], 21);
+      expect(byName['digits32'], 32);
+      expect(byName['display24'], 24);
 
-      // The rule behind those numbers: never taller than the name says, and
-      // never more than half the reserve (at most three rows) shorter.
+      // The rule behind those numbers: the cell is the size the name claims,
+      // for every cut in the catalogue.
       final suffix = RegExp(r'(\d+)$');
-      for (final f in engine!.fonts) {
+      for (final f in fonts) {
         final match = suffix.firstMatch(f.name);
         if (match == null) continue;
         final nominal = int.parse(match.group(1)!);
-        expect(f.height, lessThanOrEqualTo(nominal),
-            reason: '${f.name} is drawn at ${f.height}px, above its name');
-        expect(nominal - f.height, lessThanOrEqualTo(3),
-            reason: '${f.name} gave back more than the reserve it has');
+        expect(f.height, nominal,
+            reason: '${f.name} is drawn at ${f.height}px, not its name');
       }
     });
 

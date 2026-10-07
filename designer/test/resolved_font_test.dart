@@ -19,8 +19,8 @@ import 'package:mirror_designer/src/engine/engine.dart';
 import 'package:mirror_designer/src/ui/inspector.dart';
 
 /// A clock naming the display family with Fit on. The mock time is 09:41;
-/// shrinking the box steps the scale down while the cut that fills it stays
-/// the same.
+/// shrinking the box steps the cut down while the scale stays 1x, because a box
+/// the ladder reaches gets a cut of its own size, unscaled.
 const String _doc = '{"canvas":{"width":64,"height":64},'
     '"background":"#000000","widgets":['
     '{"type":"clock","rect":[0,0,64,20],"font":"display",'
@@ -57,7 +57,7 @@ void main() {
     engine.dispose();
   }, skip: skip);
 
-  test('a box steps to the cut that fills it, and never draws larger text', () {
+  test('a box steps to the cut of its own size, and never draws larger text', () {
     final engine = MirrorEngine.open();
     final heights = <String, int>{for (final f in engine.fonts) f.name: f.height};
 
@@ -65,10 +65,10 @@ void main() {
     // engine picked to fill the box, never the family name, so the inspector
     // can say what actually draws.
     //
-    // The cut is chosen by how tall it draws, so a shorter box can only ever
-    // drop candidates: stepping the box down never grows the text it draws.
-    // Which cut that lands on moves with the catalogue's own metrics, so the
-    // rule is what is pinned here, not a name.
+    // The cut is chosen by the box's own height, so a shorter box can only ever
+    // step down to a shorter cut: stepping the box down never grows the text it
+    // draws. Which cut that lands on moves with the catalogue's own metrics, so
+    // the rule is what is pinned here, not a name.
     int? previous;
     for (final int rows in <int>[20, 16, 12, 8]) {
       final String doc = _doc.replaceAll('[0,0,64,20]', '[0,0,64,$rows]');

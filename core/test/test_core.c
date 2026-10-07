@@ -975,15 +975,16 @@ static void test_fit_continuous(void)
     }
 
     /*
-     * The display family is a ladder of set sizes, not one master scaled. Each
-     * box is answered by a cut of the family, drawn at a whole multiple: a
-     * fractional scale splits a 1px stem across two cells, and on an LED panel
-     * a partly lit cell is a dim emitter, not a softer edge.
+     * The display family is a ladder of set sizes, not one master scaled. A box
+     * the ladder reaches is answered by the tallest cut that fits, at 1x; past
+     * the ladder's top it is filled by scaling, and that scale is still a whole
+     * multiple: a fractional one splits a 1px stem across two cells, and on an
+     * LED panel a partly lit cell is a dim emitter, not a softer edge.
      *
-     * Growing the box may therefore step the cut up rather than the scale, and
-     * the ink must never shrink when it does.
+     * Growing the box therefore only ever steps the cut up or scales an even
+     * one, so the box's rows a cut occupies never shrink.
      */
-    int previous_ink = 0;
+    int previous_rows = 0;
     for (int box_h = 6; box_h <= 40; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
@@ -1003,9 +1004,9 @@ static void test_fit_continuous(void)
               "a set-size family is only ever drawn at a whole multiple");
         CHECK(f && f->height * (scale / ML_SCALE_1X) <= box_h,
               "the chosen cut fits the box");
-        const int ink = f ? f->height * (scale / ML_SCALE_1X) : 0;
-        CHECK(ink >= previous_ink, "growing the box never shrinks the text");
-        previous_ink = ink;
+        const int rows = f ? f->height * (scale / ML_SCALE_1X) : 0;
+        CHECK(rows >= previous_rows, "growing the box never shrinks the text");
+        previous_rows = rows;
     }
 }
 
@@ -1084,15 +1085,16 @@ static void test_family_pick(void)
 /*
  * The blocky exception. "smooth": false asks for whole-pixel steps on
  * purpose: the fitted scale floors to a whole multiple, so a box growing
- * from 7 to 13 rows changes nothing and the 14th doubles the text. That is
+ * from 8 to 15 rows changes nothing and the 16th doubles the text. That is
  * a deliberate rendering choice, not a dead band to fix.
  */
 static void test_fit_blocky(void)
 {
     group("blocky fit");
 
-    /* 'g' inks 6 of the 7 rows in display-thin8, descender included, so the
-     * whole-multiple ladder doubles the ink at 2x, which needs 14 rows. */
+    /* 'g' inks 6 of the 8 rows in display-thin8, descender included. The
+     * whole-multiple ladder doubles the cut's 8-row cell at 2x, so the ink
+     * steps from 6 rows to 12 once the box holds 16. */
     for (int box_h = 8; box_h <= 17; box_h++) {
         char doc[256];
         snprintf(doc, sizeof(doc),
@@ -1104,7 +1106,7 @@ static void test_fit_blocky(void)
         ml_canvas c;
         if (!render_doc(doc, 64, 64, &c)) { CHECK(false, "blocky doc parses"); return; }
         const int rows = ink_rows(&c, 64, 64);
-        const int want = box_h < 14 ? 6 : 12;
+        const int want = box_h < 16 ? 6 : 12;
         CHECK(rows == want, "smooth off only moves at whole multiples");
         ml_canvas_free(&c);
     }
@@ -1472,9 +1474,9 @@ static void test_scale_floor(void)
     }
     CHECK(ink_total(&a, 64, 64) > 0,
           "letters survive a box too small for the named clock face");
-    /* display-thin14 takes it at 1x, held there by the box height: a face that
-     * carries every letter, descender reaching the eleventh row. */
-    CHECK(ink_rows(&a, 64, 64) == 11, "and land in a font that has them");
+    /* display-thin12 takes it at 1x, held there by the box height: a face that
+     * carries every letter, descender reaching the twelfth row. */
+    CHECK(ink_rows(&a, 64, 64) == 12, "and land in a font that has them");
     ml_canvas_free(&a);
 
     /*

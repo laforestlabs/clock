@@ -5,11 +5,11 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 14 glyphs, codepoints 45 to 58, role digits, 
- * cell height 27, baseline 25, 1 plane(s), 999 bytes of bitmap.
+ * cell height 28, baseline 25, 1 plane(s), 1036 bytes of bitmap.
  */
 #include "mirror/font.h"
 
-static const uint8_t s_digits28_bitmap[999] = {
+static const uint8_t s_digits28_bitmap[1036] = {
     /* 45 '-' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -30,6 +30,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x07, 0xFC, 0x00,       /* |     #########   | */
     0x07, 0xFC, 0x00,       /* |     #########   | */
     0x03, 0xF8, 0x00,       /* |      #######    | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -66,6 +67,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x70,                   /* | ### | */
     0x00,                   /* |     | */
     0x00,                   /* |     | */
+    0x00,                   /* |     | */
     /* 47 '/' width 12 */
     0x00, 0x00,             /* |            | */
     0x00, 0x00,             /* |            | */
@@ -92,6 +94,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x78, 0x00,             /* | ####       | */
     0x70, 0x00,             /* | ###        | */
     0xF0, 0x00,             /* |####        | */
+    0x00, 0x00,             /* |            | */
     0x00, 0x00,             /* |            | */
     0x00, 0x00,             /* |            | */
     /* 48 '0' width 17 */
@@ -122,6 +125,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x03, 0xF0, 0x00,       /* |      ######     | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
+    0x00, 0x00, 0x00,       /* |                 | */
     /* 49 '1' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -148,6 +152,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x00, 0x70, 0x00,       /* |         ###     | */
     0x00, 0x70, 0x00,       /* |         ###     | */
     0x00, 0x70, 0x00,       /* |         ###     | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     /* 50 '2' width 17 */
@@ -178,6 +183,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x7F, 0xFF, 0x80,       /* | ################| */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
+    0x00, 0x00, 0x00,       /* |                 | */
     /* 51 '3' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -204,6 +210,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x7F, 0xFE, 0x00,       /* | ##############  | */
     0x7F, 0xFC, 0x00,       /* | #############   | */
     0x1F, 0xF0, 0x00,       /* |   #########     | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     /* 52 '4' width 17 */
@@ -234,6 +241,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x00, 0x3C, 0x00,       /* |          ####   | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
+    0x00, 0x00, 0x00,       /* |                 | */
     /* 53 '5' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -260,6 +268,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x3F, 0xFE, 0x00,       /* |  #############  | */
     0x3F, 0xFC, 0x00,       /* |  ############   | */
     0x0F, 0xF0, 0x00,       /* |    ########     | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     /* 54 '6' width 17 */
@@ -290,6 +299,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x01, 0xF0, 0x00,       /* |       #####     | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
+    0x00, 0x00, 0x00,       /* |                 | */
     /* 55 '7' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -316,6 +326,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x07, 0x80, 0x00,       /* |     ####        | */
     0x07, 0x80, 0x00,       /* |     ####        | */
     0x0F, 0x00, 0x00,       /* |    ####         | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     /* 56 '8' width 17 */
@@ -346,6 +357,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x03, 0xF0, 0x00,       /* |      ######     | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
+    0x00, 0x00, 0x00,       /* |                 | */
     /* 57 '9' width 17 */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
@@ -372,6 +384,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x1F, 0xF8, 0x00,       /* |   ##########    | */
     0x1F, 0xF0, 0x00,       /* |   #########     | */
     0x1F, 0xC0, 0x00,       /* |   #######       | */
+    0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     0x00, 0x00, 0x00,       /* |                 | */
     /* 58 ':' width 5 */
@@ -402,6 +415,7 @@ static const uint8_t s_digits28_bitmap[999] = {
     0x70,                   /* | ### | */
     0x00,                   /* |     | */
     0x00,                   /* |     | */
+    0x00,                   /* |     | */
 };
 
 static const uint8_t s_digits28_widths[14] = {
@@ -409,8 +423,8 @@ static const uint8_t s_digits28_widths[14] = {
 };
 
 static const uint16_t s_digits28_offsets[14] = {
-        0,    81,   108,   162,   243,   324,   405,   486,   567,   648,   729,   810,
-      891,   972,
+        0,    84,   112,   168,   252,   336,   420,   504,   588,   672,   756,   840,
+      924,  1008,
 };
 
 const ml_font ml_font_digits28 = {
@@ -418,7 +432,7 @@ const ml_font ml_font_digits28 = {
     .role     = ML_FONT_DIGITS,
     .first    = 45,
     .count    = 14,
-    .height   = 27,
+    .height   = 28,
     .baseline = 25,
     .gap      = 1,
     .planes   = 1,

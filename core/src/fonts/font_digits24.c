@@ -5,11 +5,11 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 14 glyphs, codepoints 45 to 58, role digits, 
- * cell height 23, baseline 22, 1 plane(s), 552 bytes of bitmap.
+ * cell height 24, baseline 22, 1 plane(s), 576 bytes of bitmap.
  */
 #include "mirror/font.h"
 
-static const uint8_t s_digits24_bitmap[552] = {
+static const uint8_t s_digits24_bitmap[576] = {
     /* 45 '-' width 7 */
     0x00,                   /* |       | */
     0x00,                   /* |       | */
@@ -27,6 +27,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xFE,                   /* |#######| */
     0xFE,                   /* |#######| */
     0xFE,                   /* |#######| */
+    0x00,                   /* |       | */
     0x00,                   /* |       | */
     0x00,                   /* |       | */
     0x00,                   /* |       | */
@@ -58,6 +59,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xE0,                   /* |###| */
     0x40,                   /* | # | */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 47 '/' width 9 */
     0x00, 0x00,             /* |         | */
     0x00, 0x00,             /* |         | */
@@ -81,6 +83,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xE0, 0x00,             /* |###      | */
     0xE0, 0x00,             /* |###      | */
     0xE0, 0x00,             /* |###      | */
+    0x00, 0x00,             /* |         | */
     0x00, 0x00,             /* |         | */
     /* 48 '0' width 12 */
     0x00, 0x00,             /* |            | */
@@ -106,6 +109,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x3F, 0xC0,             /* |  ########  | */
     0x0F, 0x00,             /* |    ####    | */
     0x00, 0x00,             /* |            | */
+    0x00, 0x00,             /* |            | */
     /* 49 '1' width 7 */
     0x00,                   /* |       | */
     0x00,                   /* |       | */
@@ -129,6 +133,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x1E,                   /* |   ####| */
     0x1E,                   /* |   ####| */
     0x1E,                   /* |   ####| */
+    0x00,                   /* |       | */
     0x00,                   /* |       | */
     /* 50 '2' width 11 */
     0x00, 0x00,             /* |           | */
@@ -154,6 +159,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xFF, 0xE0,             /* |###########| */
     0xFF, 0xE0,             /* |###########| */
     0x00, 0x00,             /* |           | */
+    0x00, 0x00,             /* |           | */
     /* 51 '3' width 12 */
     0x00, 0x00,             /* |            | */
     0x00, 0x00,             /* |            | */
@@ -177,6 +183,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xFF, 0xE0,             /* |########### | */
     0xFF, 0xC0,             /* |##########  | */
     0x7F, 0x00,             /* | #######    | */
+    0x00, 0x00,             /* |            | */
     0x00, 0x00,             /* |            | */
     /* 52 '4' width 14 */
     0x00, 0x00,             /* |              | */
@@ -202,6 +209,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x00, 0x70,             /* |         ###  | */
     0x00, 0x70,             /* |         ###  | */
     0x00, 0x00,             /* |              | */
+    0x00, 0x00,             /* |              | */
     /* 53 '5' width 14 */
     0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
@@ -225,6 +233,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x7F, 0xF0,             /* | ###########  | */
     0x7F, 0xE0,             /* | ##########   | */
     0x3F, 0x80,             /* |  #######     | */
+    0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
     /* 54 '6' width 14 */
     0x00, 0x00,             /* |              | */
@@ -250,6 +259,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x1F, 0xF0,             /* |   #########  | */
     0x07, 0xC0,             /* |     #####    | */
     0x00, 0x00,             /* |              | */
+    0x00, 0x00,             /* |              | */
     /* 55 '7' width 14 */
     0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
@@ -273,6 +283,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x0E, 0x00,             /* |    ###       | */
     0x1E, 0x00,             /* |   ####       | */
     0x1C, 0x00,             /* |   ###        | */
+    0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
     /* 56 '8' width 14 */
     0x00, 0x00,             /* |              | */
@@ -298,6 +309,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x3F, 0xF0,             /* |  ##########  | */
     0x0F, 0xC0,             /* |    ######    | */
     0x00, 0x00,             /* |              | */
+    0x00, 0x00,             /* |              | */
     /* 57 '9' width 14 */
     0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
@@ -321,6 +333,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0x3F, 0xE0,             /* |  #########   | */
     0x3F, 0xC0,             /* |  ########    | */
     0x3F, 0x00,             /* |  ######      | */
+    0x00, 0x00,             /* |              | */
     0x00, 0x00,             /* |              | */
     /* 58 ':' width 3 */
     0x00,                   /* |   | */
@@ -346,6 +359,7 @@ static const uint8_t s_digits24_bitmap[552] = {
     0xE0,                   /* |###| */
     0xE0,                   /* |###| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
 };
 
 static const uint8_t s_digits24_widths[14] = {
@@ -353,8 +367,8 @@ static const uint8_t s_digits24_widths[14] = {
 };
 
 static const uint16_t s_digits24_offsets[14] = {
-        0,    23,    46,    92,   138,   161,   207,   253,   299,   345,   391,   437,
-      483,   529,
+        0,    24,    48,    96,   144,   168,   216,   264,   312,   360,   408,   456,
+      504,   552,
 };
 
 const ml_font ml_font_digits24 = {
@@ -362,7 +376,7 @@ const ml_font ml_font_digits24 = {
     .role     = ML_FONT_DIGITS,
     .first    = 45,
     .count    = 14,
-    .height   = 23,
+    .height   = 24,
     .baseline = 22,
     .gap      = 1,
     .planes   = 1,

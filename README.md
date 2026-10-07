@@ -225,13 +225,12 @@ Regular ladder is gone: it was never offered by the designer's Font dropdown,
 which has always shown these two, and it was the face nothing named.
 
 A cut reserves rows under the baseline for the tails of `y`, `q`, `j`, `g` and
-`p`, and a line of prose pays for that reserve on every row whether the row has
-a tail or not. Half of it comes off before the cut is written: the ink below the
-baseline moves up by that much and the cell shrinks to meet it, while `@baseline`
-and everything above it stays put. So `display12` is a 12px cell asked for and
-an 11px cell drawn, and the cut keeps its name for the layouts that pin it. A
-glyph keeps its deepest row, so a shallow tail is trimmed less than a deep one
-rather than deleted, and the `_`, which is drawn low by design, keeps its ink.
+`p`, and those rows are part of the cell the name claims: `display14` is
+fourteen rows, `@baseline` is where the face puts the line, and a layout that
+pins the cut gets the size the name says. That reserve is not slack to hand
+back -- a name a row short of its drawing is a lie the designer's Font
+dropdown and every pinned layout repeat -- so the rasterizer writes the cell
+it was asked for and nothing shrinks it afterwards.
 
 The weather symbols are the one face that still scales continuously, with
 gamma-compensated area coverage, including boxes smaller than their 16px
@@ -306,20 +305,22 @@ Bitmap glyphs grow by whole-pixel replication: `"scale": 3` draws every glyph
 pixel as a 3x3 block. Scale is capped at 8 and defaults to 1, so any layout
 written before it existed renders byte for byte as it always did.
 
-`"fit": true` derives the scale from the box instead, taking the largest scale
-that fits **both** the widget's width and its height. That scale is a whole
-multiple: every text face here is a ladder of set sizes, so a box steps to the
-next cut rather than stretching one drawing across a fraction of a pixel. On a
-HUB75 panel a partly covered cell is a full-size emitter at part brightness,
-not a sub-pixel edge, so a fractional scale does not soften the text — it
-dims two thirds of it. A box with no cut small enough to fit falls to the
-family's shortest, clipped; the style is the author's and only the size is the
-box's.
+`"fit": true` sizes the text to the box. A box no taller than the family's
+tallest cut is answered by the ladder itself: the tallest cut that fits, drawn
+at 1x, so a 16-row box gets `display-thin16` and a 20-row box `display-thin20`.
+Past the top of the ladder no cut is the box's size, so the box is filled by
+scaling instead — the cut and whole multiple that leave the fewest of the box's
+rows empty, ties going to the taller cut: a 32-row box takes `display-thin16`
+at 2x rather than `display-thin24` at 1x with eight of its rows unused. Every
+text cut is a set size, so a fitted scale is a whole multiple: a fractional one
+would light two panel cells dimly instead of one fully. A box with no cut small
+enough to fit falls to the family's shortest, clipped; the style is the
+author's and only the size is the box's.
 
-Which cut a box gets is decided by inked height, not by cell height. Cells are
-padded for ascenders and descenders and the padding is not the same share at
-every size, so ranking by cell let a 32px box draw *smaller* figures than the
-30px box before it. Ranked by ink, growing a box can only ever add candidates.
+That ranking is by the cut's own cell, not by how much of it the text in
+question inks. The box is a size and a cut is the size it says, whether the
+string has descenders to use that room or not: `display-thin16` is what a
+16-row box gets, not `display-thin8` doubled to match it.
 
 `"smooth"` overrides that per widget, as a tri-state. Unset, the font decides,
 and every text and clock cut asks for whole-pixel steps. `"smooth": true`

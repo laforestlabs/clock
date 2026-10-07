@@ -20,11 +20,12 @@ which is what makes the family proportional. The FreeType size for a cell is
 the largest whose ascent plus descent still fits the cell, so a
 display-thin14 cut uses every row it is given rather than arriving letterboxed.
 
-The cell a cut asks for is not the cell it gets: half the descender reserve
-comes back off before the cut is written (see descent_trim), which is why the
-heights in the commands above are taller than the files they produce. The name
-keeps the nominal cell -- display12 is still display12 at @height 11 -- so a
-layout that pins a cut goes on pinning it.
+The cell a cut asks for is the cell it gets: @height is the number in the
+name, so a display14 cut is fourteen rows and a layout that pins it gets the
+size the name claims. The rows under the baseline that only y, q, j, g, p and
+the brackets use are part of that cell rather than slack taken back from it:
+a cut named for a box is the size of the box, and a line of prose keeps the
+reserve the face's own descenders need.
 
 A glyph whose design is mirror-symmetric comes out exactly symmetric. FreeType
 places glyphs at a fractional origin, and thresholding that render decides
@@ -264,63 +265,6 @@ def _foot(rows: list[str], xlo: int, xhi: int, y: int) -> None:
         rows[y] = rows[y][:x] + "#" + rows[y][x + 1:]
 
 
-# The descender band -- the rows under the baseline -- is the emptiest part of a
-# cell: only y, q, j, g, p and the brackets use it, and a line of prose pays for
-# it on every row of text. Half of it goes back to the layout. Two rows is the
-# least a face can give and still have a tail left, so a cut that carries one or
-# none keeps it (see trim_band for the per-glyph floor).
-def descent_trim(cell: int, baseline: int) -> int:
-    """How many rows of descender reserve this cut gives up."""
-    band = cell - baseline
-    return band // 2 if band >= 2 else 0
-
-
-def trim_band(glyphs: dict[int, list[str]], cell: int, baseline: int, k: int
-              ) -> dict[int, list[str]]:
-    """Give back k rows of descender reserve, moving the descenders up with it.
-
-    @baseline and every row above it are untouched, so cap height, x-height and
-    the pen's work do not move; what moves is the ink below the line, up by k
-    rows, and the cell shrinks by k to meet it.
-
-    How far a glyph moves is its own business, because two rules bind and the
-    stricter one wins. A glyph keeps its last row of descender, so a shallow
-    tail is trimmed less than a deep one rather than deleted; and a glyph's ink
-    is never cropped away, which is what the underscore needs -- it is drawn on
-    the cell's own last row rather than hanging under the baseline, so it has to
-    come up with the trim. In practice the worst case is a comma: its own tail
-    stays put and the tail distinguish() draws below it lands in the cell the
-    cut has left, or does not fit and is not drawn.
-
-    Trimming happens before distinguish(), so a mark drawn below the baseline
-    (the tail of a , or a ;) is drawn again into whatever room the shorter cell
-    has left, which is none at 8px.
-    """
-    height = cell - k
-    out: dict[int, list[str]] = {}
-    for cp, rows in glyphs.items():
-        width = len(rows[0])
-        depth = 0
-        lowest = -1
-        for y in range(baseline, cell):
-            if any(ch != "." for ch in rows[y]):
-                depth += 1
-                lowest = y
-        if lowest < 0:
-            kg = 0
-        else:
-            floor = max(0, lowest - height + 1)
-            cap = min(k, depth - 1) if depth >= 2 else 0
-            kg = max(floor, cap)
-        new = list(rows[:baseline])
-        for y in range(baseline, height):
-            new.append(rows[y + kg] if y + kg < cell else "." * width)
-        while len(new) < height:
-            new.append("." * width)
-        out[cp] = new[:height]
-    return out
-
-
 def distinguish(cp: int, rows: list[str]) -> list[str]:
     """Add the mark that tells this glyph from the ones it is confused with.
 
@@ -428,10 +372,6 @@ def main() -> None:
     ap.add_argument("--no-distinguish", dest="distinguish", action="store_false",
                     help="skip the conventional marks that tell 1/l/I from the "
                          "glyphs they are confused with at small sizes")
-    ap.add_argument("--descender-trim", type=int, default=None,
-                    help="rows of descender reserve to give back (default: "
-                         "half the band under the baseline, rounded down, and "
-                         "none for a cut carrying fewer than two rows)")
     ap.add_argument("--downscale", action="store_true",
                     help="mark this cut as a high-resolution scaling master")
     args = ap.parse_args()
@@ -479,20 +419,14 @@ def main() -> None:
         glyphs = {cp: bits(px.load(), adv, cell, threshold)
                   for cp, (px, adv) in gray.items()}
 
-        # The reserve comes off before the marks are drawn, so a mark that
-        # hangs under the baseline lands in the cell the cut actually has.
-        k = args.descender_trim if args.descender_trim is not None \
-            else descent_trim(cell, baseline)
-        height = cell - k
-        glyphs = trim_band(glyphs, cell, baseline, k)
         if args.distinguish:
             glyphs = {cp: distinguish(cp, rows) for cp, rows in glyphs.items()}
 
         name = f"{args.prefix}{cell}"
         dest = FONT_SRC_DIR / f"{name}.font"
-        emit(dest, name, args.role, family, height, baseline, args.gap,
+        emit(dest, name, args.role, family, cell, baseline, args.gap,
              args.smooth == "yes", args.downscale, glyphs)
-        print(f"  {name}: cell {cell}px -> {height}px, baseline {baseline}, "
+        print(f"  {name}: cell {cell}px, baseline {baseline}, "
               f"threshold {threshold}, {len(cps)} glyphs")
 
 

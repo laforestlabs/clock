@@ -8,5 +8,5 @@
 #
 # Editing this file by hand does not change the firmware; it only
 # tells the check what the image is expected to be built from.
-version = 0.4.15
-inputs = 4d8e13aa5c9a38cedc3f483577b2da8b193851899bcf6d7b90db3bc8de8f85b0
+version = 0.4.17
+inputs = f80aa0427e28c704a3e996d1a3953dbadb03846d43905581d6b66d2027e5944e

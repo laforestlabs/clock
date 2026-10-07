@@ -5,12 +5,13 @@
  * Regenerate:  python3 tools/fontgen.py
  *
  * 96 glyphs, codepoints 32 to 127, role text, 
- * cell height 7, baseline 6, 1 plane(s), 672 bytes of bitmap.
+ * cell height 8, baseline 6, 1 plane(s), 768 bytes of bitmap.
  */
 #include "mirror/font.h"
 
-static const uint8_t s_display_thin8_bitmap[672] = {
+static const uint8_t s_display_thin8_bitmap[768] = {
     /* 32  width 2 */
+    0x00,                   /* |  | */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
@@ -26,10 +27,12 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xC0,                   /* |##| */
     0xC0,                   /* |##| */
     0x00,                   /* |  | */
+    0x00,                   /* |  | */
     /* 34 '"' width 3 */
     0xE0,                   /* |###| */
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -42,6 +45,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xF8,                   /* |#####| */
     0x50,                   /* | # # | */
     0x50,                   /* | # # | */
+    0x00,                   /* |     | */
     /* 36 '$' width 4 */
     0x60,                   /* | ## | */
     0xF0,                   /* |####| */
@@ -50,6 +54,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x70,                   /* | ###| */
     0xF0,                   /* |####| */
     0x60,                   /* | ## | */
+    0x00,                   /* |    | */
     /* 37 '%' width 6 */
     0xE4,                   /* |###  #| */
     0xAC,                   /* |# # ##| */
@@ -58,6 +63,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x7C,                   /* | #####| */
     0xD4,                   /* |## # #| */
     0x9C,                   /* |#  ###| */
+    0x00,                   /* |      | */
     /* 38 '&' width 6 */
     0x70,                   /* | ###  | */
     0x50,                   /* | # #  | */
@@ -66,10 +72,12 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x98,                   /* |#  ## | */
     0xFC,                   /* |######| */
     0x00,                   /* |      | */
+    0x00,                   /* |      | */
     /* 39 "'" width 1 */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
+    0x00,                   /* | | */
     0x00,                   /* | | */
     0x00,                   /* | | */
     0x00,                   /* | | */
@@ -82,6 +90,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |# | */
     0x80,                   /* |# | */
     0x40,                   /* | #| */
+    0x00,                   /* |  | */
     /* 41 ')' width 2 */
     0x80,                   /* |# | */
     0x40,                   /* | #| */
@@ -90,12 +99,14 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | #| */
     0x40,                   /* | #| */
     0x80,                   /* |# | */
+    0x00,                   /* |  | */
     /* 42 '*' width 4 */
     0x20,                   /* |  # | */
     0xF0,                   /* |####| */
     0x60,                   /* | ## | */
     0x70,                   /* | ###| */
     0x90,                   /* |#  #| */
+    0x00,                   /* |    | */
     0x00,                   /* |    | */
     0x00,                   /* |    | */
     /* 43 '+' width 5 */
@@ -106,6 +117,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #  | */
     0x20,                   /* |  #  | */
     0x00,                   /* |     | */
+    0x00,                   /* |     | */
     /* 44 ',' width 2 */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
@@ -114,11 +126,13 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* |  | */
     0xC0,                   /* |##| */
     0x80,                   /* |# | */
+    0x00,                   /* |  | */
     /* 45 '-' width 3 */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -130,6 +144,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* |  | */
     0xC0,                   /* |##| */
     0xC0,                   /* |##| */
+    0x00,                   /* |  | */
     /* 47 '/' width 3 */
     0x20,                   /* |  #| */
     0x60,                   /* | ##| */
@@ -137,6 +152,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0xC0,                   /* |## | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 48 '0' width 3 */
     0x40,                   /* | # | */
@@ -146,6 +162,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     /* 49 '1' width 3 */
     0xC0,                   /* |## | */
     0x40,                   /* | # | */
@@ -154,6 +171,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 50 '2' width 3 */
     0xC0,                   /* |## | */
     0x20,                   /* |  #| */
@@ -162,6 +180,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 51 '3' width 3 */
     0xC0,                   /* |## | */
     0x20,                   /* |  #| */
@@ -170,6 +189,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 52 '4' width 3 */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
@@ -178,6 +198,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
+    0x00,                   /* |   | */
     /* 53 '5' width 3 */
     0xE0,                   /* |###| */
     0x80,                   /* |#  | */
@@ -186,6 +207,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 54 '6' width 3 */
     0x60,                   /* | ##| */
     0x80,                   /* |#  | */
@@ -194,6 +216,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     /* 55 '7' width 3 */
     0xE0,                   /* |###| */
     0x20,                   /* |  #| */
@@ -202,6 +225,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     /* 56 '8' width 3 */
     0x40,                   /* | # | */
     0xA0,                   /* |# #| */
@@ -210,6 +234,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     /* 57 '9' width 3 */
     0x40,                   /* | # | */
     0xA0,                   /* |# #| */
@@ -218,6 +243,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 58 ':' width 1 */
     0x00,                   /* | | */
     0x00,                   /* | | */
@@ -225,6 +251,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* | | */
     0x00,                   /* | | */
     0x80,                   /* |#| */
+    0x00,                   /* | | */
     0x00,                   /* | | */
     /* 59 ';' width 1 */
     0x00,                   /* | | */
@@ -234,6 +261,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* | | */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
+    0x00,                   /* | | */
     /* 60 '<' width 3 */
     0x00,                   /* |   | */
     0x20,                   /* |  #| */
@@ -242,12 +270,14 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x20,                   /* |  #| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 61 '=' width 3 */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0xE0,                   /* |###| */
     0x00,                   /* |   | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 62 '>' width 3 */
@@ -258,6 +288,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x80,                   /* |#  | */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 63 '?' width 3 */
     0xE0,                   /* |###| */
     0x20,                   /* |  #| */
@@ -265,6 +296,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 64 '@' width 7 */
     0x3C,                   /* |  #### | */
@@ -274,6 +306,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xBE,                   /* |# #####| */
     0xD4,                   /* |## # # | */
     0x78,                   /* | ####  | */
+    0x00,                   /* |       | */
     /* 65 'A' width 3 */
     0x40,                   /* | # | */
     0xA0,                   /* |# #| */
@@ -282,6 +315,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     /* 66 'B' width 3 */
     0xC0,                   /* |## | */
     0xA0,                   /* |# #| */
@@ -290,6 +324,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 67 'C' width 3 */
     0x60,                   /* | ##| */
     0x80,                   /* |#  | */
@@ -298,6 +333,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0x60,                   /* | ##| */
+    0x00,                   /* |   | */
     /* 68 'D' width 3 */
     0xC0,                   /* |## | */
     0xA0,                   /* |# #| */
@@ -306,6 +342,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 69 'E' width 3 */
     0xE0,                   /* |###| */
     0x80,                   /* |#  | */
@@ -314,6 +351,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 70 'F' width 3 */
     0xE0,                   /* |###| */
     0x80,                   /* |#  | */
@@ -322,6 +360,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     /* 71 'G' width 4 */
     0x70,                   /* | ###| */
     0xC0,                   /* |##  | */
@@ -330,6 +369,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x90,                   /* |#  #| */
     0xF0,                   /* |####| */
     0x60,                   /* | ## | */
+    0x00,                   /* |    | */
     /* 72 'H' width 3 */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
@@ -338,6 +378,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     /* 73 'I' width 3 */
     0xE0,                   /* |###| */
     0x40,                   /* | # | */
@@ -346,6 +387,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 74 'J' width 3 */
     0xE0,                   /* |###| */
     0x40,                   /* | # | */
@@ -354,6 +396,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     /* 75 'K' width 3 */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
@@ -362,6 +405,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     /* 76 'L' width 3 */
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
@@ -370,6 +414,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 77 'M' width 5 */
     0x88,                   /* |#   #| */
     0x88,                   /* |#   #| */
@@ -378,6 +423,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA8,                   /* |# # #| */
     0xA8,                   /* |# # #| */
     0x88,                   /* |#   #| */
+    0x00,                   /* |     | */
     /* 78 'N' width 4 */
     0x90,                   /* |#  #| */
     0xD0,                   /* |## #| */
@@ -386,6 +432,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xB0,                   /* |# ##| */
     0x90,                   /* |#  #| */
     0x90,                   /* |#  #| */
+    0x00,                   /* |    | */
     /* 79 'O' width 4 */
     0x60,                   /* | ## | */
     0x90,                   /* |#  #| */
@@ -394,6 +441,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x90,                   /* |#  #| */
     0x90,                   /* |#  #| */
     0x60,                   /* | ## | */
+    0x00,                   /* |    | */
     /* 80 'P' width 3 */
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
@@ -402,6 +450,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     /* 81 'Q' width 4 */
     0x60,                   /* | ## | */
     0x90,                   /* |#  #| */
@@ -410,6 +459,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xB0,                   /* |# ##| */
     0x70,                   /* | ###| */
     0x10,                   /* |   #| */
+    0x00,                   /* |    | */
     /* 82 'R' width 3 */
     0xC0,                   /* |## | */
     0xA0,                   /* |# #| */
@@ -418,6 +468,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     /* 83 'S' width 3 */
     0x60,                   /* | ##| */
     0x80,                   /* |#  | */
@@ -426,6 +477,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 84 'T' width 3 */
     0xE0,                   /* |###| */
     0x40,                   /* | # | */
@@ -434,6 +486,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     /* 85 'U' width 4 */
     0x90,                   /* |#  #| */
     0x90,                   /* |#  #| */
@@ -442,6 +495,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x90,                   /* |#  #| */
     0x90,                   /* |#  #| */
     0x60,                   /* | ## | */
+    0x00,                   /* |    | */
     /* 86 'V' width 5 */
     0x88,                   /* |#   #| */
     0x88,                   /* |#   #| */
@@ -450,6 +504,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x70,                   /* | ### | */
     0x20,                   /* |  #  | */
     0x20,                   /* |  #  | */
+    0x00,                   /* |     | */
     /* 87 'W' width 6 */
     0x84,                   /* |#    #| */
     0xB4,                   /* |# ## #| */
@@ -458,6 +513,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x48,                   /* | #  # | */
     0x48,                   /* | #  # | */
     0x48,                   /* | #  # | */
+    0x00,                   /* |      | */
     /* 88 'X' width 3 */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
@@ -466,6 +522,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     /* 89 'Y' width 4 */
     0x90,                   /* |#  #| */
     0x90,                   /* |#  #| */
@@ -474,6 +531,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x60,                   /* | ## | */
     0x60,                   /* | ## | */
     0x60,                   /* | ## | */
+    0x00,                   /* |    | */
     /* 90 'Z' width 4 */
     0xF0,                   /* |####| */
     0x10,                   /* |   #| */
@@ -482,6 +540,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | #  | */
     0x80,                   /* |#   | */
     0xF0,                   /* |####| */
+    0x00,                   /* |    | */
     /* 91 '[' width 2 */
     0xC0,                   /* |##| */
     0x80,                   /* |# | */
@@ -490,6 +549,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |# | */
     0x80,                   /* |# | */
     0xC0,                   /* |##| */
+    0x00,                   /* |  | */
     /* 92 '\\' width 3 */
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
@@ -498,8 +558,10 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x60,                   /* | ##| */
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
+    0x00,                   /* |   | */
     /* 93 ']' width 2 */
     0xC0,                   /* |##| */
+    0x40,                   /* | #| */
     0x40,                   /* | #| */
     0x40,                   /* | #| */
     0x40,                   /* | #| */
@@ -514,6 +576,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 95 '_' width 3 */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -522,8 +585,10 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 96 '`' width 2 */
     0xC0,                   /* |##| */
+    0x00,                   /* |  | */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
@@ -538,6 +603,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |###| */
     0x20,                   /* |  #| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 98 'b' width 3 */
     0x00,                   /* |   | */
     0x80,                   /* |#  | */
@@ -545,6 +611,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 99 'c' width 3 */
     0x00,                   /* |   | */
@@ -554,6 +621,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x60,                   /* | ##| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 100 'd' width 3 */
     0x00,                   /* |   | */
     0x20,                   /* |  #| */
@@ -561,6 +629,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 101 'e' width 3 */
     0x00,                   /* |   | */
@@ -570,6 +639,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x60,                   /* | ##| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 102 'f' width 1 */
     0x00,                   /* | | */
     0x80,                   /* |#| */
@@ -577,6 +647,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#| */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
+    0x00,                   /* | | */
     0x00,                   /* | | */
     /* 103 'g' width 3 */
     0x00,                   /* |   | */
@@ -586,6 +657,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0x20,                   /* |  #| */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     /* 104 'h' width 3 */
     0x00,                   /* |   | */
     0x80,                   /* |#  | */
@@ -593,6 +665,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 105 'i' width 1 */
     0x00,                   /* | | */
@@ -602,6 +675,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#| */
     0x80,                   /* |#| */
     0x00,                   /* | | */
+    0x00,                   /* | | */
     /* 106 'j' width 2 */
     0x00,                   /* |  | */
     0x40,                   /* | #| */
@@ -610,6 +684,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | #| */
     0x40,                   /* | #| */
     0x80,                   /* |# | */
+    0x00,                   /* |  | */
     /* 107 'k' width 3 */
     0x80,                   /* |#  | */
     0xA0,                   /* |# #| */
@@ -617,6 +692,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xC0,                   /* |## | */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 108 'l' width 1 */
     0x80,                   /* |#| */
@@ -626,6 +702,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#| */
     0x80,                   /* |#| */
     0x00,                   /* | | */
+    0x00,                   /* | | */
     /* 109 'm' width 5 */
     0x00,                   /* |     | */
     0x80,                   /* |#    | */
@@ -633,6 +710,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA8,                   /* |# # #| */
     0xA8,                   /* |# # #| */
     0xA8,                   /* |# # #| */
+    0x00,                   /* |     | */
     0x00,                   /* |     | */
     /* 110 'n' width 3 */
     0x00,                   /* |   | */
@@ -642,6 +720,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 111 'o' width 3 */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -649,6 +728,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 112 'p' width 3 */
     0x00,                   /* |   | */
@@ -658,6 +738,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#  | */
     0x80,                   /* |#  | */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 113 'q' width 4 */
     0x00,                   /* |    | */
     0x00,                   /* |    | */
@@ -666,6 +747,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xE0,                   /* |### | */
     0x20,                   /* |  # | */
     0x30,                   /* |  ##| */
+    0x00,                   /* |    | */
     /* 114 'r' width 2 */
     0x00,                   /* |  | */
     0x00,                   /* |  | */
@@ -673,6 +755,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |# | */
     0x80,                   /* |# | */
     0x80,                   /* |# | */
+    0x00,                   /* |  | */
     0x00,                   /* |  | */
     /* 115 's' width 3 */
     0x00,                   /* |   | */
@@ -682,6 +765,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x20,                   /* |  #| */
     0xC0,                   /* |## | */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 116 't' width 3 */
     0x00,                   /* |   | */
     0x40,                   /* | # | */
@@ -689,6 +773,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 117 'u' width 3 */
     0x00,                   /* |   | */
@@ -698,6 +783,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0xE0,                   /* |###| */
     0x00,                   /* |   | */
+    0x00,                   /* |   | */
     /* 118 'v' width 3 */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -705,6 +791,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0xA0,                   /* |# #| */
     0x40,                   /* | # | */
     0x40,                   /* | # | */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 119 'w' width 5 */
     0x00,                   /* |     | */
@@ -714,6 +801,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x50,                   /* | # # | */
     0x50,                   /* | # # | */
     0x00,                   /* |     | */
+    0x00,                   /* |     | */
     /* 120 'x' width 3 */
     0x00,                   /* |   | */
     0xA0,                   /* |# #| */
@@ -721,6 +809,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0xA0,                   /* |# #| */
     0xA0,                   /* |# #| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 121 'y' width 3 */
     0x00,                   /* |   | */
@@ -730,6 +819,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x80,                   /* |#  | */
+    0x00,                   /* |   | */
     /* 122 'z' width 3 */
     0x00,                   /* |   | */
     0xE0,                   /* |###| */
@@ -737,6 +827,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x80,                   /* |#  | */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     /* 123 '{' width 3 */
     0x60,                   /* | ##| */
@@ -746,6 +837,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0x60,                   /* | ##| */
+    0x00,                   /* |   | */
     /* 124 '|' width 1 */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
@@ -754,6 +846,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x80,                   /* |#| */
     0x80,                   /* |#| */
     0x80,                   /* |#| */
+    0x00,                   /* | | */
     /* 125 '}' width 3 */
     0xC0,                   /* |## | */
     0x40,                   /* | # | */
@@ -762,6 +855,7 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x40,                   /* | # | */
     0x40,                   /* | # | */
     0xC0,                   /* |## | */
+    0x00,                   /* |   | */
     /* 126 '~' width 4 */
     0x00,                   /* |    | */
     0x00,                   /* |    | */
@@ -770,10 +864,12 @@ static const uint8_t s_display_thin8_bitmap[672] = {
     0x00,                   /* |    | */
     0x00,                   /* |    | */
     0x00,                   /* |    | */
+    0x00,                   /* |    | */
     /* 127  width 3 */
     0xE0,                   /* |###| */
     0xA0,                   /* |# #| */
     0xE0,                   /* |###| */
+    0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
     0x00,                   /* |   | */
@@ -790,14 +886,14 @@ static const uint8_t s_display_thin8_widths[96] = {
 };
 
 static const uint16_t s_display_thin8_offsets[96] = {
-        0,     7,    14,    21,    28,    35,    42,    49,    56,    63,    70,    77,
-       84,    91,    98,   105,   112,   119,   126,   133,   140,   147,   154,   161,
-      168,   175,   182,   189,   196,   203,   210,   217,   224,   231,   238,   245,
-      252,   259,   266,   273,   280,   287,   294,   301,   308,   315,   322,   329,
-      336,   343,   350,   357,   364,   371,   378,   385,   392,   399,   406,   413,
-      420,   427,   434,   441,   448,   455,   462,   469,   476,   483,   490,   497,
-      504,   511,   518,   525,   532,   539,   546,   553,   560,   567,   574,   581,
-      588,   595,   602,   609,   616,   623,   630,   637,   644,   651,   658,   665,
+        0,     8,    16,    24,    32,    40,    48,    56,    64,    72,    80,    88,
+       96,   104,   112,   120,   128,   136,   144,   152,   160,   168,   176,   184,
+      192,   200,   208,   216,   224,   232,   240,   248,   256,   264,   272,   280,
+      288,   296,   304,   312,   320,   328,   336,   344,   352,   360,   368,   376,
+      384,   392,   400,   408,   416,   424,   432,   440,   448,   456,   464,   472,
+      480,   488,   496,   504,   512,   520,   528,   536,   544,   552,   560,   568,
+      576,   584,   592,   600,   608,   616,   624,   632,   640,   648,   656,   664,
+      672,   680,   688,   696,   704,   712,   720,   728,   736,   744,   752,   760,
 };
 
 const ml_font ml_font_display_thin8 = {
@@ -805,7 +901,7 @@ const ml_font ml_font_display_thin8 = {
     .role     = ML_FONT_TEXT,
     .first    = 32,
     .count    = 96,
-    .height   = 7,
+    .height   = 8,
     .baseline = 6,
     .gap      = 1,
     .planes   = 1,

@@ -324,7 +324,7 @@ class MirrorEngine {
 
   /// Font families compiled into this build, deduplicated by the engine. The
   /// picker offers styles, not sizes: naming a family lets the engine choose
-  /// the cut that fills the widget's box.
+  /// the cut the box's size calls for.
   List<FamilyInfo> get families {
     final count = _b.familyCount();
     return List<FamilyInfo>.generate(
